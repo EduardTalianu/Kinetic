@@ -97,13 +97,12 @@ class CommandExecutor:
                     cmd["result"] = result
                     break
             
-            # Log the command and result to the client log file
+            # Log the command and result
             self.client_manager.log_event(client_id, "Command Result", 
                 f"Command: {command['command_type']} {command['args']} | Result: {result}")
 
             # Notify the ClientManager that a command result has been updated
             self.client_manager.on_command_updated(client_id)
-
 
     def stop(self):
         """Stop the command processing thread."""

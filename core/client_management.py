@@ -6,11 +6,11 @@ from core.cmd import CommandExecutor
 
 
 class ClientManager:
-    def __init__(self, log_event):  # Add log_event as a parameter
+    def __init__(self, log_event):
         # key: client_id, value: dict with keys: last_seen, ip, hostname, pending_commands, history
         self.clients = {}
         self.command_update_callbacks = {}  # Dictionary to store callbacks
-        self.log_event = log_event #save log_event function
+        self.log_event = log_event  # This is now the log_client_event method from LogManager
 
     def add_client(self, client_id, ip="Unknown", hostname="Unknown"):
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -61,11 +61,6 @@ class ClientManager:
         """Calls all registered callbacks for the given client."""
         for callback in self.command_update_callbacks.get(client_id, []):
             callback()
-    
-    def log_event(self, client_id, event_type, details):
-        """Logs an event to the main log and client's log."""
-        # Call the log_event_callback which is the GUI's log_event method
-        self.log_event_callback(client_id, event_type, details)
 
 
 class ClientManagementTab:
