@@ -9,7 +9,7 @@ import core.agent_generation as agent_generation
 class MainGUI:
     def __init__(self, master):
         self.master = master
-        master.title("SubtletyOptional")  # Changed title here
+        master.title("Kinetic Compliance Matrix")  
 
         # Configure logging
         self.configure_logging()
