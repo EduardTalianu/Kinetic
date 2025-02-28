@@ -4,10 +4,12 @@ import datetime
 import json
 from core.cmd import CommandExecutor
 
+
 class ClientManager:
     def __init__(self):
         # key: client_id, value: dict with keys: last_seen, ip, hostname, pending_commands, history
         self.clients = {}
+        self.command_update_callbacks = {}  # Dictionary to store callbacks
 
     def add_client(self, client_id, ip="Unknown", hostname="Unknown"):
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -39,7 +41,7 @@ class ClientManager:
 
     def get_client_history(self, client_id):
         return self.clients.get(client_id, {}).get("history", [])
-    
+
     def get_pending_commands(self, client_id):
         return self.clients.get(client_id, {}).get("pending_commands", [])
 
@@ -47,64 +49,74 @@ class ClientManager:
         if client_id in self.clients:
             self.clients[client_id]["pending_commands"] = []
 
+    def register_command_update_callback(self, client_id, callback):
+        """Registers a callback to be called when a command result is updated."""
+        self.command_update_callbacks.setdefault(client_id, []).append(callback)
+
+    def on_command_updated(self, client_id):
+        """Calls all registered callbacks for the given client."""
+        for callback in self.command_update_callbacks.get(client_id, []):
+            callback()
+
+
 class ClientManagementTab:
     def __init__(self, parent, client_manager):
         self.frame = ttk.Frame(parent)
         self.client_manager = client_manager
         self.executor = CommandExecutor(self.client_manager)  # Start command executor
+        self.notebook = ttk.Notebook(self.frame)  # Notebook to hold client details tabs
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        self.client_list_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.client_list_frame, text="Client List")
+
         self.create_widgets()
         self.refresh_client_list()
 
+        self.client_details_tabs = {}  # Keep track of client details tabs
+
     def create_widgets(self):
         # Treeview for active clients with enhanced columns
-        columns = ("Client ID", "IP", "Hostname", "Last Seen", "Pending Commands", "Command History")
-        self.tree = ttk.Treeview(self.frame, columns=columns, show="headings")
+        columns = ("Client ID", "IP", "Hostname", "Last Seen", "Pending Commands")
+        self.tree = ttk.Treeview(self.client_list_frame, columns=columns, show="headings")
         self.tree.heading("Client ID", text="Client ID")
         self.tree.heading("IP", text="IP Address")
         self.tree.heading("Hostname", text="Hostname")
         self.tree.heading("Last Seen", text="Last Seen")
         self.tree.heading("Pending Commands", text="Pending Commands")
-        self.tree.heading("Command History", text="Command History")
-        
+
         # Adjust column widths
         self.tree.column("Client ID", width=100)
         self.tree.column("IP", width=120)
         self.tree.column("Hostname", width=120)
         self.tree.column("Last Seen", width=150)
         self.tree.column("Pending Commands", width=100)
-        self.tree.column("Command History", width=200)
-        
-        self.tree.pack(fill=tk.BOTH, padx=5, pady=5, expand=True)
+
+        self.tree.pack(fill=tk.BOTH, padx=5, pady=5, expand=True, in_=self.client_list_frame)
 
         # Right-click context menu
         self.context_menu = tk.Menu(self.frame, tearoff=0)
         self.context_menu.add_command(label="Add Command: whoami", command=self.add_whoami_command)
         self.context_menu.add_command(label="Add Custom Command", command=self.add_custom_command)
+        self.context_menu.add_command(label="View Details", command=self.open_client_details_tab)
         self.tree.bind("<Button-3>", self.show_context_menu)
 
         # Refresh button
-        self.btn_refresh = ttk.Button(self.frame, text="Refresh", command=self.refresh_client_list)
-        self.btn_refresh.pack(pady=5)
+        self.btn_refresh = ttk.Button(self.client_list_frame, text="Refresh", command=self.refresh_client_list)
+        self.btn_refresh.pack(pady=5, in_=self.client_list_frame)
 
     def refresh_client_list(self):
         for item in self.tree.get_children():
             self.tree.delete(item)
         for client_id, info in self.client_manager.get_clients_info().items():
             pending_count = len(info.get("pending_commands", []))
-            history_summary = "; ".join(
-                [f"{cmd['command_type']}({cmd['args']})" + 
-                 (f" -> {cmd.get('result', 'Pending')}" if 'result' in cmd else "") 
-                 for cmd in info["history"][-3:]]
-            )
-            if len(info["history"]) > 3:
-                history_summary += " ..."
+
             self.tree.insert("", tk.END, iid=client_id, values=(
                 client_id,
                 info["ip"],
                 info["hostname"],
                 info["last_seen"],
                 pending_count,
-                history_summary
             ))
 
     def show_context_menu(self, event):
@@ -152,3 +164,67 @@ class ClientManagementTab:
                 dialog.destroy()
 
             ttk.Button(dialog, text="Submit", command=submit_command).pack(pady=10)
+
+    def open_client_details_tab(self):
+        selected = self.tree.selection()
+        if selected:
+            client_id = selected[0]
+            self.create_client_details_tab(client_id)
+
+    def create_client_details_tab(self, client_id):
+        # Check if the tab already exists
+        if client_id in self.client_details_tabs:
+            self.notebook.select(self.client_details_tabs[client_id]["frame"])
+            return
+
+        details_frame = ttk.Frame(self.notebook)
+        self.notebook.add(details_frame, text=f"Client {client_id} Details")
+        self.notebook.select(details_frame)  # Open the new tab
+
+        client_info = self.client_manager.get_clients_info().get(client_id, {})
+        history = client_info.get("history", [])
+
+        # Display Client Info
+        info_label = ttk.Label(details_frame,
+                               text=f"IP: {client_info.get('ip', 'N/A')} | Hostname: {client_info.get('hostname', 'N/A')} | Last Seen: {client_info.get('last_seen', 'N/A')}")
+        info_label.pack(pady=5)
+
+        # Treeview for Command History
+        columns = ("Timestamp", "Command Type", "Arguments", "Result")
+        history_tree = ttk.Treeview(details_frame, columns=columns, show="headings")
+        history_tree.heading("Timestamp", text="Timestamp")
+        history_tree.heading("Command Type", text="Command Type")
+        history_tree.heading("Arguments", text="Arguments")
+        history_tree.heading("Result", text="Result")
+
+        # Adjust column widths
+        history_tree.column("Timestamp", width=150)
+        history_tree.column("Command Type", width=120)
+        history_tree.column("Arguments", width=150)
+        history_tree.column("Result", width=300)
+        history_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.populate_history_tree(client_id, history_tree)
+
+        # Store history_tree and frame for later access
+        self.client_details_tabs[client_id] = {"frame": details_frame, "tree": history_tree}
+        # Register the callback to update the history tree
+        self.client_manager.register_command_update_callback(client_id, lambda: self.update_client_history_tree(client_id))
+
+    def populate_history_tree(self, client_id, history_tree):
+        """Populates the history tree with the client's command history."""
+        history_tree.delete(*history_tree.get_children())  # Clear the tree
+        history = self.client_manager.get_client_history(client_id)
+        for command in history:
+            history_tree.insert("", tk.END, values=(
+                command["timestamp"],
+                command["command_type"],
+                command["args"],
+                command.get("result", "Pending")
+            ))
+
+    def update_client_history_tree(self, client_id):
+        """Updates the client's history tree."""
+        if client_id in self.client_details_tabs:
+            history_tree = self.client_details_tabs[client_id]["tree"]
+            self.populate_history_tree(client_id, history_tree)
