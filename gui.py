@@ -9,7 +9,7 @@ import core.agent_generation as agent_generation
 class MainGUI:
     def __init__(self, master):
         self.master = master
-        master.title("Kinetic Compliance Matrix")  
+        master.title("Kinetic Compliance Matrix")
 
         # Configure logging
         self.configure_logging()
@@ -53,12 +53,12 @@ class MainGUI:
     def create_tabs(self):
         # Create and add tabs to the notebook, passing the necessary objects
         self.campaign_tab = campaign_config.CampaignConfigTab(self.notebook, self.client_manager, self.log)
-        self.client_management_tab = client_management.ClientManagementTab(self.notebook, self.client_manager)
-        self.agent_generation_tab = agent_generation.AgentGenerationTab(self.notebook, self.campaign_tab, self.log)
+        self.agent_generation_tab = agent_generation.AgentGenerationTab(self.notebook, self.campaign_tab, self.log)  # Agent Generation Tab
+        self.client_management_tab = client_management.ClientManagementTab(self.notebook, self.client_manager) #Client Management tab
 
         self.notebook.add(self.campaign_tab.frame, text="Campaign Config")
-        self.notebook.add(self.client_management_tab.frame, text="Client Management")
-        self.notebook.add(self.agent_generation_tab.frame, text="Agent Generation")
+        self.notebook.add(self.agent_generation_tab.frame, text="Agent Generation") # Agent Generation is added second
+        self.notebook.add(self.client_management_tab.frame, text="Client Management") # Client management is added third.
 
     # Custom logger
     def log(self, message):
