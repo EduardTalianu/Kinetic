@@ -6,10 +6,11 @@ from core.cmd import CommandExecutor
 
 
 class ClientManager:
-    def __init__(self):
+    def __init__(self, log_event):  # Add log_event as a parameter
         # key: client_id, value: dict with keys: last_seen, ip, hostname, pending_commands, history
         self.clients = {}
         self.command_update_callbacks = {}  # Dictionary to store callbacks
+        self.log_event = log_event #save log_event function
 
     def add_client(self, client_id, ip="Unknown", hostname="Unknown"):
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -21,6 +22,7 @@ class ClientManager:
                 "pending_commands": [],
                 "history": []
             }
+            self.log_event(client_id, "Client Connected", f"New client connected")
         else:
             self.clients[client_id]["last_seen"] = now
             self.clients[client_id]["ip"] = ip
@@ -35,6 +37,7 @@ class ClientManager:
         }
         self.clients[client_id]["pending_commands"].append(command)
         self.clients[client_id]["history"].append(command)
+        self.log_event(client_id, "Command added", f"Command {command_type} with args {args} was added")
 
     def get_clients_info(self):
         return self.clients
@@ -48,6 +51,7 @@ class ClientManager:
     def clear_pending_commands(self, client_id):
         if client_id in self.clients:
             self.clients[client_id]["pending_commands"] = []
+            self.log_event(client_id, "Commands cleared", f"Pending commands cleared")
 
     def register_command_update_callback(self, client_id, callback):
         """Registers a callback to be called when a command result is updated."""
@@ -57,12 +61,18 @@ class ClientManager:
         """Calls all registered callbacks for the given client."""
         for callback in self.command_update_callbacks.get(client_id, []):
             callback()
+    
+    def log_event(self, client_id, event_type, details):
+        """Logs an event to the main log and client's log."""
+        # Call the log_event_callback which is the GUI's log_event method
+        self.log_event_callback(client_id, event_type, details)
 
 
 class ClientManagementTab:
-    def __init__(self, parent, client_manager):
+    def __init__(self, parent, client_manager, logger):  # Add logger
         self.frame = ttk.Frame(parent)
         self.client_manager = client_manager
+        self.logger = logger # save the logger
         self.executor = CommandExecutor(self.client_manager)  # Start command executor
         self.notebook = ttk.Notebook(self.frame)  # Notebook to hold client details tabs
         self.notebook.pack(fill=tk.BOTH, expand=True)
@@ -259,7 +269,9 @@ class ClientManagementTab:
 
     def get_client_id_from_tab_title(self, tree):
       """Extracts the client_id from the tab title."""
-      for client_id, tab_data in self.client_details_tabs.items():
-          if tab_data["tree"] == tree:
-              return client_id
+      parent_frame = tree.master
+      for tab_id in self.notebook.tabs():
+          if self.notebook.nametowidget(tab_id) == parent_frame:
+              tab_title = self.notebook.tab(tab_id, "text")
+              return tab_title.split()[1]
       return None

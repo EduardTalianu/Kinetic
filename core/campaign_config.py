@@ -14,6 +14,7 @@ class CampaignConfigTab:
         self.frame = ttk.Frame(parent)
         self.client_manager = client_manager # Store the client_manager
         self.create_widgets()
+        self.server_thread = None  # Initialize server_thread to None
 
     def create_widgets(self):
         # Campaign Name
@@ -68,6 +69,11 @@ class CampaignConfigTab:
         # Start Campaign Button
         self.btn_start_campaign = ttk.Button(self.frame, text="Start Campaign", command=self.start_campaign)
         self.btn_start_campaign.grid(row=8, column=0, columnspan=3, pady=10)
+
+        # Stop Campaign Button
+        self.btn_stop_campaign = ttk.Button(self.frame, text="Stop Campaign", command=self.stop_campaign, state=tk.DISABLED)
+        self.btn_stop_campaign.grid(row=9, column=0, columnspan=3, pady=10)
+
 
     def check_ip_entry(self, event):
         """Checks if the entered IP is valid or should be added to the dropdown."""
@@ -174,18 +180,26 @@ class CampaignConfigTab:
 
         # Start the actual webserver in a separate thread using the new module
         try:
-            core.webserver.start_webserver(ip, port, self.client_manager, self.logger) # pass the client_manager
+            self.server_thread = core.webserver.start_webserver(ip, int(port), self.client_manager, self.logger) # pass the client_manager
+            self.btn_start_campaign.config(state=tk.DISABLED)
+            self.btn_stop_campaign.config(state=tk.NORMAL)
         except Exception as e:
             self.logger(f"Failed to start webserver: {e}")
+            if self.server_thread:
+              self.stop_campaign()
 
-
-    def start_dummy_webserver(self, ip, port):
-        self.logger("Starting dummy webserver...")
-        for i in range(5):
-            time.sleep(1)
-            self.logger(f"Webserver running on {ip}:{port}... ({i+1})")
-        self.logger("Dummy webserver stopped.")
-
+    def stop_campaign(self):
+        if self.server_thread and self.server_thread.is_alive():
+            try:
+                core.webserver.stop_webserver()
+                self.server_thread.join()  # Wait for the server thread to finish
+            except Exception as e:
+                self.logger(f"Failed to stop webserver properly: {e}")
+        self.server_thread = None
+        self.btn_start_campaign.config(state=tk.NORMAL)
+        self.btn_stop_campaign.config(state=tk.DISABLED)
+        self.logger(f"Campaign stoped.")
+        messagebox.showinfo("Success", f"Campaign stoped.")
     # Methods for other modules to access campaign settings
     def get_ip(self):
         return self.ip_var.get().strip()

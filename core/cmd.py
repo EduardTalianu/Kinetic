@@ -83,17 +83,23 @@ class CommandExecutor:
         updated_command = command.copy()
         updated_command["result"] = result
         updated_command["executed_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
         if client_id in self.client_manager.clients:
             # Replace the executed command in history with the updated version
             for i, cmd in enumerate(self.client_manager.clients[client_id]["history"]):
                 if cmd["timestamp"] == command["timestamp"]:
                     self.client_manager.clients[client_id]["history"][i] = updated_command
                     break
-        if client_id in self.client_manager.clients:
+                    
+            # Update pending commands with result
             for cmd in self.client_manager.clients[client_id]["pending_commands"]:
                 if cmd["timestamp"] == command["timestamp"]:
                     cmd["result"] = result
                     break
+            
+            # Log the command and result to the client log file
+            self.client_manager.log_event(client_id, "Command Result", 
+                f"Command: {command['command_type']} {command['args']} | Result: {result}")
 
             # Notify the ClientManager that a command result has been updated
             self.client_manager.on_command_updated(client_id)
@@ -103,4 +109,3 @@ class CommandExecutor:
         """Stop the command processing thread."""
         self.running = False
         self.thread.join()
-

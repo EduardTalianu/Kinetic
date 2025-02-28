@@ -20,7 +20,7 @@ class MainGUI:
         self.configure_logging()
 
         # Create ClientManager instance
-        self.client_manager = client_management.ClientManager()
+        self.client_manager = client_management.ClientManager(self.log_event)
 
         # Create Notebook
         self.notebook = ttk.Notebook(master)
@@ -69,7 +69,7 @@ class MainGUI:
         # Create and add tabs to the notebook, passing the necessary objects
         self.campaign_tab = campaign_config.CampaignConfigTab(self.notebook, self.client_manager, self.log)
         self.agent_generation_tab = agent_generation.AgentGenerationTab(self.notebook, self.campaign_tab, self.log)  # Agent Generation Tab
-        self.client_management_tab = client_management.ClientManagementTab(self.notebook, self.client_manager)  # Client Management tab
+        self.client_management_tab = client_management.ClientManagementTab(self.notebook, self.client_manager, self.log)  # Client Management tab
 
         self.notebook.add(self.campaign_tab.frame, text="Campaign Config")
         self.notebook.add(self.agent_generation_tab.frame, text="Agent Generation")  # Agent Generation is added second
@@ -103,8 +103,7 @@ class MainGUI:
         # save the log in the campaign folder
         campaign_name = self.campaign_tab.entry_campaign.get().strip()
         campaign_folder = campaign_name + "_campaign"
-        self.log_file_path = os.path.join(campaign_folder, "event_log.txt")
-
+        
       # Create the logs folder inside the campaign folder if it doesn't exist
         logs_folder = os.path.join(campaign_folder, "logs")
         os.makedirs(logs_folder, exist_ok=True)
@@ -126,6 +125,28 @@ class MainGUI:
             with open(self.log_file_path, "a") as log_file:
                 log_file.write(formatted_event + "\n")
         self.log_text.config(state="disabled")
+
+    def log_event(self, client_id, event_type, details):
+        """Logs an event to the main log and client's log."""
+        self.log(f"[{client_id}] {event_type}: {details}")
+
+        # Get the campaign name from the campaign tab
+        campaign_name = self.campaign_tab.entry_campaign.get().strip()
+        campaign_folder = campaign_name + "_campaign"
+        logs_folder = os.path.join(campaign_folder, "logs")
+        os.makedirs(logs_folder, exist_ok=True)  # Ensure logs folder exists
+        
+        client_log_file = os.path.join(logs_folder, f"{client_id}_log.txt")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Format the log entry according to the requirements: timestamp, command, and result
+        log_entry = f"[{timestamp}] [{event_type}] {details}\n"
+        
+        try:
+            with open(client_log_file, "a") as f:
+                f.write(log_entry)
+        except Exception as e:
+            self.log(f"Error saving log in client {client_id} log file: {e}")
 
 
 def main():
