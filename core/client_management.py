@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, scrolledtext
 import datetime
 import json
 from core.cmd import CommandExecutor
@@ -190,26 +190,34 @@ class ClientManagementTab:
         info_label.pack(pady=5)
 
         # Treeview for Command History
-        columns = ("Timestamp", "Command Type", "Arguments", "Result")
+        columns = ("Timestamp", "Arguments", "Result")  # Removed "Command Type"
         history_tree = ttk.Treeview(details_frame, columns=columns, show="headings")
         history_tree.heading("Timestamp", text="Timestamp")
-        history_tree.heading("Command Type", text="Command Type")
         history_tree.heading("Arguments", text="Arguments")
         history_tree.heading("Result", text="Result")
 
-        # Adjust column widths
+        # Adjust column widths, make Result column stretchable
         history_tree.column("Timestamp", width=150)
-        history_tree.column("Command Type", width=120)
         history_tree.column("Arguments", width=150)
-        history_tree.column("Result", width=300)
+        history_tree.column("Result", width=400, stretch=True) #changed width and added stretch
+
         history_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Create a scrolled text widget for displaying detailed result
+        self.result_text = scrolledtext.ScrolledText(details_frame, wrap=tk.WORD, state=tk.DISABLED)
+        self.result_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Bind a function to handle selection change
+        history_tree.bind("<ButtonRelease-1>", lambda event, tree=history_tree: self.on_select_command(event, tree))
+        history_tree.bind("<Return>", lambda event, tree=history_tree: self.on_select_command(event, tree))
 
         self.populate_history_tree(client_id, history_tree)
 
         # Store history_tree and frame for later access
         self.client_details_tabs[client_id] = {"frame": details_frame, "tree": history_tree}
         # Register the callback to update the history tree
-        self.client_manager.register_command_update_callback(client_id, lambda: self.update_client_history_tree(client_id))
+        self.client_manager.register_command_update_callback(client_id,
+                                                              lambda: self.update_client_history_tree(client_id))
 
     def populate_history_tree(self, client_id, history_tree):
         """Populates the history tree with the client's command history."""
@@ -218,7 +226,6 @@ class ClientManagementTab:
         for command in history:
             history_tree.insert("", tk.END, values=(
                 command["timestamp"],
-                command["command_type"],
                 command["args"],
                 command.get("result", "Pending")
             ))
@@ -228,3 +235,31 @@ class ClientManagementTab:
         if client_id in self.client_details_tabs:
             history_tree = self.client_details_tabs[client_id]["tree"]
             self.populate_history_tree(client_id, history_tree)
+
+    def on_select_command(self, event, tree):
+        """Displays the details of the selected command in the ScrolledText widget."""
+        selected_item = tree.selection()
+        if selected_item:
+            item_values = tree.item(selected_item, 'values')
+            # Extract timestamp and find the detailed result from the client history
+            timestamp = item_values[0]
+            client_id = self.get_client_id_from_tab_title(tree)
+            if client_id is None:
+              return
+            client_history = self.client_manager.get_client_history(client_id)
+            for command in client_history:
+                if command['timestamp'] == timestamp:
+                    result = command.get('result', 'No result available')
+                    # Display result in the ScrolledText widget
+                    self.result_text.config(state=tk.NORMAL)
+                    self.result_text.delete("1.0", tk.END)
+                    self.result_text.insert(tk.END, result)
+                    self.result_text.config(state=tk.DISABLED)
+                    break
+
+    def get_client_id_from_tab_title(self, tree):
+      """Extracts the client_id from the tab title."""
+      for client_id, tab_data in self.client_details_tabs.items():
+          if tab_data["tree"] == tree:
+              return client_id
+      return None
