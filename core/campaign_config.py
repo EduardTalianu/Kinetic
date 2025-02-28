@@ -143,16 +143,31 @@ class CampaignConfigTab:
             messagebox.showerror("Error", "Kill Date must be in dd/mm/yyyy format.")
             return
         
-        #validate IP
+        # validate IP
         try:
           ipaddress.ip_address(ip)
         except ValueError:
           messagebox.showerror("Error", "C&C IP is not valid.")
           return
+          
+        # Validate SSL settings if SSL is selected
+        if use_ssl:
+            if not cert_path or not key_path:
+                messagebox.showerror("Error", "Certificate and Key paths are required when SSL is enabled.")
+                return
+            if not os.path.exists(cert_path):
+                messagebox.showerror("Error", f"Certificate file not found: {cert_path}")
+                return
+            if not os.path.exists(key_path):
+                messagebox.showerror("Error", f"Key file not found: {key_path}")
+                return
 
         campaign_dir = campaign_name + "_campaign"
         try:
             os.makedirs(campaign_dir, exist_ok=True)
+            # Create uploads directory for file uploads
+            uploads_dir = os.path.join(campaign_dir, "uploads")
+            os.makedirs(uploads_dir, exist_ok=True)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to create campaign directory: {e}")
             return
@@ -180,7 +195,15 @@ class CampaignConfigTab:
 
         # Start the actual webserver in a separate thread using the new module
         try:
-            self.server_thread = core.webserver.start_webserver(ip, int(port), self.client_manager, self.logger) # pass the client_manager
+            self.server_thread = core.webserver.start_webserver(
+                ip, 
+                int(port), 
+                self.client_manager, 
+                self.logger,
+                use_ssl=use_ssl,
+                cert_path=cert_path if use_ssl else None,
+                key_path=key_path if use_ssl else None
+            )
             self.btn_start_campaign.config(state=tk.DISABLED)
             self.btn_stop_campaign.config(state=tk.NORMAL)
         except Exception as e:
@@ -198,8 +221,9 @@ class CampaignConfigTab:
         self.server_thread = None
         self.btn_start_campaign.config(state=tk.NORMAL)
         self.btn_stop_campaign.config(state=tk.DISABLED)
-        self.logger(f"Campaign stoped.")
-        messagebox.showinfo("Success", f"Campaign stoped.")
+        self.logger(f"Campaign stopped.")
+        messagebox.showinfo("Success", f"Campaign stopped.")
+    
     # Methods for other modules to access campaign settings
     def get_ip(self):
         return self.ip_var.get().strip()

