@@ -145,11 +145,11 @@ class CampaignConfigTab:
         
         # validate IP
         try:
-          ipaddress.ip_address(ip)
+            ipaddress.ip_address(ip)
         except ValueError:
-          messagebox.showerror("Error", "C&C IP is not valid.")
-          return
-          
+            messagebox.showerror("Error", "C&C IP is not valid.")
+            return
+        
         # Validate SSL settings if SSL is selected
         if use_ssl:
             if not cert_path or not key_path:
@@ -200,6 +200,7 @@ class CampaignConfigTab:
                 int(port), 
                 self.client_manager, 
                 self.logger,
+                campaign_name,  # Pass campaign name to the webserver
                 use_ssl=use_ssl,
                 cert_path=cert_path if use_ssl else None,
                 key_path=key_path if use_ssl else None
@@ -209,7 +210,7 @@ class CampaignConfigTab:
         except Exception as e:
             self.logger(f"Failed to start webserver: {e}")
             if self.server_thread:
-              self.stop_campaign()
+                self.stop_campaign()
 
     def stop_campaign(self):
         if self.server_thread and self.server_thread.is_alive():

