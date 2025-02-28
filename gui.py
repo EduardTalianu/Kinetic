@@ -4,6 +4,9 @@ import logging
 import core.client_management as client_management
 import core.campaign_config as campaign_config
 import core.agent_generation as agent_generation
+import random
+import string
+import datetime
 
 
 class MainGUI:
@@ -44,6 +47,9 @@ class MainGUI:
         text_handler = TextHandler(self.log_text)
         text_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         self.logger.addHandler(text_handler)
+        
+        # Populate the default data for the campaign
+        self.populate_default_campaign_data()
 
     def configure_logging(self):
         # Configure logging for the entire application
@@ -59,6 +65,31 @@ class MainGUI:
         self.notebook.add(self.campaign_tab.frame, text="Campaign Config")
         self.notebook.add(self.agent_generation_tab.frame, text="Agent Generation") # Agent Generation is added second
         self.notebook.add(self.client_management_tab.frame, text="Client Management") # Client management is added third.
+        
+    def populate_default_campaign_data(self):
+      """Populates the Campaign Config tab with default values."""
+      # Generate a random campaign name
+      campaign_name = "Campaign_" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+      
+      # Default IP
+      default_ip = "192.168.0.1"
+      
+      # Random port between 1024 and 65535
+      random_port = random.randint(1024, 65535)
+      
+      # Beacon period
+      beacon_period = "5"
+      
+      # Kill date 10 days in the future
+      future_date = datetime.date.today() + datetime.timedelta(days=10)
+      kill_date = future_date.strftime("%d/%m/%Y")
+      
+      # Set the values in the entry fields
+      self.campaign_tab.entry_campaign.insert(0, campaign_name)
+      self.campaign_tab.ip_var.set(default_ip)
+      self.campaign_tab.entry_port.insert(0, str(random_port))
+      self.campaign_tab.entry_beacon.insert(0, beacon_period)
+      self.campaign_tab.entry_kill_date.insert(0, kill_date)
 
     # Custom logger
     def log(self, message):
