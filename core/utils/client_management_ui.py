@@ -344,12 +344,8 @@ class ClientListUI:
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
 
-        # Right-click context menu
+        # Right-click context menu - simplified to only include View Details
         self.context_menu = tk.Menu(self.parent_frame, tearoff=0)
-        self.context_menu.add_command(label="Add Command: whoami", command=self.add_whoami_command)
-        self.context_menu.add_command(label="Add Command: systeminfo", command=self.add_systeminfo_command)
-        self.context_menu.add_command(label="Add Custom Command", command=self.add_custom_command)
-        self.context_menu.add_separator()
         self.context_menu.add_command(label="View Details", command=self.open_client_details)
         self.tree.bind("<Button-3>", self.show_context_menu)
         self.tree.bind("<Double-1>", lambda e: self.open_client_details())
@@ -429,89 +425,6 @@ class ClientListUI:
         if selected:
             self.tree.selection_set(selected)
             self.context_menu.post(event.x_root, event.y_root)
-
-    def add_whoami_command(self):
-        """Add whoami command to selected client"""
-        selected = self.tree.selection()
-        if selected:
-            client_id = selected[0]
-            self.client_manager.add_command(client_id, "execute", "whoami")
-            messagebox.showinfo("Success", f"Command 'whoami' queued for client {client_id}.")
-            self.refresh_client_list()
-
-    def add_systeminfo_command(self):
-        """Add systeminfo command to selected client"""
-        selected = self.tree.selection()
-        if selected:
-            client_id = selected[0]
-            self.client_manager.add_command(client_id, "execute", "systeminfo")
-            messagebox.showinfo("Success", f"Command 'systeminfo' queued for client {client_id}.")
-            self.refresh_client_list()
-
-    def add_custom_command(self):
-        """Open dialog to add a custom command"""
-        selected = self.tree.selection()
-        if selected:
-            client_id = selected[0]
-            dialog = tk.Toplevel(self.parent_frame)
-            dialog.title("Add Custom Command")
-            dialog.geometry("400x200")
-            dialog.transient(self.parent_frame)
-            dialog.grab_set()
-
-            ttk.Label(dialog, text="Command Type:").pack(pady=5)
-            combo_command_type = ttk.Combobox(dialog, values=["execute", "upload", "download", "screenshot"], state="readonly")
-            combo_command_type.pack(fill=tk.X, padx=10)
-            combo_command_type.current(0)
-
-            ttk.Label(dialog, text="Arguments:").pack(pady=5)
-            entry_args = ttk.Entry(dialog, width=50)
-            entry_args.pack(fill=tk.X, padx=10)
-
-            # Command description area
-            ttk.Label(dialog, text="Command Description:").pack(pady=5)
-            description_frame = ttk.Frame(dialog)
-            description_frame.pack(fill=tk.BOTH, expand=True, padx=10)
-            
-            description_text = tk.Text(description_frame, height=3, wrap=tk.WORD)
-            description_text.pack(fill=tk.BOTH, expand=True)
-            
-            # Update description based on command type
-            def update_description(*args):
-                cmd_type = combo_command_type.get()
-                if cmd_type == "execute":
-                    description_text.delete("1.0", tk.END)
-                    description_text.insert(tk.END, "Execute a shell command on the client machine.")
-                elif cmd_type == "upload":
-                    description_text.delete("1.0", tk.END)
-                    description_text.insert(tk.END, "Upload a file from the client. Provide the full path to the file.")
-                elif cmd_type == "download":
-                    description_text.delete("1.0", tk.END)
-                    description_text.insert(tk.END, "Download a file to the client. Provide the URL to download from.")
-                elif cmd_type == "screenshot":
-                    description_text.delete("1.0", tk.END)
-                    description_text.insert(tk.END, "Take a screenshot on the client machine.")
-            
-            combo_command_type.bind("<<ComboboxSelected>>", update_description)
-            update_description()  # Initial description
-
-            def submit_command():
-                command_type = combo_command_type.get().strip()
-                args = entry_args.get().strip()
-                if not command_type:
-                    messagebox.showerror("Error", "Please select a command type.")
-                    return
-                    
-                if command_type != "screenshot" and not args:
-                    messagebox.showerror("Error", "Please provide command arguments.")
-                    return
-                    
-                self.client_manager.add_command(client_id, command_type, args)
-                messagebox.showinfo("Success", f"Command queued for client {client_id}.")
-                self.refresh_client_list()
-                dialog.destroy()
-
-            ttk.Button(dialog, text="Submit", command=submit_command).pack(pady=10)
 
     def open_client_details(self):
         """Open client details view for selected client"""
