@@ -72,7 +72,9 @@ class CampaignConfigTab:
         self.url_pattern_combo = ttk.Combobox(url_frame, textvariable=self.url_pattern_var, width=27, 
                                         values=["web_app", "api", "cdn", "blog", "custom"])
         self.url_pattern_combo.grid(row=1, column=1, padx=5, pady=5)
-        self.url_pattern_combo.bind("<<ComboboxSelected>>", self.generate_random_urls)
+        self.url_pattern_combo.bind("<<ComboboxSelected>>", self.on_pattern_selected)
+
+
 
         # Create hidden entries for URL paths
         self.entry_beacon_path = ttk.Entry(self.frame)
@@ -133,6 +135,10 @@ class CampaignConfigTab:
         self.btn_stop_campaign.grid(row=11, column=0, columnspan=3, pady=10)
         
         # Generate random URLs in the background
+        self.generate_random_urls()
+
+    def on_pattern_selected(self, event):
+        """Handle pattern selection change event and generate new URLs"""
         self.generate_random_urls()
 
     def toggle_path_rotation(self):
