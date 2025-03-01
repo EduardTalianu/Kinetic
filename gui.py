@@ -15,6 +15,9 @@ class MainGUI:
     def __init__(self, master):
         self.master = master
         master.title("Kinetic Compliance Matrix")
+        
+        # Set window size to make it more spacious
+        master.geometry("1200x800")  # Making the window larger to accommodate the enhanced UI
 
         # Create the main GUI components in this order:
         # 1. Create notebook

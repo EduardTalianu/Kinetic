@@ -82,6 +82,9 @@ class ClientManager:
             self.clients[client_id]["pending_commands"].append(command)
             self.clients[client_id]["history"].append(command)
             self.log_event(client_id, "Command added", f"Command {command_type} with args {args} was added")
+            
+            # Notify listeners that a command has been added
+            self.on_command_updated(client_id)
         else:
             # For backward compatibility, try to register client by IP if it's a valid client ID
             try:

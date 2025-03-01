@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import json
+from core.utils.client_interaction import ClientInteractionUI
 
 class ClientDetailsUI:
     """Handles the UI components for displaying client details"""
@@ -33,7 +34,21 @@ class ClientDetailsUI:
             return
 
         details_frame = ttk.Frame(self.notebook)
-        self.notebook.add(details_frame, text=f"Client {client_id}")
+        
+        # Add close button to tab
+        tab_text = f"Client {client_id}"
+        self.notebook.add(details_frame, text=tab_text)
+        
+        # Create a close button for the tab
+        close_button_frame = ttk.Frame(details_frame)
+        close_button_frame.pack(fill=tk.X, pady=(5, 0), padx=5, anchor="ne")
+        close_button = ttk.Button(
+            close_button_frame, 
+            text="Close Tab", 
+            command=lambda: self.close_client_tab(client_id)
+        )
+        close_button.pack(side=tk.RIGHT)
+        
         self.notebook.select(details_frame)  # Open the new tab
 
         client_info = self.client_manager.get_clients_info().get(client_id, {})
@@ -53,6 +68,10 @@ class ClientDetailsUI:
         # Tab for verification information
         verification_frame = ttk.Frame(client_notebook)
         client_notebook.add(verification_frame, text="Verification")
+        
+        # Tab for interaction
+        interaction_frame = ttk.Frame(client_notebook)
+        client_notebook.add(interaction_frame, text="Interaction")
         
         # System Information Tab
         self.populate_system_info_tab(sys_info_frame, client_info)
@@ -93,22 +112,34 @@ class ClientDetailsUI:
         history_tree.bind("<Return>", lambda event, tree=history_tree: self.on_select_command(event, tree, client_id))
 
         self.populate_history_tree(client_id, history_tree)
+        
+        # Initialize the interaction tab
+        self.client_interaction = ClientInteractionUI(interaction_frame, client_id, self.client_manager, self.logger)
 
         # Store history_tree and frame for later access
         self.client_details_tabs[client_id] = {
             "frame": details_frame, 
             "tree": history_tree,
-            "notebook": client_notebook
+            "notebook": client_notebook,
+            "interaction": self.client_interaction
         }
         
         # Register the callback to update the history tree
         self.client_manager.register_command_update_callback(client_id,
                                                              lambda: self.update_client_history_tree(client_id))
+    
+    def close_client_tab(self, client_id):
+        """Close the client details tab"""
+        if client_id in self.client_details_tabs:
+            tab_frame = self.client_details_tabs[client_id]["frame"]
+            tab_index = self.notebook.index(tab_frame)
+            self.notebook.forget(tab_index)
+            del self.client_details_tabs[client_id]
 
     def populate_system_info_tab(self, parent_frame, client_info):
         """Populate the system information tab with client details"""
         # Create scrollable canvas for system info
-        canvas = tk.Canvas(parent_frame)
+        canvas = tk.Canvas(parent_frame, width=600)  # 30% wider (from approx. 462 to 600)
         scrollbar = ttk.Scrollbar(parent_frame, orient="vertical", command=canvas.yview)
         
         scroll_frame = ttk.Frame(canvas)
@@ -127,7 +158,7 @@ class ClientDetailsUI:
         basic_frame = ttk.LabelFrame(scroll_frame, text="Basic Information")
         basic_frame.pack(fill=tk.X, padx=10, pady=5, anchor="n")
         
-        # Two-column layout for basic info
+        # Two-column layout for basic info with increased width
         labels = [
             ("Client ID:", client_info.get("client_id", "Unknown")),
             ("IP Address:", client_info.get("ip", "Unknown")),
@@ -141,7 +172,7 @@ class ClientDetailsUI:
         
         for i, (label, value) in enumerate(labels):
             ttk.Label(basic_frame, text=label, width=15, anchor="e").grid(row=i//2, column=i%2*2, sticky="e", padx=5, pady=2)
-            value_text = ttk.Label(basic_frame, text=value, width=25, anchor="w")
+            value_text = ttk.Label(basic_frame, text=value, width=32, anchor="w")  # Increased from 25 to 32
             value_text.grid(row=i//2, column=i%2*2+1, sticky="w", padx=5, pady=2)
             
         # Advanced system information section
@@ -163,7 +194,7 @@ class ClientDetailsUI:
                     else:
                         value_str = str(value)
                     
-                    value_text = ttk.Label(advanced_frame, text=value_str, wraplength=300, anchor="w")
+                    value_text = ttk.Label(advanced_frame, text=value_str, wraplength=400, anchor="w")  # Increased from 300 to 400
                     value_text.grid(row=row, column=1, sticky="w", padx=5, pady=2)
                     row += 1
 
@@ -330,14 +361,17 @@ class ClientListUI:
         self.btn_refresh = ttk.Button(refresh_frame, text="Refresh", command=self.refresh_client_list)
         self.btn_refresh.pack(side=tk.LEFT, padx=5)
         
-        self.auto_refresh_var = tk.BooleanVar(value=False)
+        self.auto_refresh_var = tk.BooleanVar(value=True)  # Default to enabled
         self.auto_refresh_cb = ttk.Checkbutton(
             refresh_frame, 
-            text="Auto Refresh (10s)", 
+            text="Auto Refresh (3s)", 
             variable=self.auto_refresh_var,
             command=self.toggle_auto_refresh
         )
         self.auto_refresh_cb.pack(side=tk.LEFT, padx=5)
+        
+        # Start auto-refresh since it's enabled by default
+        self.schedule_auto_refresh()
     
     def toggle_auto_refresh(self):
         """Toggle auto-refresh on/off based on checkbox state"""
@@ -351,7 +385,8 @@ class ClientListUI:
     def schedule_auto_refresh(self):
         """Schedule the next auto-refresh"""
         self.refresh_client_list()
-        self.auto_refresh_job = self.parent_frame.after(10000, self.schedule_auto_refresh)  # 10 seconds
+        if self.auto_refresh_var.get():
+            self.auto_refresh_job = self.parent_frame.after(3000, self.schedule_auto_refresh)  # 3 seconds
 
     def refresh_client_list(self):
         """Refresh the client list display"""
