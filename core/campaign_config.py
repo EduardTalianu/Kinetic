@@ -57,92 +57,53 @@ class CampaignConfigTab:
         self.entry_kill_date = ttk.Entry(self.frame, width=30)
         self.entry_kill_date.grid(row=4, column=1, padx=5, pady=5)
 
-        # URL Randomization Section
+        # URL Randomization Section - Keep checkbox but remove display of paths
         url_frame = ttk.LabelFrame(self.frame, text="URL Path Customization")
         url_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
 
         # Checkbox for URL Randomization
         self.url_random_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(url_frame, text="Randomize URLs to evade detection", 
-                        variable=self.url_random_var, 
-                        command=self.toggle_url_entries).grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=2)
+                        variable=self.url_random_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=2)
 
         # URL pattern selection
         ttk.Label(url_frame, text="URL Pattern:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         self.url_pattern_var = tk.StringVar(value="web_app")
         self.url_pattern_combo = ttk.Combobox(url_frame, textvariable=self.url_pattern_var, width=27, 
-                                          values=["web_app", "api", "cdn", "blog", "custom"])
+                                        values=["web_app", "api", "cdn", "blog", "custom"])
         self.url_pattern_combo.grid(row=1, column=1, padx=5, pady=5)
-        self.url_pattern_combo.bind("<<ComboboxSelected>>", self.update_url_preview)
+        self.url_pattern_combo.bind("<<ComboboxSelected>>", self.generate_random_urls)
 
-        # Custom URL Entries
-        ttk.Label(url_frame, text="Beacon Path:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-        self.entry_beacon_path = ttk.Entry(url_frame, width=30)
-        self.entry_beacon_path.grid(row=2, column=1, padx=5, pady=5)
-        
-        ttk.Label(url_frame, text="Agent Path:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
-        self.entry_agent_path = ttk.Entry(url_frame, width=30)
-        self.entry_agent_path.grid(row=3, column=1, padx=5, pady=5)
-        
-        ttk.Label(url_frame, text="Stager Path:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
-        self.entry_stager_path = ttk.Entry(url_frame, width=30)
-        self.entry_stager_path.grid(row=4, column=1, padx=5, pady=5)
-        
-        ttk.Label(url_frame, text="Command Result Path:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
-        self.entry_cmd_result_path = ttk.Entry(url_frame, width=30)
-        self.entry_cmd_result_path.grid(row=5, column=1, padx=5, pady=5)
-        
-        ttk.Label(url_frame, text="File Upload Path:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
-        self.entry_file_upload_path = ttk.Entry(url_frame, width=30)
-        self.entry_file_upload_path.grid(row=6, column=1, padx=5, pady=5)
-
-        # Preview section
-        preview_frame = ttk.LabelFrame(url_frame, text="URL Preview")
-        preview_frame.grid(row=7, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
-        
-        self.preview_text = tk.Text(preview_frame, height=4, width=40, wrap=tk.WORD)
-        self.preview_text.pack(fill=tk.X, padx=5, pady=5)
-        self.preview_text.config(state=tk.DISABLED)
+        # Create hidden entries for URL paths
+        self.entry_beacon_path = ttk.Entry(self.frame)
+        self.entry_agent_path = ttk.Entry(self.frame)
+        self.entry_stager_path = ttk.Entry(self.frame)
+        self.entry_cmd_result_path = ttk.Entry(self.frame)
+        self.entry_file_upload_path = ttk.Entry(self.frame)
 
         # Generate random button
         ttk.Button(url_frame, text="Generate Random URLs", 
-                  command=self.generate_random_urls).grid(row=8, column=0, columnspan=2, pady=5)
+                command=self.generate_random_urls).grid(row=2, column=0, columnspan=2, pady=5)
 
-        # Generate initial random URLs
-        self.generate_random_urls()
-
-        # Path Rotation Section
+        # Path Rotation Section - Keep checkbox and interval but remove text area
         rotation_frame = ttk.LabelFrame(self.frame, text="Dynamic Path Rotation")
         rotation_frame.grid(row=6, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
         
         # Enable path rotation checkbox
         self.path_rotation_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(rotation_frame, text="Enable dynamic path rotation to evade detection", 
-                      variable=self.path_rotation_var, 
-                      command=self.toggle_path_rotation).grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=2)
+                    variable=self.path_rotation_var, 
+                    command=self.toggle_path_rotation).grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=2)
         
         # Rotation interval
         ttk.Label(rotation_frame, text="Rotation Interval (seconds):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
         rotation_values = ["1800", "3600", "7200", "14400", "28800", "86400"]
         self.rotation_interval_var = tk.StringVar(value="3600")
         self.rotation_interval_combo = ttk.Combobox(rotation_frame, textvariable=self.rotation_interval_var, 
-                                                 values=rotation_values, width=27)
+                                                values=rotation_values, width=27)
         self.rotation_interval_combo.grid(row=1, column=1, padx=5, pady=5)
         ttk.Label(rotation_frame, text="Rotation intervals: 30 min, 1 hour, 2 hours, 4 hours, 8 hours, 24 hours").grid(
             row=2, column=0, columnspan=2, sticky="w", padx=5, pady=0)
-        
-        # Include rotation info
-        rotation_info_text = """Dynamic Path Rotation:
-        - Server and agents coordinate to change communication paths periodically
-        - Paths change based on the rotation interval
-        - Older paths remain valid for a limited time for reconnection
-        - Agents automatically update to new paths during communication
-        - Uses deterministic but unpredictable path generation"""
-        
-        rotation_info = tk.Text(rotation_frame, height=6, width=40, wrap=tk.WORD)
-        rotation_info.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
-        rotation_info.insert(tk.END, rotation_info_text)
-        rotation_info.config(state=tk.DISABLED)
 
         # SSL Option
         self.ssl_var = tk.BooleanVar()
@@ -170,6 +131,9 @@ class CampaignConfigTab:
         # Stop Campaign Button
         self.btn_stop_campaign = ttk.Button(self.frame, text="Stop Campaign", command=self.stop_campaign, state=tk.DISABLED)
         self.btn_stop_campaign.grid(row=11, column=0, columnspan=3, pady=10)
+        
+        # Generate random URLs in the background
+        self.generate_random_urls()
 
     def toggle_path_rotation(self):
         """Toggle path rotation options based on checkbox"""
@@ -257,37 +221,32 @@ class CampaignConfigTab:
         
 
     def update_url_preview(self, event=None):
-        """Update the URL preview based on current entries"""
-        host = self.ip_var.get()
-        port = self.entry_port.get() or "8080"
-        protocol = "https" if self.ssl_var.get() else "http"
-        
+        """This function is kept for compatibility but doesn't update a preview anymore"""
         # Get path values and ensure they start with /
         beacon_path = self.entry_beacon_path.get()
         if not beacon_path.startswith('/'):
-            beacon_path = '/' + beacon_path
-            
+            self.entry_beacon_path.delete(0, tk.END)
+            self.entry_beacon_path.insert(0, '/' + beacon_path)
+                
         agent_path = self.entry_agent_path.get()
         if not agent_path.startswith('/'):
-            agent_path = '/' + agent_path
-            
+            self.entry_agent_path.delete(0, tk.END) 
+            self.entry_agent_path.insert(0, '/' + agent_path)
+                
         stager_path = self.entry_stager_path.get()
         if not stager_path.startswith('/'):
-            stager_path = '/' + stager_path
-            
+            self.entry_stager_path.delete(0, tk.END)
+            self.entry_stager_path.insert(0, '/' + stager_path)
+                
         cmd_result_path = self.entry_cmd_result_path.get()
         if not cmd_result_path.startswith('/'):
-            cmd_result_path = '/' + cmd_result_path
-        
-        preview = f"{protocol}://{host}:{port}{beacon_path}\n"
-        preview += f"{protocol}://{host}:{port}{agent_path}\n"
-        preview += f"{protocol}://{host}:{port}{stager_path}\n"
-        preview += f"{protocol}://{host}:{port}{cmd_result_path}"
-        
-        self.preview_text.config(state=tk.NORMAL)
-        self.preview_text.delete(1.0, tk.END)
-        self.preview_text.insert(tk.END, preview)
-        self.preview_text.config(state=tk.DISABLED)
+            self.entry_cmd_result_path.delete(0, tk.END)
+            self.entry_cmd_result_path.insert(0, '/' + cmd_result_path)
+            
+        file_upload_path = self.entry_file_upload_path.get()
+        if not file_upload_path.startswith('/'):
+            self.entry_file_upload_path.delete(0, tk.END)
+            self.entry_file_upload_path.insert(0, '/' + file_upload_path)
 
     def toggle_url_entries(self):
         """Toggle URL entry fields based on randomization checkbox"""
