@@ -42,20 +42,9 @@ class AgentGenerationTab:
 
     def init_agent_modules(self):
         """Initialize the agent generator modules."""
-        # Map agent names to their module and function
+        # Map agent names to their module and function - Simplified to only PowerShell Base64
         self.agent_options = {
-            "HTA Agent": ("powershell_agents", "generate_hta_agent_str"),
-            "Powershell Job": ("powershell_agents", "generate_pwsh_job_str"),
-            "Powershell File": ("powershell_agents", "generate_pwsh_file_str"),
-            "Powershell SCT": ("powershell_agents", "generate_pwsh_sct_str"),
-            "Powershell Misc": ("powershell_agents", "generate_pwsh_misc_str"),
-            "Powershell Base64": ("powershell_agents", "generate_pwsh_base64_str"),
-            "Powershell Base52": ("powershell_agents", "generate_pwsh_base52_str"),
-            "CMD Shellcode x64": ("shellcode_agents", "generate_cmd_shellcodex64_str"),
-            "CMD Shellcode x86": ("shellcode_agents", "generate_cmd_shellcodex86_str"),
-            "Word Macro": ("office_agents", "generate_word_macro_str"),
-            "Excel Macro": ("office_agents", "generate_excel_macro_str"),
-            "Follina Agent": ("exploit_agents", "generate_follina_agent_str")
+            "Powershell Base64": ("powershell_agents", "generate_pwsh_base64_str")
         }
         
         # Load the modules

