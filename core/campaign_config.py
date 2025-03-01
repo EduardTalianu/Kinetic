@@ -24,6 +24,8 @@ class CampaignConfigTab:
         self.ssl_var = tk.BooleanVar()
         self.url_random_var = tk.BooleanVar(value=True)
         self.url_pattern_var = tk.StringVar(value="web_app")
+        self.path_rotation_var = tk.BooleanVar(value=True)
+        self.rotation_interval_var = tk.StringVar(value="3600")
         
         # Campaign Name
         ttk.Label(self.frame, text="Campaign Name:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
@@ -109,32 +111,70 @@ class CampaignConfigTab:
         # Generate initial random URLs
         self.generate_random_urls()
 
+        # Path Rotation Section
+        rotation_frame = ttk.LabelFrame(self.frame, text="Dynamic Path Rotation")
+        rotation_frame.grid(row=6, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        
+        # Enable path rotation checkbox
+        self.path_rotation_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(rotation_frame, text="Enable dynamic path rotation to evade detection", 
+                      variable=self.path_rotation_var, 
+                      command=self.toggle_path_rotation).grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=2)
+        
+        # Rotation interval
+        ttk.Label(rotation_frame, text="Rotation Interval (seconds):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        rotation_values = ["1800", "3600", "7200", "14400", "28800", "86400"]
+        self.rotation_interval_var = tk.StringVar(value="3600")
+        self.rotation_interval_combo = ttk.Combobox(rotation_frame, textvariable=self.rotation_interval_var, 
+                                                 values=rotation_values, width=27)
+        self.rotation_interval_combo.grid(row=1, column=1, padx=5, pady=5)
+        ttk.Label(rotation_frame, text="Rotation intervals: 30 min, 1 hour, 2 hours, 4 hours, 8 hours, 24 hours").grid(
+            row=2, column=0, columnspan=2, sticky="w", padx=5, pady=0)
+        
+        # Include rotation info
+        rotation_info_text = """Dynamic Path Rotation:
+        - Server and agents coordinate to change communication paths periodically
+        - Paths change based on the rotation interval
+        - Older paths remain valid for a limited time for reconnection
+        - Agents automatically update to new paths during communication
+        - Uses deterministic but unpredictable path generation"""
+        
+        rotation_info = tk.Text(rotation_frame, height=6, width=40, wrap=tk.WORD)
+        rotation_info.grid(row=3, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+        rotation_info.insert(tk.END, rotation_info_text)
+        rotation_info.config(state=tk.DISABLED)
+
         # SSL Option
         self.ssl_var = tk.BooleanVar()
         self.ssl_check = ttk.Checkbutton(self.frame, text="Use SSL", variable=self.ssl_var, command=self.toggle_ssl_options)
-        self.ssl_check.grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
+        self.ssl_check.grid(row=7, column=0, sticky=tk.W, padx=5, pady=5)
 
         # Certificate Path
-        ttk.Label(self.frame, text="Certificate Path:").grid(row=7, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.frame, text="Certificate Path:").grid(row=8, column=0, sticky=tk.W, padx=5, pady=5)
         self.entry_cert = ttk.Entry(self.frame, width=30, state='disabled')
-        self.entry_cert.grid(row=7, column=1, padx=5, pady=5)
+        self.entry_cert.grid(row=8, column=1, padx=5, pady=5)
         self.btn_browse_cert = ttk.Button(self.frame, text="Browse", command=self.browse_cert, state='disabled')
-        self.btn_browse_cert.grid(row=7, column=2, padx=5, pady=5)
+        self.btn_browse_cert.grid(row=8, column=2, padx=5, pady=5)
 
         # Key Path
-        ttk.Label(self.frame, text="Key Path:").grid(row=8, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.frame, text="Key Path:").grid(row=9, column=0, sticky=tk.W, padx=5, pady=5)
         self.entry_key = ttk.Entry(self.frame, width=30, state='disabled')
-        self.entry_key.grid(row=8, column=1, padx=5, pady=5)
+        self.entry_key.grid(row=9, column=1, padx=5, pady=5)
         self.btn_browse_key = ttk.Button(self.frame, text="Browse", command=self.browse_key, state='disabled')
-        self.btn_browse_key.grid(row=8, column=2, padx=5, pady=5)
+        self.btn_browse_key.grid(row=9, column=2, padx=5, pady=5)
 
         # Start Campaign Button
         self.btn_start_campaign = ttk.Button(self.frame, text="Start Campaign", command=self.start_campaign)
-        self.btn_start_campaign.grid(row=9, column=0, columnspan=3, pady=10)
+        self.btn_start_campaign.grid(row=10, column=0, columnspan=3, pady=10)
 
         # Stop Campaign Button
         self.btn_stop_campaign = ttk.Button(self.frame, text="Stop Campaign", command=self.stop_campaign, state=tk.DISABLED)
-        self.btn_stop_campaign.grid(row=10, column=0, columnspan=3, pady=10)
+        self.btn_stop_campaign.grid(row=11, column=0, columnspan=3, pady=10)
+
+    def toggle_path_rotation(self):
+        """Toggle path rotation options based on checkbox"""
+        state = 'normal' if self.path_rotation_var.get() else 'disabled'
+        self.rotation_interval_combo.config(state=state)
 
     def generate_random_urls(self):
         """Generate random, legitimate-looking URLs based on the selected pattern"""
@@ -327,6 +367,10 @@ class CampaignConfigTab:
         stager_path = self.entry_stager_path.get().strip() if use_custom_urls else "/b64_stager"
         cmd_result_path = self.entry_cmd_result_path.get().strip() if use_custom_urls else "/command_result"
         file_upload_path = self.entry_file_upload_path.get().strip() if use_custom_urls else "/file_upload"
+        
+        # Get path rotation settings
+        path_rotation = self.path_rotation_var.get()
+        rotation_interval = int(self.rotation_interval_var.get())
 
         if not campaign_name or not ip or not port or not beacon or not kill_date_str:
             messagebox.showerror("Error", "Please fill in all required fields.")
@@ -399,6 +443,8 @@ class CampaignConfigTab:
             f"Stager Path: {stager_path}\n"
             f"Command Result Path: {cmd_result_path}\n"
             f"File Upload Path: {file_upload_path}\n"
+            f"Path Rotation Enabled: {path_rotation}\n"
+            f"Rotation Interval: {rotation_interval} seconds\n"
         )
         config_path = os.path.join(campaign_dir, "config.txt")
         try:
@@ -422,7 +468,9 @@ class CampaignConfigTab:
                 use_ssl=use_ssl,
                 cert_path=cert_path if use_ssl else None,
                 key_path=key_path if use_ssl else None,
-                url_paths=url_paths  # Pass the URL paths to the webserver
+                url_paths=url_paths,  # Pass the URL paths to the webserver
+                path_rotation=path_rotation,  # Pass path rotation flag
+                rotation_interval=rotation_interval  # Pass rotation interval
             )
             self.btn_start_campaign.config(state=tk.DISABLED)
             self.btn_stop_campaign.config(state=tk.NORMAL)
