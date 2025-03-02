@@ -121,11 +121,28 @@ class ClientManager:
             # Notify listeners that a command has been added
             self.on_command_updated(client_id)
         else:
+            # Check if this is a key_rotation command - these should only be added to known clients
+            if command_type == "key_rotation":
+                self.log_event("ERROR", "Command Error", f"Cannot add key_rotation command for unknown client {client_id}")
+                return
+                
             # For backward compatibility, try to register client by IP if it's a valid client ID
             try:
                 ip_address = ip if ip != "Unknown" else client_id
                 self.add_client(ip_address, hostname)
-                self.add_command(ip_address, command_type, args, ip, hostname)
+                # Avoid recursion - directly add the command after registering the client
+                if ip_address in self.clients:
+                    command = {
+                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "command_type": command_type,
+                        "args": args
+                    }
+                    self.clients[ip_address]["pending_commands"].append(command)
+                    self.clients[ip_address]["history"].append(command)
+                    self.log_event(ip_address, "Command added", f"Command {command_type} with args {args} was added")
+                    self.on_command_updated(ip_address)
+                else:
+                    self.log_event("ERROR", "Command Error", f"Failed to add client for {ip_address}")
             except Exception as e:
                 self.log_event("ERROR", "Command Error", f"Failed to add command for unknown client {client_id}: {str(e)}")
 
@@ -172,13 +189,33 @@ class ClientManager:
         """Check if client already has a unique key"""
         if not hasattr(self, 'client_keys'):
             self.client_keys = {}
-        return client_id in self.client_keys
+        
+        # Direct check in client_keys dictionary
+        if client_id in self.client_keys:
+            return True
+        
+        # Additional check in client info if available
+        if client_id in self.clients:
+            if 'key_rotation_time' in self.clients[client_id]:
+                # If we have a rotation time recorded, assume the key exists
+                return True
+        
+        return False
 
     def set_client_key(self, client_id, key):
         """Set a unique key for a client"""
         if not hasattr(self, 'client_keys'):
             self.client_keys = {}
         self.client_keys[client_id] = key
+        
+        # Add timestamp for key rotation
+        from datetime import datetime
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Update client info with key rotation time
+        if client_id in self.clients:
+            self.clients[client_id]['key_rotation_time'] = current_time
+        
         self.log_event(client_id, "Security", "Unique encryption key assigned after verification")
         
         # Save keys to disk for persistence

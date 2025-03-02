@@ -297,6 +297,12 @@ function Process-Commands {
                 $detailedInfo = Get-SystemIdentification
                 $result = $detailedInfo
             }
+            elseif ($commandType -eq "key_rotation") {
+                # Handle key rotation command from operator
+                # This is a no-op since server will automatically send a key_rotation command
+                # on the next beacon if the client is verified
+                $result = "Key rotation request received - will be processed on next beacon"
+            }
             elseif ($commandType -eq "path_rotation") {
                 # Handle path rotation command
                 $rotationId = $args.rotation_id

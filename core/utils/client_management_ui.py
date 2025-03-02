@@ -121,12 +121,29 @@ class ClientDetailsUI:
             "frame": details_frame, 
             "tree": history_tree,
             "notebook": client_notebook,
-            "interaction": self.client_interaction
+            "interaction": self.client_interaction,
+            "verification_frame": verification_frame  # Store reference to verification frame
         }
+        
+        # Bind the tab selection event to refresh the verification tab
+        client_notebook.bind("<<NotebookTabChanged>>", lambda e: self.on_client_tab_changed(e, client_id, client_notebook))
         
         # Register the callback to update the history tree
         self.client_manager.register_command_update_callback(client_id,
-                                                             lambda: self.update_client_history_tree(client_id))
+                                                            lambda: self.update_client_history_tree(client_id))
+
+    def on_client_tab_changed(self, event, client_id, notebook):
+        """Handle tab changes in the client notebook"""
+        current_tab = notebook.select()
+        tab_text = notebook.tab(current_tab, "text")
+        
+        # If the Verification tab is selected, refresh it
+        if tab_text == "Verification" and client_id in self.client_details_tabs:
+            verification_frame = self.client_details_tabs[client_id].get("verification_frame")
+            if verification_frame:
+                updated_client_info = self.client_manager.get_clients_info().get(client_id, {})
+                if updated_client_info:
+                    self.populate_verification_tab(verification_frame, updated_client_info)
     
     def close_client_tab(self, client_id):
         """Close the client details tab"""
@@ -199,7 +216,19 @@ class ClientDetailsUI:
                     row += 1
 
     def populate_verification_tab(self, parent_frame, client_info):
-        """Populate the verification tab with identity verification information"""
+        """Populate the verification tab with identity verification information and key status"""
+        # Clear existing widgets first if any
+        for widget in parent_frame.winfo_children():
+            widget.destroy()
+        
+        # Get latest client info directly from client_manager
+        client_id = client_info.get("client_id") or next(iter(client_info), None)
+        if client_id:
+            # Get fresh data from client_manager
+            updated_client_info = self.client_manager.get_clients_info().get(client_id, {})
+            if updated_client_info:
+                client_info = updated_client_info
+        
         verification_status = client_info.get("verification_status", {
             "verified": False,
             "confidence": 0,
@@ -224,9 +253,93 @@ class ClientDetailsUI:
         status_label = ttk.Label(status_frame, text=status_text, foreground=status_color, font=("Arial", 10, "bold"))
         status_label.pack(side=tk.LEFT, padx=20)
         
+        # Manual refresh button
+        refresh_button = ttk.Button(
+            status_frame, 
+            text="Refresh Status", 
+            command=lambda: self.refresh_verification_tab(parent_frame, client_info)
+        )
+        refresh_button.pack(side=tk.RIGHT, padx=10)
+        
+        # ---- Key Status Section ----
+        key_frame = ttk.LabelFrame(parent_frame, text="Encryption Key Status")
+        key_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Determine key status more reliably
+        client_id = client_info.get("client_id", "Unknown")
+        has_unique_key = False
+        
+        # Check multiple indicators of a rotated key
+        if hasattr(self.client_manager, 'has_unique_key'):
+            # Use the dedicated method if available
+            has_unique_key = self.client_manager.has_unique_key(client_id)
+        elif hasattr(self.client_manager, 'client_keys'):
+            # Direct check of client_keys attribute
+            has_unique_key = client_id in self.client_manager.client_keys
+        
+        # Additional check in client info
+        if not has_unique_key and 'key_rotation_time' in client_info:
+            has_unique_key = True
+            
+        # Key type indicator
+        key_type_frame = ttk.Frame(key_frame)
+        key_type_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(key_type_frame, text="Key Type:").pack(side=tk.LEFT, padx=5)
+        
+        key_type = "Client-Specific Key" if has_unique_key else "Campaign Default Key"
+        key_type_color = "#008000" if has_unique_key else "#FF8C00"  # Green if client-specific, orange if default
+        ttk.Label(key_type_frame, text=key_type, foreground=key_type_color, font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        
+        # Key status details
+        key_details_frame = ttk.Frame(key_frame)
+        key_details_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Add rotation timestamp if available
+        if 'key_rotation_time' in client_info:
+            ttk.Label(key_details_frame, text=f"Last Key Rotation: {client_info['key_rotation_time']}").pack(anchor="w", padx=5, pady=2)
+            has_unique_key = True  # If we have rotation time, we definitely have a unique key
+        elif has_unique_key:
+            ttk.Label(key_details_frame, text="Key has been rotated (timestamp not available)").pack(anchor="w", padx=5, pady=2)
+        else:
+            ttk.Label(key_details_frame, text="No key rotation has occurred").pack(anchor="w", padx=5, pady=2)
+        
+        # Key rotation button - only enable if verified
+        rotation_button_frame = ttk.Frame(key_frame)
+        rotation_button_frame.pack(fill=tk.X, padx=5, pady=10)
+        
+        def request_key_rotation():
+            if verified:
+                # Add a key rotation command to the client
+                try:
+                    self.client_manager.add_command(client_id, "key_rotation", "Initiate key rotation")
+                    tk.messagebox.showinfo("Key Rotation", f"Key rotation request sent to client {client_id}")
+                    # Refresh the tab after sending the command
+                    self.refresh_verification_tab(parent_frame, client_info)
+                except Exception as e:
+                    tk.messagebox.showerror("Key Rotation Error", f"Could not request key rotation: {str(e)}")
+            else:
+                tk.messagebox.showwarning("Key Rotation", "Client must be verified before key rotation can occur")
+        
+        rotation_button = ttk.Button(
+            rotation_button_frame, 
+            text="Request Key Rotation", 
+            command=request_key_rotation,
+            state="normal" if verified else "disabled"
+        )
+        rotation_button.pack(side=tk.LEFT, padx=5)
+        
+        # Add a note about key rotation
+        ttk.Label(
+            rotation_button_frame, 
+            text="Note: Key rotation requires client verification",
+            font=("Arial", 8, "italic"),
+            foreground="#666666"
+        ).pack(side=tk.LEFT, padx=5)
+        
         # Warnings section
         warnings_frame = ttk.LabelFrame(parent_frame, text="Verification Warnings")
-        warnings_frame.pack(fill=tk.BOTH, padx=10, pady=10, expand=True)
+        warnings_frame.pack(fill=tk.X, padx=10, pady=10)
         
         warnings = verification_status.get("warnings", [])
         if warnings:
@@ -235,8 +348,9 @@ class ClientDetailsUI:
         else:
             ttk.Label(warnings_frame, text="No verification warnings", foreground="#008000").pack(anchor="w", padx=10, pady=2)
         
+        
         # Explanation section
-        explanation_frame = ttk.LabelFrame(parent_frame, text="About Verification")
+        explanation_frame = ttk.LabelFrame(parent_frame, text="About Verification & Key Rotation")
         explanation_frame.pack(fill=tk.X, padx=10, pady=10)
         
         explanation_text = """
@@ -249,10 +363,23 @@ class ClientDetailsUI:
         • OS version and hardware information
         
         A confidence score above 70% is considered verified. Warning signs include changes to critical identifiers.
+        
+        Key rotation enhances security by using a unique encryption key for each verified client. This prevents
+        a compromise of one client from affecting others. Only verified clients can receive unique keys.
         """
         
         explanation_label = ttk.Label(explanation_frame, text=explanation_text, wraplength=400, justify=tk.LEFT)
         explanation_label.pack(padx=10, pady=10)
+
+    def refresh_verification_tab(self, parent_frame, client_info):
+        """Force refresh of the verification tab"""
+        client_id = client_info.get("client_id")
+        if client_id:
+            # Get fresh data
+            updated_client_info = self.client_manager.get_clients_info().get(client_id, {})
+            if updated_client_info:
+                self.populate_verification_tab(parent_frame, updated_client_info)
+                tk.messagebox.showinfo("Refresh", "Verification status updated")
 
     def populate_history_tree(self, client_id, history_tree):
         """Populates the history tree with the client's command history."""
