@@ -57,9 +57,22 @@ class LogManager:
         self.log_file_path = os.path.join(self.logs_folder, "event_log.txt")
         
         # Add a file handler to save logs to the file
+        # First, remove any existing handlers to avoid duplicates when reloading a campaign
+        for handler in self.logger.handlers[:]:
+            if isinstance(handler, logging.FileHandler):
+                self.logger.removeHandler(handler)
+        
+        # Add the new file handler
         file_handler = logging.FileHandler(self.log_file_path)
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         self.logger.addHandler(file_handler)
+        
+        # Log campaign initialization
+        is_existing = os.path.exists(self.log_file_path) and os.path.getsize(self.log_file_path) > 0
+        if is_existing:
+            self.log(f"Resuming existing campaign: {campaign_name}")
+        else:
+            self.log(f"Starting new campaign: {campaign_name}")
     
     def log(self, message):
         """Log a general message.
@@ -89,6 +102,37 @@ class LogManager:
         if self.log_file_path:
             with open(self.log_file_path, "a") as log_file:
                 log_file.write(formatted_event + "\n")
+    
+    def load_existing_logs(self, max_entries=100):
+        """Load existing log entries from the campaign log file into the GUI.
+        
+        Args:
+            max_entries: Maximum number of log entries to load (default: 100)
+        """
+        if not self.log_file_path or not os.path.exists(self.log_file_path):
+            return
+            
+        try:
+            with open(self.log_file_path, 'r') as f:
+                # Read last N lines from the log file
+                lines = f.readlines()
+                last_lines = lines[-max_entries:] if len(lines) > max_entries else lines
+                
+                if self.log_area_widget:
+                    self.log_area_widget.config(state="normal")
+                    # Add a separator to indicate loaded logs
+                    self.log_area_widget.insert("end", "--- Loading previous logs ---\n")
+                    
+                    # Add each log entry
+                    for line in last_lines:
+                        self.log_area_widget.insert("end", line)
+                    
+                    # Add another separator
+                    self.log_area_widget.insert("end", "--- Current session logs ---\n")
+                    self.log_area_widget.see("end")
+                    self.log_area_widget.config(state="disabled")
+        except Exception as e:
+            self.logger.error(f"Error loading existing logs: {e}")
     
     def log_client_event(self, client_id, event_type, details):
         """Log an event for a specific client.

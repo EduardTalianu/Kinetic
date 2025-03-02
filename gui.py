@@ -51,6 +51,9 @@ class MainGUI:
         self.agent_generation_tab = agent_generation.AgentGenerationTab(self.notebook, self.campaign_tab, self.log_manager.log)  # Agent Generation Tab
         self.client_management_tab = client_management.ClientManagementTab(self.notebook, self.client_manager, self.log_manager.log)  # Client Management tab
 
+        # Provide access to the log_manager to campaign_tab
+        self.campaign_tab.log_manager = self.log_manager
+
         self.notebook.add(self.campaign_tab.frame, text="Campaign Config")
         self.notebook.add(self.agent_generation_tab.frame, text="Agent Generation")  # Agent Generation is added second
         self.notebook.add(self.client_management_tab.frame, text="Client Management")  # Client management is added third.
