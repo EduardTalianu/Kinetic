@@ -65,6 +65,23 @@ class ClientInteractionUI:
         self.command_entry.bind("<Up>", self.previous_command)
         self.command_entry.bind("<Down>", self.next_command)
         
+        # Status indicators frame
+        status_frame = ttk.Frame(console_frame)
+        status_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
+        
+        # Connection indicator
+        self.connection_status = ttk.Label(status_frame, text="Connection: Active", foreground="green")
+        self.connection_status.pack(side=tk.LEFT, padx=5)
+        
+        # Key rotation indicator
+        self.key_status = ttk.Label(status_frame, text="Key: Default", foreground="orange")
+        self.key_status.pack(side=tk.LEFT, padx=5)
+        self.update_key_status()
+        
+        # Refresh button
+        refresh_button = ttk.Button(status_frame, text="Refresh Status", command=self.update_key_status)
+        refresh_button.pack(side=tk.RIGHT, padx=5)
+        
         # Quick commands frame
         quick_cmd_frame = ttk.LabelFrame(self.main_frame, text="Quick Commands")
         quick_cmd_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -96,6 +113,53 @@ class ClientInteractionUI:
         
         ttk.Button(row3_frame, text="Client Info", width=15,
                   command=lambda: self.send_command("Get-SystemIdentification", command_type="system_info")).pack(side=tk.LEFT, padx=5)
+                  
+        # Add a clear all pending commands button
+        ttk.Button(row3_frame, text="Clear Pending", width=15,
+                  command=self.clear_pending_commands).pack(side=tk.LEFT, padx=5)
+                  
+        # Add a reconnect button that refreshes the connection
+        ttk.Button(row3_frame, text="Reconnect", width=15,
+                  command=self.reconnect_client).pack(side=tk.LEFT, padx=5)
+    
+    def update_key_status(self):
+        """Update the key status indicator based on client manager info"""
+        has_unique_key = False
+        client_id = self.client_id
+        
+        # Check if client has a unique key
+        if hasattr(self.client_manager, 'has_unique_key'):
+            has_unique_key = self.client_manager.has_unique_key(client_id)
+        elif hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys:
+            has_unique_key = True
+        else:
+            # Check if key_rotation_time exists in client info
+            client_info = self.client_manager.get_clients_info().get(client_id, {})
+            if 'key_rotation_time' in client_info:
+                has_unique_key = True
+        
+        if has_unique_key:
+            self.key_status.config(text="Key: Client-Specific", foreground="green")
+        else:
+            self.key_status.config(text="Key: Default", foreground="orange")
+            
+    def clear_pending_commands(self):
+        """Clear all pending commands for this client"""
+        if self.client_id:
+            self.client_manager.clear_pending_commands(self.client_id)
+            self.append_output("All pending commands cleared.\n")
+            # Update the display
+            self.update_interaction_display()
+    
+    def reconnect_client(self):
+        """Force a client reconnection by requesting reregistration"""
+        if self.client_id:
+            self.send_command("echo 'Reconnection requested'", command_type="reconnect")
+            self.append_output("Reconnection request sent to client.\n")
+            self.connection_status.config(text="Connection: Reconnecting...", foreground="orange")
+            # Schedule a status update after a short delay
+            self.parent_frame.after(5000, self.update_key_status)
+            self.parent_frame.after(5000, lambda: self.connection_status.config(text="Connection: Active", foreground="green"))
     
     def submit_command(self, event=None):
         """Submit the command when Enter is pressed"""
@@ -168,6 +232,9 @@ class ClientInteractionUI:
             # Add debug logging
             self.logger(f"Updating interaction display for client {self.client_id}")
             
+            # Also update key status indicator
+            self.update_key_status()
+            
             history = self.client_manager.get_client_history(self.client_id)
             if not history:
                 self.logger(f"No command history found for client {self.client_id}")
@@ -199,15 +266,19 @@ class ClientInteractionUI:
                             else:
                                 output += str(result) + "\n"
                             output += "Note: Communication is now using a client-specific key\n"
+                            
+                            # Update key status indicator
+                            self.update_key_status()
                         elif command_type == "key_status":
                             # Special formatting for key status results
                             if "key" in str(result).lower():
                                 output += result + "\n"
                             else:
                                 # Try to extract key info from system info
-                                client_info = self.client_manager.get_client_info(self.client_id)
-                                if client_info and 'key_id' in client_info:
-                                    output += f"Current key ID: {client_info['key_id']}\n"
+                                client_info = self.client_manager.get_clients_info().get(self.client_id, {})
+                                if client_info and hasattr(self.client_manager, 'has_unique_key'):
+                                    has_key = self.client_manager.has_unique_key(self.client_id)
+                                    output += f"Using {'client-specific' if has_key else 'campaign default'} key\n"
                                 else:
                                     output += "Using campaign default key\n"
                                 output += result + "\n"

