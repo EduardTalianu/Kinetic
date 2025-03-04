@@ -18,6 +18,7 @@ class CampaignConfigTab:
         self.client_manager = client_manager
         self.log_manager = None  # Will be set by the MainGUI after initialization
         self.server_thread = None
+        self.is_loaded_campaign = False  # Add this line
         self.create_widgets()
 
     def create_widgets(self):
@@ -153,6 +154,7 @@ class CampaignConfigTab:
         campaign_name = "Campaign_" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
         self.entry_campaign.delete(0, tk.END)
         self.entry_campaign.insert(0, campaign_name)
+        self.is_loaded_campaign = False
     
     def load_campaign(self):
         """Load an existing campaign from a folder"""
@@ -166,8 +168,8 @@ class CampaignConfigTab:
         folder_name = os.path.basename(campaign_folder)
         if not folder_name.endswith("_campaign"):
             messagebox.showerror("Invalid Campaign", 
-                              "The selected folder does not appear to be a valid campaign folder.\n"
-                              "Campaign folders should end with '_campaign'.")
+                            "The selected folder does not appear to be a valid campaign folder.\n"
+                            "Campaign folders should end with '_campaign'.")
             return
         
         # Get campaign name by removing "_campaign" suffix
@@ -177,8 +179,8 @@ class CampaignConfigTab:
         config_path = os.path.join(campaign_folder, "config.txt")
         if not os.path.exists(config_path):
             messagebox.showerror("Invalid Campaign", 
-                              f"Could not find configuration file in {campaign_folder}.\n"
-                              "Make sure you selected a valid campaign folder.")
+                            f"Could not find configuration file in {campaign_folder}.\n"
+                            "Make sure you selected a valid campaign folder.")
             return
         
         # Load configuration from config.txt
@@ -191,12 +193,16 @@ class CampaignConfigTab:
                 self.load_url_paths(url_paths_file)
                 
             messagebox.showinfo("Campaign Loaded", 
-                             f"Campaign '{campaign_name}' loaded successfully.\n"
-                             "You can now start the campaign to resume operations.")
+                            f"Campaign '{campaign_name}' loaded successfully.\n"
+                            "You can now start the campaign to resume operations.")
             
             # Set the log manager campaign folder
             if self.log_manager:
                 self.log_manager.set_campaign_folder(campaign_name)
+                
+            # Set flag to indicate this is a loaded campaign
+            self.is_loaded_campaign = True
+                
         except Exception as e:
             messagebox.showerror("Load Error", f"Error loading campaign: {e}")
     
@@ -539,7 +545,7 @@ class CampaignConfigTab:
         campaign_dir = campaign_name + "_campaign"
         
         # Check if this is an existing campaign being restarted or a new one
-        is_existing_campaign = os.path.exists(campaign_dir)
+        is_existing_campaign = self.is_loaded_campaign
         
         try:
             # Create the campaign directory if it doesn't exist
