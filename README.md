@@ -1,119 +1,72 @@
 # Kinetic Compliance Matrix
 
-A modular Command & Control (C2) platform designed for security professionals to simulate adversarial operations in controlled environments.
-
-![Kinetic Compliance Matrix](https://via.placeholder.com/800x400?text=Kinetic+Compliance+Matrix)
+A modular and extensible command and control (C2) framework for security testing and assessment purposes.
 
 ## Overview
 
-Kinetic Compliance Matrix is a Python-based C2 framework that provides a graphical interface for managing simulated cyber operations. It allows security teams to generate various agent payloads, manage client connections, and execute commands across multiple systems to test defensive controls and response procedures.
+Kinetic Compliance Matrix is a powerful yet user-friendly C2 framework designed for security professionals conducting authorized security assessments. The application provides a complete solution for creating, managing, and monitoring client connections within a campaign-based structure.
 
-## Features
+## Key Features
 
-- **Campaign Management**: Create, configure, and monitor security testing campaigns
-- **Multiple Agent Types**: Generate various payload types including PowerShell, HTA, and Office macros
-- **Real-time Command Execution**: Execute commands on connected clients and view results in real-time
-- **Centralized Logging**: Comprehensive logging system for tracking all events and command executions
-- **Client Management**: Track and interact with multiple connected clients through an intuitive interface
+- **Intuitive GUI Interface**: Easy-to-use interface for campaign management and client interaction
+- **Dynamic Path Rotation**: Automatic URL path rotation to evade detection
+- **Client Identity Verification**: Sophisticated client verification using multiple system identifiers
+- **Per-Client Encryption Keys**: Enhanced security with unique encryption keys per verified client
+- **PowerShell Agent Generation**: Built-in PowerShell agent creation with customizable options
+- **Interactive Command Console**: Real-time interaction with connected clients
+- **Campaign Management**: Create, save, and load campaigns with comprehensive settings
+- **TLS/SSL Support**: Optional secure communications with custom certificates
+- **Comprehensive Logging**: Detailed event logging for all client activities
 
-## Installation
+## Components
 
-### Prerequisites
+- **Campaign Configuration**: Set up campaign parameters including C2 server details, paths, and security options
+- **Agent Generation**: Create customized agents with proper encryption and communication settings
+- **Client Management**: Monitor connected clients with detailed system information
+- **Interactive Console**: Execute commands and view results in real-time
+- **Client Verification**: Monitor trust levels and manage per-client encryption
+
+## Getting Started
+
+1. Launch the application
+2. Configure a new campaign with desired settings
+3. Start the campaign to initialize the C2 server
+4. Generate client agents using the Agent Generation tab
+5. Deploy agents to target systems (for authorized testing only)
+6. Manage and interact with connected clients through the Client Management tab
+
+## Security Features
+
+- **AES-256-CBC Encryption**: All communications are encrypted using industry-standard encryption
+- **Identity Verification**: Clients are verified using multiple system identifiers to prevent session hijacking
+- **Dynamic Path Rotation**: Paths change at configurable intervals to evade detection
+- **Per-Client Key Rotation**: Verified clients receive unique encryption keys for enhanced security
+
+## Important Note
+
+This tool is designed for legitimate security testing purposes only. Always ensure you have proper authorization before deploying agents in any environment. Unauthorized use may violate local laws and regulations.
+
+## Requirements
 
 - Python 3.6+
-- tkinter (usually included with Python)
-
-### Setup
-
-1. Clone the repository:
-   ```
-   git clone https://github.com/yourusername/kinetic-compliance-matrix.git
-   cd kinetic-compliance-matrix
-   ```
-
-2. Install required packages:
-   ```
-   pip install -r requirements.txt
-   ```
-
-3. Run the application:
-   ```
-   python gui.py
-   ```
+- Required packages:
+  - tkinter
+  - cryptography
+  - socket
+  - datetime
+  - json
 
 ## Usage
 
-### Creating a Campaign
-
-1. Launch the application
-2. In the **Campaign Config** tab, configure:
-   - Campaign Name
-   - Command & Control IP
-   - Port for C2 communication
-   - Beacon period for agents
-   - Kill date for campaign expiration
-3. Click "Start Campaign" to initialize the C2 server
-
-### Generating Agents
-
-1. Navigate to the **Agent Generation** tab
-2. Select the desired agent types
-3. Click "Generate Agents"
-4. Agents will be saved in the campaign folder for deployment
-
-### Managing Clients
-
-1. After clients connect to your C2 server, they will appear in the **Client Management** tab
-2. Right-click on a client to:
-   - Execute commands
-   - View client details
-   - Add custom commands
-
-### Command Execution
-
-1. Select a client from the client list
-2. Right-click and select "Add Custom Command" or use one of the predefined commands
-3. View command results in the client details tab
-
-## Project Structure
+Run `python main.py` to start the application. Command-line options:
 
 ```
-kinetic-compliance-matrix/
-├── core/
-│   ├── agent_generation.py   # Agent payload generation
-│   ├── campaign_config.py    # Campaign configuration management
-│   ├── client_management.py  # Client tracking and command management
-│   ├── cmd.py               # Command execution engine
-│   ├── log_management.py    # Centralized logging system
-│   └── webserver.py         # C2 server implementation
-├── gui.py                   # Main application and UI controller
-└── requirements.txt         # Project dependencies
+--headless       Run in headless mode (no GUI)
+--campaign       Campaign name to automatically load
+--config         Path to config file
+--debug          Enable debug logging
 ```
 
-## Logging
+## Disclaimer
 
-All operations, commands, and responses are logged in:
-- The main GUI event viewer
-- Campaign-specific log files in `[campaign_name]_campaign/logs/`
-- Client-specific log files for tracking individual client activities
-
-## Security Notice
-
-This tool is designed for legitimate security testing by authorized security professionals. Only use in environments where you have explicit permission to conduct security testing.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- This tool was developed for educational and professional security testing purposes
-- Inspired by various open-source C2 frameworks in the security community
+This tool is provided for educational and authorized security testing purposes only. The authors are not responsible for any misuse or damage caused by this software. Always obtain proper authorization before conducting security assessments.
