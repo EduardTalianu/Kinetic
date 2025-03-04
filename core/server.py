@@ -102,12 +102,12 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         if use_ssl and cert_path and key_path:
             if os.path.exists(cert_path) and os.path.exists(key_path):
                 try:
-                    httpd.socket = ssl.wrap_socket(
-                        httpd.socket,
-                        certfile=cert_path,
-                        keyfile=key_path,
-                        server_side=True
-                    )
+                    # Create SSL context
+                    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                    ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+                    
+                    # Wrap the socket with the SSL context
+                    httpd.socket = ssl_context.wrap_socket(httpd.socket, server_side=True)
                     logger(f"SSL enabled with certificate {cert_path} and key {key_path}")
                 except ssl.SSLError as e:
                     logger(f"SSL configuration failed: {e}")

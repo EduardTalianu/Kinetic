@@ -10,6 +10,8 @@ from core.client import ClientManager
 from ui.campaign_tab import CampaignConfigTab
 from ui.agent_tab import AgentGenerationTab
 from ui.client_tab import ClientManagementTab
+# Add import for the new Certificate Management tab
+from ui.certificate_tab import CertificateManagementTab
 
 class MainGUI:
     def __init__(self, master):
@@ -50,6 +52,9 @@ class MainGUI:
         self.campaign_tab = CampaignConfigTab(self.notebook, self.client_manager, self.log_manager.log)
         self.agent_generation_tab = AgentGenerationTab(self.notebook, self.campaign_tab, self.log_manager.log)
         self.client_management_tab = ClientManagementTab(self.notebook, self.client_manager, self.log_manager.log)
+        
+        # Create the Certificate Management tab
+        self.certificate_tab = CertificateManagementTab(self.notebook, self.log_manager.log, self.campaign_tab)
 
         # Provide access to the log_manager to campaign_tab
         self.campaign_tab.log_manager = self.log_manager
@@ -57,7 +62,10 @@ class MainGUI:
         self.notebook.add(self.campaign_tab.frame, text="Campaign Config")
         self.notebook.add(self.agent_generation_tab.frame, text="Agent Generation")
         self.notebook.add(self.client_management_tab.frame, text="Client Management")
+        # Add the Certificate Management tab
+        self.notebook.add(self.certificate_tab.frame, text="Certificate Management")
 
+    # The rest of the class remains unchanged
     def populate_default_campaign_data(self):
         """Populates the Campaign Config tab with default values."""
         # Generate a random campaign name
