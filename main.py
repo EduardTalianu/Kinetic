@@ -19,27 +19,32 @@ from core.app import MainGUI
 from core.config import ConfigManager
 from core.logging import LogManager
 
-def setup_logging():
+def setup_logging(debug=False):
     """Set up basic logging for the application"""
-    # Create logs directory if it doesn't exist
-    os.makedirs('logs', exist_ok=True)
+    logger = logging.getLogger('main')
     
-    # Configure file logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        filename='logs/main.log',
-        filemode='a'
-    )
-    
-    # Add console handler
+    # If handlers already exist, don't add more (prevents duplicate logging)
+    if logger.handlers:
+        if debug and logger.level != logging.DEBUG:
+            logger.setLevel(logging.DEBUG)
+            for handler in logger.handlers:
+                handler.setLevel(logging.DEBUG)
+        return logger
+        
+    # Set up a console handler for immediate feedback
     console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
+    console.setLevel(logging.DEBUG if debug else logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     console.setFormatter(formatter)
-    logging.getLogger('').addHandler(console)
+    logger.addHandler(console)
     
-    return logging.getLogger('main')
+    # Set the logger level
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    
+    # We'll no longer initialize a file handler here - this will be handled by LogManager
+    # when a campaign is created or loaded, logs will go to the campaign folder instead
+    
+    return logger
 
 def parse_arguments():
     """Parse command line arguments"""
@@ -57,10 +62,7 @@ def main():
     args = parse_arguments()
     
     # Set up logging
-    logger = setup_logging()
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
-        logger.debug("Debug logging enabled")
+    logger = setup_logging(debug=args.debug)
     
     logger.info("Starting Kinetic Compliance Matrix")
     
