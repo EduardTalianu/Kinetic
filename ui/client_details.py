@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import json
 from ui.client_interaction import ClientInteractionUI
+from ui.client_files import ClientFilesUI
 
 class ClientDetailsUI:
     """Handles the UI components for displaying client details"""
@@ -474,3 +475,123 @@ class ClientDetailsUI:
                         self.result_text.insert(tk.END, result)
                         self.result_text.config(state=tk.DISABLED)
                         break
+
+
+    def create_client_details_tab(self, client_id):
+        """
+        Create a tab showing detailed information about a client
+        
+        Args:
+            client_id: The unique identifier for the client
+        """
+        # Check if the tab already exists
+        if client_id in self.client_details_tabs:
+            self.notebook.select(self.client_details_tabs[client_id]["frame"])
+            return
+
+        details_frame = ttk.Frame(self.notebook)
+        
+        # Add close button to tab
+        tab_text = f"Client {client_id}"
+        self.notebook.add(details_frame, text=tab_text)
+        
+        # Create a close button for the tab
+        close_button_frame = ttk.Frame(details_frame)
+        close_button_frame.pack(fill=tk.X, pady=(5, 0), padx=5, anchor="ne")
+        close_button = ttk.Button(
+            close_button_frame, 
+            text="Close Tab", 
+            command=lambda: self.close_client_tab(client_id)
+        )
+        close_button.pack(side=tk.RIGHT)
+        
+        self.notebook.select(details_frame)  # Open the new tab
+
+        client_info = self.client_manager.get_clients_info().get(client_id, {})
+        
+        # Create a notebook for the client details to organize information
+        client_notebook = ttk.Notebook(details_frame)
+        client_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Tab for system information
+        sys_info_frame = ttk.Frame(client_notebook)
+        client_notebook.add(sys_info_frame, text="System Information")
+        
+        # Tab for command history
+        history_frame = ttk.Frame(client_notebook)
+        client_notebook.add(history_frame, text="Command History")
+
+        # Tab for verification information
+        verification_frame = ttk.Frame(client_notebook)
+        client_notebook.add(verification_frame, text="Verification")
+        
+        # Tab for interaction
+        interaction_frame = ttk.Frame(client_notebook)
+        client_notebook.add(interaction_frame, text="Interaction")
+        
+        # Tab for file management (NEW)
+        files_frame = ttk.Frame(client_notebook)
+        client_notebook.add(files_frame, text="Files")
+        
+        # System Information Tab
+        self.populate_system_info_tab(sys_info_frame, client_info)
+        
+        # Verification Tab
+        self.populate_verification_tab(verification_frame, client_info)
+        
+        # Command History Tab - Treeview for Command History
+        columns = ("Timestamp", "Type", "Arguments", "Result")
+        history_tree = ttk.Treeview(history_frame, columns=columns, show="headings")
+        history_tree.heading("Timestamp", text="Timestamp")
+        history_tree.heading("Type", text="Type")
+        history_tree.heading("Arguments", text="Arguments")
+        history_tree.heading("Result", text="Result Status")
+
+        # Adjust column widths
+        history_tree.column("Timestamp", width=150)
+        history_tree.column("Type", width=100)
+        history_tree.column("Arguments", width=200)
+        history_tree.column("Result", width=100)
+
+        history_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Add scrollbar for history tree
+        history_scrollbar = ttk.Scrollbar(history_frame, orient="vertical", command=history_tree.yview)
+        history_tree.configure(yscrollcommand=history_scrollbar.set)
+        history_scrollbar.pack(side="right", fill="y")
+
+        # Create a scrolled text widget for displaying detailed result
+        result_frame = ttk.LabelFrame(history_frame, text="Command Result Details")
+        result_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        self.result_text = scrolledtext.ScrolledText(result_frame, wrap=tk.WORD, state=tk.DISABLED)
+        self.result_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Bind a function to handle selection change
+        history_tree.bind("<ButtonRelease-1>", lambda event, tree=history_tree: self.on_select_command(event, tree, client_id))
+        history_tree.bind("<Return>", lambda event, tree=history_tree: self.on_select_command(event, tree, client_id))
+
+        self.populate_history_tree(client_id, history_tree)
+        
+        # Initialize the interaction tab
+        self.client_interaction = ClientInteractionUI(interaction_frame, client_id, self.client_manager, self.logger)
+        
+        # Initialize the files tab (NEW)
+        self.client_files = ClientFilesUI(files_frame, client_id, self.client_manager, self.logger)
+
+        # Store history_tree and frame for later access
+        self.client_details_tabs[client_id] = {
+            "frame": details_frame, 
+            "tree": history_tree,
+            "notebook": client_notebook,
+            "interaction": self.client_interaction,
+            "files": self.client_files,  # NEW
+            "verification_frame": verification_frame  # Store reference to verification frame
+        }
+        
+        # Bind the tab selection event to refresh the verification tab
+        client_notebook.bind("<<NotebookTabChanged>>", lambda e: self.on_client_tab_changed(e, client_id, client_notebook))
+        
+        # Register the callback to update the history tree
+        self.client_manager.register_command_update_callback(client_id,
+                                                            lambda: self.update_client_history_tree(client_id))

@@ -54,6 +54,39 @@ class CommandExecutor:
                 result = self.handle_file_upload(client_id, args)
                 logger.info(f"Upload result for {client_id}: {result}")
                 self.update_history(client_id, command, result)
+            elif command_type == "file_upload":
+                # Handle file upload from server to client
+                # Format: "Upload-File 'ServerFilePath' 'ClientDestination'"
+                try:
+                    # Correctly parse the 'Upload-File' format with quoted arguments
+                    args_str = args
+                    if "Upload-File '" in args_str:
+                        # Extract the paths from the command format
+                        parts = args_str.replace("Upload-File ", "").strip()
+                        # Split on "' '"
+                        if "' '" in parts:
+                            server_path, client_path = parts.split("' '", 1)
+                            server_path = server_path.strip("'")
+                            client_path = client_path.strip("'")
+                            
+                            result = f"File upload initiated: {server_path} to client at {client_path}"
+                            logger.info(f"Server to client file upload: {result}")
+                        else:
+                            result = f"Error: Invalid format for Upload-File command: {args_str}"
+                            logger.error(result)
+                    else:
+                        result = f"Error: Not a valid Upload-File command: {args_str}"
+                        logger.error(result)
+                except Exception as e:
+                    result = f"Error parsing file upload command: {str(e)}"
+                    logger.error(result)
+                    
+                self.update_history(client_id, command, result)
+            elif command_type == "download":
+                # Handle download from client to server
+                result = f"File download requested from client: {args}"
+                logger.info(result)
+                self.update_history(client_id, command, result)
             elif command_type == "system_info" or command_type == "key_status" or command_type == "screenshot":
                 # Handle special command types
                 result = f"Command type '{command_type}' simulated in local environment"
@@ -67,24 +100,36 @@ class CommandExecutor:
             self.update_history(client_id, command, f"Error: {str(e)}")
 
     def run_system_command(self, args):
-        """Execute a real system command and return its output."""
+        """Execute a system command and return its output."""
         try:
             # Detect the operating system
             is_windows = platform.system() == "Windows"
 
-            # Adjust command for platform compatibility
-            if args == "whoami" and not is_windows:
-                args = "id -un"  # Use 'id -un' on Unix-like systems instead of 'whoami'
-
-            # Run the command and capture output
-            result = subprocess.run(
-                args.split(),  # Split args into list for subprocess (assumes space-separated args)
-                shell=is_windows,  # Use shell=True on Windows for built-in commands like 'dir'
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            return result.stdout.strip()  # Return the command output
+            # Check if this might be a PowerShell command
+            is_powershell_command = any(ps_cmd in args for ps_cmd in [
+                "Get-", "Set-", "New-", "Remove-", "Import-", "Export-", 
+                "ConvertTo-", "ConvertFrom-", "Select-Object", "|"
+            ])
+            
+            if is_windows and is_powershell_command:
+                # For PowerShell commands, use powershell.exe
+                full_command = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "{args}"'
+                result = subprocess.run(
+                    full_command,
+                    shell=True,
+                    capture_output=True,
+                    text=True
+                )
+                return result.stdout.strip() or result.stderr.strip()
+            else:
+                # Run the command and capture output
+                result = subprocess.run(
+                    args,
+                    shell=is_windows,  # Use shell=True on Windows for built-in commands like 'dir'
+                    capture_output=True,
+                    text=True
+                )
+                return result.stdout.strip() or result.stderr.strip()
         except subprocess.CalledProcessError as e:
             return f"Command failed with error: {e.stderr.strip()}"
         except Exception as e:

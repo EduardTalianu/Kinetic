@@ -9,6 +9,7 @@ $global:initialPaths = @{
     "beacon_path" = "{{BEACON_PATH}}";
     "cmd_result_path" = "{{CMD_RESULT_PATH}}";
     "file_upload_path" = "{{FILE_UPLOAD_PATH}}";
+    "file_request_path" = "{{FILE_REQUEST_PATH}}";
 }
 
 # Store current paths
@@ -56,6 +57,7 @@ function Get-CurrentPath {
         "beacon_path" { return "/beacon" }
         "cmd_result_path" { return "/command_result" }
         "file_upload_path" { return "/file_upload" }
+        "file_request_path" { return "/file_request" }
         default { return "/$PathType" }
     }
 }

