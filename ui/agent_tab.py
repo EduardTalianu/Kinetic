@@ -3,8 +3,9 @@ from tkinter import ttk, messagebox
 import base64
 import os
 import sys
-import importlib.util
+import json
 from pathlib import Path
+from utils.agent_generator import generate_pwsh_base64_str
 
 class AgentGenerationTab:
     def __init__(self, parent, campaign_tab, logger):
@@ -13,71 +14,25 @@ class AgentGenerationTab:
         self.frame = ttk.Frame(parent)
         self.selected_agents = {}  # mapping agent name to tk.BooleanVar
         
-        # Initialize the agent modules
-        self.init_agent_modules()
-        
         # Create the UI widgets
         self.create_widgets()
-
-    def init_agent_modules(self):
-        """Initialize the agent generator modules."""
-        # Map agent names to their module and function - Simplified to only PowerShell Base64
-        self.agent_options = {
-            "Powershell Base64": ("powershell_agents", "generate_pwsh_base64_str")
-        }
-        
-        # Load the modules
-        self.modules = {}
-        for agent_name, (module_name, _) in self.agent_options.items():
-            if module_name not in self.modules:
-                try:
-                    self.modules[module_name] = self.load_agent_module(module_name)
-                except ImportError as e:
-                    self.logger(f"Failed to load module {module_name}: {str(e)}")
-                    # Create empty core/helpers directory if it doesn't exist
-                    helpers_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "helpers")
-                    os.makedirs(helpers_dir, exist_ok=True)
-
-    def load_agent_module(self, module_name):
-        """Dynamically load agent generator modules from the helpers directory."""
-        # First try to load from helpers/powershell/agent.py
-        if module_name == "powershell_agents":
-            helpers_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "helpers", "powershell")
-            module_path = os.path.join(helpers_dir, f"agent.py")
-            
-            if os.path.exists(module_path):
-                spec = importlib.util.spec_from_file_location(module_name, module_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                return module
-                
-        # Fall back to old location
-        helpers_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "helpers")
-        module_path = os.path.join(helpers_dir, f"{module_name}.py")
-        
-        if not os.path.exists(module_path):
-            raise ImportError(f"Agent module {module_name} not found at {module_path}")
-        
-        spec = importlib.util.spec_from_file_location(module_name, module_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
 
     def create_widgets(self):
         # Frame for checkboxes
         checkbox_frame = ttk.LabelFrame(self.frame, text="Select Agent Types")
         checkbox_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Create checkboxes for each agent option
-        for i, option in enumerate(self.agent_options):
-            var = tk.BooleanVar(value=True)
-            chk = ttk.Checkbutton(checkbox_frame, text=option, variable=var)
-            chk.grid(row=i // 2, column=i % 2, sticky=tk.W, padx=5, pady=2)
-            self.selected_agents[option] = var
+        # Create checkbox for PowerShell Base64 agent option (simplified to only this option)
+        agent_option = "Powershell Base64"
+        var = tk.BooleanVar(value=True)
+        chk = ttk.Checkbutton(checkbox_frame, text=agent_option, variable=var)
+        chk.grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        self.selected_agents[agent_option] = var
 
         # Button to generate agents
         self.btn_generate = ttk.Button(self.frame, text="Generate Agents", command=self.generate_agents_ui)
         self.btn_generate.pack(pady=5)
+        
         # Text widget to display agent summary
         self.text_agent = tk.Text(self.frame, height=20)
         self.text_agent.pack(fill=tk.BOTH, padx=5, pady=5, expand=True)
@@ -103,29 +58,22 @@ class AgentGenerationTab:
             messagebox.showerror("Error", f"Campaign folder '{campaign_folder}' does not exist. Start the campaign first.")
             return
         if not os.path.exists(agents_folder):
-          os.makedirs(agents_folder, exist_ok=True)
+            os.makedirs(agents_folder, exist_ok=True)
 
         agent_results = []
-        # For each selected agent type, generate the agent and save it in the campaign folder.
-        for option, (module_name, func_name) in self.agent_options.items():
-            if self.selected_agents[option].get():
-                try:
-                    # Get the module
-                    module = self.modules.get(module_name)
-                    if not module:
-                        raise ImportError(f"Module {module_name} not loaded")
-                    
-                    # Get the function
-                    func = getattr(module, func_name)
-                    if not func:
-                        raise AttributeError(f"Function {func_name} not found in module {module_name}")
-                    
-                    # Call the function
-                    agent_text = func(host, port, use_ssl, campaign_folder)
-                    agent_results.append(f"[-] {option}\n{agent_text}")
-                except Exception as e:
-                    agent_results.append(f"[-] {option} - Error: {e}")
-                    self.logger(f"Error generating agent {option}: {e}")
+        # For each selected agent type, generate the agent
+        if self.selected_agents["Powershell Base64"].get():
+            try:
+                # Call the generate_pwsh_base64_str function directly from agent_generator.py
+                result = generate_pwsh_base64_str(host, port, use_ssl, campaign_folder)
+                agent_results.append(f"[-] Powershell Base64\n{result}")
+            except Exception as e:
+                error_msg = f"Error generating PowerShell Base64 agent: {e}"
+                agent_results.append(f"[-] Powershell Base64 - Error: {str(e)}")
+                self.logger(error_msg)
+                # Print more detailed error for debugging
+                import traceback
+                self.logger(traceback.format_exc())
 
         if not agent_results:
             messagebox.showinfo("No Agents Selected", "Please select at least one agent type.")
