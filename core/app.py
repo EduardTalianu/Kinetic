@@ -10,8 +10,9 @@ from core.client import ClientManager
 from ui.campaign_tab import CampaignConfigTab
 from ui.agent_tab import AgentGenerationTab
 from ui.client_tab import ClientManagementTab
-# Add import for the new Certificate Management tab
 from ui.certificate_tab import CertificateManagementTab
+# Add import for the new Agent Configuration tab
+from ui.agent_config_tab import AgentConfigTab
 
 class MainGUI:
     def __init__(self, master):
@@ -46,26 +47,45 @@ class MainGUI:
         
         # 7. Populate default campaign data
         self.populate_default_campaign_data()
+        
+        # 8. Set up notebook tab change event binding
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
     def create_tabs(self):
         # Create and add tabs to the notebook, passing the necessary objects
         self.campaign_tab = CampaignConfigTab(self.notebook, self.client_manager, self.log_manager.log)
+        self.agent_config_tab = AgentConfigTab(self.notebook, self.campaign_tab, self.log_manager.log)
         self.agent_generation_tab = AgentGenerationTab(self.notebook, self.campaign_tab, self.log_manager.log)
         self.client_management_tab = ClientManagementTab(self.notebook, self.client_manager, self.log_manager.log)
-        
-        # Create the Certificate Management tab
         self.certificate_tab = CertificateManagementTab(self.notebook, self.log_manager.log, self.campaign_tab)
 
         # Provide access to the log_manager to campaign_tab
         self.campaign_tab.log_manager = self.log_manager
 
+        # Add tabs to notebook in desired order
         self.notebook.add(self.campaign_tab.frame, text="Campaign Config")
+        self.notebook.add(self.agent_config_tab.frame, text="Agent Config")
         self.notebook.add(self.agent_generation_tab.frame, text="Agent Generation")
         self.notebook.add(self.client_management_tab.frame, text="Client Management")
-        # Add the Certificate Management tab
         self.notebook.add(self.certificate_tab.frame, text="Certificate Management")
+    
+    def on_tab_changed(self, event):
+        """Handle tab change events"""
+        selected_tab = self.notebook.select()
+        tab_id = self.notebook.index(selected_tab)
+        
+        # If switching to Agent Config tab, sync with campaign tab values
+        if tab_id == 1:  # Agent Config tab (0-based index)
+            self.agent_config_tab.sync_from_campaign_tab()
+        
+        # If switching to Agent Generation tab, apply agent config first
+        elif tab_id == 2:  # Agent Generation tab
+            # We don't force applying configurations here, just let the user know they should
+            campaign_name = self.campaign_tab.entry_campaign.get().strip()
+            if campaign_name:
+                # Try to load any saved configuration
+                self.agent_config_tab.load_configuration(campaign_name)
 
-    # The rest of the class remains unchanged
     def populate_default_campaign_data(self):
         """Populates the Campaign Config tab with default values."""
         # Generate a random campaign name
@@ -77,20 +97,14 @@ class MainGUI:
         # Random port between 1024 and 65535
         random_port = random.randint(1024, 65535)
 
-        # Beacon period
-        beacon_period = "5"
-
-        # Kill date 10 days in the future
-        future_date = datetime.date.today() + datetime.timedelta(days=10)
-        kill_date = future_date.strftime("%d/%m/%Y")
-
         # Set the values in the entry fields
         self.campaign_tab.entry_campaign.insert(0, campaign_name)
         self.campaign_tab.ip_var.set(default_ip)
         self.campaign_tab.entry_port.insert(0, str(random_port))
-        self.campaign_tab.entry_beacon.insert(0, beacon_period)
-        self.campaign_tab.entry_kill_date.insert(0, kill_date)
-
+        
+        # Set default values in agent config tab
+        # Beacon period and kill date are now set in agent_config_tab, not campaign_tab
+        
         # Set up the log manager with the campaign folder
         self.log_manager.set_campaign_folder(campaign_name)
 

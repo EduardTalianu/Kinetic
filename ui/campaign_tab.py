@@ -18,7 +18,9 @@ class CampaignConfigTab:
         self.client_manager = client_manager
         self.log_manager = None  # Will be set by the MainGUI after initialization
         self.server_thread = None
-        self.is_loaded_campaign = False  # Add this line
+        self.is_loaded_campaign = False
+        # Store reference to parent
+        self.parent = parent
         self.create_widgets()
 
     def create_widgets(self):
@@ -61,19 +63,9 @@ class CampaignConfigTab:
         self.entry_port = ttk.Entry(self.frame, width=30)
         self.entry_port.grid(row=2, column=1, padx=5, pady=5)
 
-        # Beacon Period
-        ttk.Label(self.frame, text="Beacon Period (sec):").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
-        self.entry_beacon = ttk.Entry(self.frame, width=30)
-        self.entry_beacon.grid(row=3, column=1, padx=5, pady=5)
-
-        # Kill Date
-        ttk.Label(self.frame, text="Kill Date (dd/mm/yyyy):").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
-        self.entry_kill_date = ttk.Entry(self.frame, width=30)
-        self.entry_kill_date.grid(row=4, column=1, padx=5, pady=5)
-
         # URL Randomization Section - Keep checkbox but remove display of paths
         url_frame = ttk.LabelFrame(self.frame, text="URL Path Customization")
-        url_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        url_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
 
         # Checkbox for URL Randomization
         self.url_random_var = tk.BooleanVar(value=True)
@@ -101,7 +93,7 @@ class CampaignConfigTab:
 
         # Path Rotation Section - Keep checkbox and interval but remove text area
         rotation_frame = ttk.LabelFrame(self.frame, text="Dynamic Path Rotation")
-        rotation_frame.grid(row=6, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        rotation_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
         
         # Enable path rotation checkbox
         self.path_rotation_var = tk.BooleanVar(value=True)
@@ -122,29 +114,29 @@ class CampaignConfigTab:
         # SSL Option
         self.ssl_var = tk.BooleanVar()
         self.ssl_check = ttk.Checkbutton(self.frame, text="Use SSL", variable=self.ssl_var, command=self.toggle_ssl_options)
-        self.ssl_check.grid(row=7, column=0, sticky=tk.W, padx=5, pady=5)
+        self.ssl_check.grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
 
         # Certificate Path
-        ttk.Label(self.frame, text="Certificate Path:").grid(row=8, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.frame, text="Certificate Path:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
         self.entry_cert = ttk.Entry(self.frame, width=30, state='disabled')
-        self.entry_cert.grid(row=8, column=1, padx=5, pady=5)
+        self.entry_cert.grid(row=6, column=1, padx=5, pady=5)
         self.btn_browse_cert = ttk.Button(self.frame, text="Browse", command=self.browse_cert, state='disabled')
-        self.btn_browse_cert.grid(row=8, column=2, padx=5, pady=5)
+        self.btn_browse_cert.grid(row=6, column=2, padx=5, pady=5)
 
         # Key Path
-        ttk.Label(self.frame, text="Key Path:").grid(row=9, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(self.frame, text="Key Path:").grid(row=7, column=0, sticky=tk.W, padx=5, pady=5)
         self.entry_key = ttk.Entry(self.frame, width=30, state='disabled')
-        self.entry_key.grid(row=9, column=1, padx=5, pady=5)
+        self.entry_key.grid(row=7, column=1, padx=5, pady=5)
         self.btn_browse_key = ttk.Button(self.frame, text="Browse", command=self.browse_key, state='disabled')
-        self.btn_browse_key.grid(row=9, column=2, padx=5, pady=5)
+        self.btn_browse_key.grid(row=7, column=2, padx=5, pady=5)
 
         # Start Campaign Button
         self.btn_start_campaign = ttk.Button(self.frame, text="Start Campaign", command=self.start_campaign)
-        self.btn_start_campaign.grid(row=10, column=0, columnspan=3, pady=10)
+        self.btn_start_campaign.grid(row=8, column=0, columnspan=3, pady=10)
 
         # Stop Campaign Button
         self.btn_stop_campaign = ttk.Button(self.frame, text="Stop Campaign", command=self.stop_campaign, state=tk.DISABLED)
-        self.btn_stop_campaign.grid(row=11, column=0, columnspan=3, pady=10)
+        self.btn_stop_campaign.grid(row=9, column=0, columnspan=3, pady=10)
         
         # Generate random URLs in the background
         self.generate_random_urls()
@@ -202,6 +194,17 @@ class CampaignConfigTab:
                 
             # Set flag to indicate this is a loaded campaign
             self.is_loaded_campaign = True
+            
+            # Try to load the agent configuration
+            try:
+                # Find the agent_config_tab in the main application
+                notebook = self.parent
+                main_app = notebook.master
+                if hasattr(main_app, 'agent_config_tab'):
+                    agent_config_tab = main_app.agent_config_tab
+                    agent_config_tab.load_configuration(campaign_name)
+            except Exception as e:
+                self.logger(f"Could not load agent configuration: {e}")
                 
         except Exception as e:
             messagebox.showerror("Load Error", f"Error loading campaign: {e}")
@@ -222,8 +225,6 @@ class CampaignConfigTab:
         self.entry_campaign.delete(0, tk.END)
         self.ip_var.set("")
         self.entry_port.delete(0, tk.END)
-        self.entry_beacon.delete(0, tk.END)
-        self.entry_kill_date.delete(0, tk.END)
         self.entry_cert.delete(0, tk.END)
         self.entry_key.delete(0, tk.END)
         
@@ -235,16 +236,6 @@ class CampaignConfigTab:
             
         if "Port" in config:
             self.entry_port.insert(0, config["Port"])
-            
-        if "Beacon Period" in config:
-            # Extract just the number from "X sec"
-            beacon_period = config["Beacon Period"]
-            if " sec" in beacon_period:
-                beacon_period = beacon_period.split(" ")[0]
-            self.entry_beacon.insert(0, beacon_period)
-            
-        if "Kill Date" in config:
-            self.entry_kill_date.insert(0, config["Kill Date"])
             
         # Set SSL options
         if "Use SSL" in config:
@@ -495,8 +486,6 @@ class CampaignConfigTab:
         campaign_name = self.entry_campaign.get().strip()
         ip = self.ip_var.get().strip()
         port = self.entry_port.get().strip()
-        beacon = self.entry_beacon.get().strip()
-        kill_date_str = self.entry_kill_date.get().strip()
         use_ssl = self.ssl_var.get()
         cert_path = self.entry_cert.get().strip() if use_ssl else ""
         key_path = self.entry_key.get().strip() if use_ssl else ""
@@ -513,15 +502,38 @@ class CampaignConfigTab:
         path_rotation = self.path_rotation_var.get()
         rotation_interval = int(self.rotation_interval_var.get())
 
-        if not campaign_name or not ip or not port or not beacon or not kill_date_str:
-            messagebox.showerror("Error", "Please fill in all required fields.")
+        if not campaign_name or not ip or not port:
+            messagebox.showerror("Error", "Please fill in Campaign Name, C&C IP, and Port.")
             return
-
+        
+        # Get agent configuration from the agent config tab
+        beacon_period = "5"  # Default value if we can't get from agent_config_tab
+        kill_date_str = None
+        
         try:
-            datetime.datetime.strptime(kill_date_str, "%d/%m/%Y")
-        except ValueError:
-            messagebox.showerror("Error", "Kill Date must be in dd/mm/yyyy format.")
-            return
+            # Find the agent_config_tab in the parent notebook
+            notebook = self.parent
+            main_app = notebook.master
+            if hasattr(main_app, 'agent_config_tab'):
+                agent_config_tab = main_app.agent_config_tab
+                # Apply agent config automatically first
+                if agent_config_tab.validate_inputs():
+                    beacon_period = agent_config_tab.beacon_period_var.get()
+                    kill_date_str = agent_config_tab.kill_date_var.get()
+                else:
+                    # Inputs not valid, abort campaign start
+                    return
+        except Exception as e:
+            self.logger(f"Error accessing agent configuration: {e}")
+            # Use default values if we couldn't get agent config
+            # Default kill date 10 days in the future
+            future_date = datetime.date.today() + datetime.timedelta(days=10)
+            kill_date_str = future_date.strftime("%d/%m/%Y")
+        
+        if not kill_date_str:
+            # Default kill date 10 days in the future
+            future_date = datetime.date.today() + datetime.timedelta(days=10)
+            kill_date_str = future_date.strftime("%d/%m/%Y")
         
         # validate IP
         try:
@@ -575,11 +587,16 @@ class CampaignConfigTab:
             messagebox.showerror("Error", f"Failed to write URL paths file: {e}")
             return
 
+         # Save the agent configuration
+            agent_config_tab.save_configuration()
+        except Exception as e:
+            self.logger(f"Error saving agent configuration: {e}")
+
         config_content = (
             f"Campaign Name: {campaign_name}\n"
             f"C&C IP: {ip}\n"
             f"Port: {port}\n"
-            f"Beacon Period: {beacon} sec\n"
+            f"Beacon Period: {beacon_period} sec\n"
             f"Kill Date: {kill_date_str}\n"
             f"Use SSL: {use_ssl}\n"
             f"Certificate Path: {cert_path}\n"
