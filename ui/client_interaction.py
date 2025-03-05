@@ -303,8 +303,15 @@ class ClientInteractionUI:
         history = self.client_manager.get_client_history(self.client_id)
         
         # Add items to tree
+        existing_timestamps = set()  # Track which timestamps we've already added
+        
         for command in history:
             timestamp = command.get('timestamp', '')
+            
+            # Skip this command if we've already added one with the same timestamp
+            if timestamp in existing_timestamps:
+                continue
+                
             command_type = command.get('command_type', '')
             args = command.get('args', '')
             
@@ -315,8 +322,18 @@ class ClientInteractionUI:
                 status = "Pending"
             
             # Insert into tree - use timestamp as ID for easy lookup
-            self.history_tree.insert("", tk.END, iid=timestamp, values=(timestamp, command_type, args, status),
-                                     tags=(status.lower(),))
+            try:
+                self.history_tree.insert("", tk.END, iid=timestamp, values=(timestamp, command_type, args, status),
+                                    tags=(status.lower(),))
+                existing_timestamps.add(timestamp)
+            except tk.TclError as e:
+                # If the item already exists, just continue
+                if "already exists" in str(e):
+                    existing_timestamps.add(timestamp)
+                    continue
+                else:
+                    # Re-raise other Tcl errors
+                    raise
         
         # Configure tag colors
         self.history_tree.tag_configure("completed", background="#E0FFE0")  # Light green

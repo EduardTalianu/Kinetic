@@ -24,11 +24,17 @@ class CommandExecutor:
             for client_id, info in self.client_manager.get_clients_info().items():
                 pending_commands = info.get("pending_commands", [])
                 if pending_commands:
-                    command = pending_commands[0]  # Process the first command in the queue
-                    self.execute_command(client_id, command)
-                    # Remove only the executed command from pending
-                    if client_id in self.client_manager.clients:
-                        self.client_manager.clients[client_id]["pending_commands"].pop(0)
+                    try:
+                        command = pending_commands[0]  # Process the first command in the queue
+                        self.execute_command(client_id, command)
+                        # Remove only the executed command from pending
+                        if client_id in self.client_manager.clients and len(self.client_manager.clients[client_id]["pending_commands"]) > 0:
+                            self.client_manager.clients[client_id]["pending_commands"].pop(0)
+                    except IndexError:
+                        # Handle the case where the list might be empty now
+                        logger.warning(f"Pending commands for client {client_id} were cleared during processing")
+                    except Exception as e:
+                        logger.error(f"Error processing command for client {client_id}: {e}")
             time.sleep(1)  # Sleep for 1 second between checks
 
     def execute_command(self, client_id, command):
