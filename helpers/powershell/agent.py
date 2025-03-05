@@ -3,7 +3,40 @@ import base64
 import json
 
 def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
-    """Generate a Base64 encoded PowerShell agent stager"""
+    """
+    Generate a Base64 encoded PowerShell agent stager
+    
+    Args:
+        host: Server hostname or IP
+        port: Server port
+        ssl: Whether to use SSL/TLS
+        campaign_folder: Path to the campaign folder
+        
+    Returns:
+        String containing the generated PowerShell Base64 command
+    """
+    # Check if the new PowerShell module exists
+    powershell_module_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "powershell", "agent.py")
+    
+    # If the new module exists, use it
+    if os.path.exists(powershell_module_path):
+        try:
+            # Import the module dynamically
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("powershell_agent", powershell_module_path)
+            powershell_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(powershell_module)
+            
+            # Call the function from the new module
+            return powershell_module.generate_pwsh_base64_str(host, port, ssl, campaign_folder)
+        except Exception as e:
+            print(f"Error using new PowerShell module: {e}. Falling back to original implementation.")
+    
+    # If we can't use the new module, use the original implementation
+    return original_generate_pwsh_base64_str(host, port, ssl, campaign_folder)
+
+def original_generate_pwsh_base64_str(host, port, ssl, campaign_folder):
+    """Original implementation of PowerShell Base64 agent generation"""
     agents_folder = os.path.join(campaign_folder, "agents")
     os.makedirs(agents_folder, exist_ok=True)
     
