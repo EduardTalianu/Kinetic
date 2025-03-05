@@ -143,14 +143,15 @@ class PathRotationManager:
                 return False
         return False
     
-    def _generate_path(self, seed, path_type, length=8):
+    def _generate_path(self, seed, path_type, min_length=4, max_length=12):
         """
         Generate a deterministic but unpredictable path based on seed and path type
         
         Args:
             seed: Seed value (e.g. rotation counter)
             path_type: Type of path (e.g. 'beacon', 'agent')
-            length: Length of the random part of the path
+            min_length: Minimum length of the random part of the path
+            max_length: Maximum length of the random part of the path
             
         Returns:
             Generated path string with leading slash
@@ -173,8 +174,9 @@ class PathRotationManager:
         component_selector = int(hash_hex[2:4], 16) % len(self.url_components)
         selected_component = self.url_components[component_selector]
         
-        # Generate the random part of the path deterministically
-        random_part = self._random_string(length, seed=int(hash_hex[4:8], 16))
+        # Generate the random part of the path deterministically with variable length
+        length_seed = int(hash_hex[4:8], 16)
+        random_part = self._random_string(min_length, max_length, seed=length_seed)
         
         # For custom pattern, use a different structure
         if selected_pattern_type == "custom":
@@ -206,14 +208,21 @@ class PathRotationManager:
         random.setstate(random.getstate())
         
         return path
-    
-    def _random_string(self, length=8, include_numbers=True, seed=None):
-        """Generate a random string, optionally with a specific seed"""
+        
+    def _random_string(self, min_length=4, max_length=12, include_numbers=True, seed=None):
+        """Generate a random string of variable length, optionally with a specific seed"""
         if seed is not None:
             # Save current random state
             old_state = random.getstate()
             # Set seed for deterministic output
             random.seed(seed)
+        
+        # Determine length based on seed or randomly
+        if seed is not None:
+            # Use seed to deterministically pick a length
+            length = min_length + (seed % (max_length - min_length + 1))
+        else:
+            length = random.randint(min_length, max_length)
         
         chars = string.ascii_lowercase
         if include_numbers:
@@ -225,6 +234,7 @@ class PathRotationManager:
             random.setstate(old_state)
             
         return result
+
     
     def check_rotation(self):
         """
