@@ -47,7 +47,65 @@ class PathRotationManager:
         self.state_file = os.path.join(self.campaign_folder, "path_rotation_state.json")
         self._save_state()
         
+        # Load URL patterns and components
+        self.url_patterns = self._load_url_patterns()
+        self.url_components = self._load_url_components()
+        
         self.logger(f"Path rotation manager initialized with interval {rotation_interval} seconds")
+    
+    def _load_url_patterns(self):
+        """Load URL patterns from links.txt file in helpers/links folder"""
+        default_patterns = ["web_app", "api", "cdn", "blog", "custom"]
+        
+        try:
+            # Find the links.txt file path
+            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            links_file = os.path.join(script_dir, "helpers", "links", "links.txt")
+            
+            if os.path.exists(links_file):
+                with open(links_file, 'r') as f:
+                    patterns = [line.strip() for line in f if line.strip()]
+                
+                if patterns:
+                    # Always ensure 'custom' is available
+                    if "custom" not in patterns:
+                        patterns.append("custom")
+                    return patterns
+                    
+            # If file doesn't exist or is empty, return defaults
+            return default_patterns
+        except Exception as e:
+            self.logger(f"Error loading URL patterns: {str(e)}")
+            return default_patterns
+    
+    def _load_url_components(self):
+        """Load URL path components from links2.txt file in helpers/links folder"""
+        try:
+            # Find the links2.txt file path
+            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            links_file = os.path.join(script_dir, "helpers", "links", "links2.txt")
+            
+            if os.path.exists(links_file):
+                with open(links_file, 'r') as f:
+                    components = [line.strip() for line in f if line.strip()]
+                
+                if components:
+                    return components
+            
+            # Default components if file couldn't be read or is empty
+            return ["status", "ping", "monitor", "health", "check",
+                    "js", "scripts", "resources", "assets", "static",
+                    "loader", "init", "bootstrap", "setup", "config",
+                    "data", "response", "events", "analytics", "logs",
+                    "storage", "files", "upload", "content", "media"]
+        except Exception as e:
+            self.logger(f"Error loading URL components: {str(e)}")
+            # Default components if exception occurred
+            return ["status", "ping", "monitor", "health", "check",
+                    "js", "scripts", "resources", "assets", "static",
+                    "loader", "init", "bootstrap", "setup", "config",
+                    "data", "response", "events", "analytics", "logs",
+                    "storage", "files", "upload", "content", "media"]
     
     def _save_state(self):
         """Save the current rotation state to disk"""
@@ -107,60 +165,66 @@ class PathRotationManager:
         # Use the hash to seed the random generator for this specific path
         random.seed(int(hash_hex, 16) % (2**32))
         
-        # Patterns for different path types to make them look legitimate
-        patterns = {
-            "beacon_path": [
-                f"/api/v{random.randint(1,3)}/status/{self._random_string(length)}",
-                f"/app/{self._random_string(length-2)}/ping",
-                f"/srv/status/check/{self._random_string(length-3)}",
-                f"/monitor/{self._random_string(length)}",
-                f"/health/{self._random_string(length-2)}/check"
-            ],
-            "agent_path": [
-                f"/assets/js/lib/{self._random_string(length)}.js",
-                f"/static/scripts/{self._random_string(length-2)}.min.js",
-                f"/cdn/lib/{self._random_string(length)}.js",
-                f"/resources/js/{self._random_string(length-3)}_bundle.js",
-                f"/dist/{self._random_string(length)}/main.js"
-            ],
-            "stager_path": [
-                f"/scripts/loader/{self._random_string(length-2)}.js",
-                f"/cdn/init/{self._random_string(length)}.js",
-                f"/app/bootstrap/{self._random_string(length-3)}.js",
-                f"/assets/core/{self._random_string(length-1)}.min.js",
-                f"/lib/init-{self._random_string(length-5)}.js"
-            ],
-            "cmd_result_path": [
-                f"/api/data/{self._random_string(length)}",
-                f"/feedback/{self._random_string(length-2)}",
-                f"/log/events/{self._random_string(length-3)}",
-                f"/analytics/{self._random_string(length)}",
-                f"/reports/{self._random_string(length-2)}/submit"
-            ],
-            "file_upload_path": [
-                f"/api/storage/{self._random_string(length)}",
-                f"/upload/files/{self._random_string(length-2)}",
-                f"/cdn/store/{self._random_string(length-3)}",
-                f"/content/upload/{self._random_string(length-2)}",
-                f"/media/{self._random_string(length)}/upload"
-            ]
-        }
+        # Select a pattern category based on hash (deterministic)
+        pattern_selector = int(hash_hex[0:2], 16) % len(self.url_patterns)
+        selected_pattern_type = self.url_patterns[pattern_selector]
         
-        # Select a pattern based on the hash to make it deterministic
-        pattern_index = int(hash_hex[0], 16) % len(patterns.get(path_type, ["/{self._random_string(length)}"]))
-        selected_pattern = patterns.get(path_type, [f"/{path_type}/{self._random_string(length)}"])[pattern_index]
+        # Select a component based on hash (deterministic)
+        component_selector = int(hash_hex[2:4], 16) % len(self.url_components)
+        selected_component = self.url_components[component_selector]
+        
+        # Generate the random part of the path deterministically
+        random_part = self._random_string(length, seed=int(hash_hex[4:8], 16))
+        
+        # For custom pattern, use a different structure
+        if selected_pattern_type == "custom":
+            if path_type == "beacon_path":
+                path = f"/custom/{random_part}/beacon"
+            elif path_type == "agent_path":
+                path = f"/custom/{random_part}/agent.js"
+            elif path_type == "stager_path":
+                path = f"/custom/{random_part}/loader.js"
+            elif path_type == "cmd_result_path":
+                path = f"/custom/{random_part}/results"
+            elif path_type == "file_upload_path":
+                path = f"/custom/{random_part}/upload"
+            else:
+                path = f"/custom/{random_part}/{path_type.replace('_path', '')}"
+        else:
+            # Base path using the selected pattern
+            base_path = f"/{selected_pattern_type.lower()}"
+            
+            # Create paths based on path type
+            if path_type == "beacon_path":
+                path = f"{base_path}/{selected_component}/{random_part}"
+            elif path_type == "agent_path" or path_type == "stager_path":
+                path = f"{base_path}/{selected_component}/{random_part}.js"
+            else:
+                path = f"{base_path}/{selected_component}/{random_part}"
         
         # Restore the global random state to avoid affecting other code
         random.setstate(random.getstate())
         
-        return selected_pattern
+        return path
     
-    def _random_string(self, length=8, include_numbers=True):
-        """Generate a random string"""
+    def _random_string(self, length=8, include_numbers=True, seed=None):
+        """Generate a random string, optionally with a specific seed"""
+        if seed is not None:
+            # Save current random state
+            old_state = random.getstate()
+            # Set seed for deterministic output
+            random.seed(seed)
+        
         chars = string.ascii_lowercase
         if include_numbers:
             chars += string.digits
-        return ''.join(random.choice(chars) for _ in range(length))
+        result = ''.join(random.choice(chars) for _ in range(length))
+        
+        if seed is not None:
+            # Restore original random state
+            random.setstate(old_state)
+            
+        return result
     
     def check_rotation(self):
         """

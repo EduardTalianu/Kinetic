@@ -23,11 +23,67 @@ class CampaignConfigTab:
         self.parent = parent
         self.create_widgets()
 
+    def load_url_patterns_from_file(self):
+        """Load URL patterns from links.txt file in helpers/links folder"""
+        try:
+            # Find the links.txt file path
+            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            links_file = os.path.join(script_dir, "helpers", "links", "links.txt")
+            
+            if os.path.exists(links_file):
+                with open(links_file, 'r') as f:
+                    patterns = [line.strip() for line in f if line.strip()]
+                
+                if not patterns:
+                    # Fallback to defaults if file is empty
+                    return ["web_app", "api", "cdn", "blog", "custom"]
+                
+                # Always add 'custom' option if it's not in the file
+                if "custom" not in patterns:
+                    patterns.append("custom")
+                    
+                return patterns
+            else:
+                self.logger(f"Warning: links.txt not found at {links_file}. Using default patterns.")
+                return ["web_app", "api", "cdn", "blog", "custom"]
+        except Exception as e:
+            self.logger(f"Error loading URL patterns: {e}")
+            return ["web_app", "api", "cdn", "blog", "custom"]
+
+    def load_url_components_from_file(self):
+        """Load URL path components from links2.txt file in helpers/links folder"""
+        try:
+            # Find the links2.txt file path
+            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            links_file = os.path.join(script_dir, "helpers", "links", "links2.txt")
+            
+            if os.path.exists(links_file):
+                with open(links_file, 'r') as f:
+                    components = [line.strip() for line in f if line.strip()]
+                
+                if components:
+                    return components
+            
+            # Default components if file couldn't be read or is empty
+            return ["status", "ping", "monitor", "health", "check", 
+                    "js", "scripts", "resources", "assets", "static", 
+                    "loader", "init", "bootstrap", "setup", "config", 
+                    "data", "response", "events", "analytics", "logs", 
+                    "storage", "files", "upload", "content", "media"]
+        except Exception as e:
+            self.logger(f"Error loading URL components: {e}")
+            # Default components if exception occurred
+            return ["status", "ping", "monitor", "health", "check", 
+                    "js", "scripts", "resources", "assets", "static", 
+                    "loader", "init", "bootstrap", "setup", "config", 
+                    "data", "response", "events", "analytics", "logs", 
+                    "storage", "files", "upload", "content", "media"]
+
     def create_widgets(self):
         # First, initialize all required variables before using them
         self.ssl_var = tk.BooleanVar()
         self.url_random_var = tk.BooleanVar(value=True)
-        self.url_pattern_var = tk.StringVar(value="web_app")
+        self.url_pattern_var = tk.StringVar()
         self.path_rotation_var = tk.BooleanVar(value=True)
         self.rotation_interval_var = tk.StringVar(value="3600")
         
@@ -74,9 +130,10 @@ class CampaignConfigTab:
 
         # URL pattern selection
         ttk.Label(url_frame, text="URL Pattern:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.url_pattern_var = tk.StringVar(value="web_app")
+        url_patterns = self.load_url_patterns_from_file()
+        self.url_pattern_var = tk.StringVar(value=url_patterns[0] if url_patterns else "web_app")
         self.url_pattern_combo = ttk.Combobox(url_frame, textvariable=self.url_pattern_var, width=27, 
-                                    values=["web_app", "api", "cdn", "blog", "custom"])
+                                    values=url_patterns)
         self.url_pattern_combo.grid(row=1, column=1, padx=5, pady=5)
         self.url_pattern_combo.bind("<<ComboboxSelected>>", self.on_pattern_selected)
 
@@ -257,9 +314,17 @@ class CampaignConfigTab:
         # Set pattern based on loaded paths
         if "URL Pattern" in config:
             pattern = config.get("URL Pattern", "web_app")
-            if pattern in ["web_app", "api", "cdn", "blog", "custom"]:
+            url_patterns = self.load_url_patterns_from_file()
+            
+            # Check if the saved pattern is in the available patterns
+            if pattern in url_patterns:
                 self.url_pattern_var.set(pattern)
                 self.url_pattern_combo.set(pattern)
+            else:
+                # If not found in current patterns, default to the first available pattern
+                if url_patterns:
+                    self.url_pattern_var.set(url_patterns[0])
+                    self.url_pattern_combo.set(url_patterns[0])
         
         # Set path rotation
         if "Path Rotation Enabled" in config:
@@ -325,70 +390,57 @@ class CampaignConfigTab:
                 chars += string.digits
             return ''.join(random.choice(chars) for _ in range(length))
         
-        # Different URL patterns based on selection
-        if pattern == "web_app":
-            self.entry_beacon_path.delete(0, tk.END)
-            self.entry_beacon_path.insert(0, f"/app/{random_string(5)}/status")
-            
-            self.entry_agent_path.delete(0, tk.END)
-            self.entry_agent_path.insert(0, f"/app/{random_string(5)}/resources/main.js")
-            
-            self.entry_stager_path.delete(0, tk.END)
-            self.entry_stager_path.insert(0, f"/app/{random_string(4)}/assets/loader.js")
-            
-            self.entry_cmd_result_path.delete(0, tk.END)
-            self.entry_cmd_result_path.insert(0, f"/app/{random_string(6)}/feedback")
-            
-            self.entry_file_upload_path.delete(0, tk.END)
-            self.entry_file_upload_path.insert(0, f"/app/{random_string(5)}/upload")
-            
-        elif pattern == "api":
-            self.entry_beacon_path.delete(0, tk.END)
-            self.entry_beacon_path.insert(0, f"/api/v{random.randint(1,3)}/{random_string(4)}/check")
-            
-            self.entry_agent_path.delete(0, tk.END)
-            self.entry_agent_path.insert(0, f"/api/v{random.randint(1,3)}/client/script")
-            
-            self.entry_stager_path.delete(0, tk.END)
-            self.entry_stager_path.insert(0, f"/api/v{random.randint(1,3)}/init")
-            
-            self.entry_cmd_result_path.delete(0, tk.END)
-            self.entry_cmd_result_path.insert(0, f"/api/v{random.randint(1,3)}/response")
-            
-            self.entry_file_upload_path.delete(0, tk.END)
-            self.entry_file_upload_path.insert(0, f"/api/v{random.randint(1,3)}/storage")
-            
-        elif pattern == "cdn":
-            self.entry_beacon_path.delete(0, tk.END)
-            self.entry_beacon_path.insert(0, f"/cdn/ping/{random_string(8)}")
-            
-            self.entry_agent_path.delete(0, tk.END)
-            self.entry_agent_path.insert(0, f"/cdn/js/{random_string(6)}.min.js")
-            
-            self.entry_stager_path.delete(0, tk.END)
-            self.entry_stager_path.insert(0, f"/cdn/lib/{random_string(5)}.js")
-            
-            self.entry_cmd_result_path.delete(0, tk.END)
-            self.entry_cmd_result_path.insert(0, f"/cdn/analytics/{random_string(7)}")
-            
-            self.entry_file_upload_path.delete(0, tk.END)
-            self.entry_file_upload_path.insert(0, f"/cdn/storage/{random_string(8)}")
-            
-        elif pattern == "blog":
-            self.entry_beacon_path.delete(0, tk.END)
-            self.entry_beacon_path.insert(0, f"/blog/comments/{random_string(6)}")
-            
-            self.entry_agent_path.delete(0, tk.END)
-            self.entry_agent_path.insert(0, f"/blog/wp-content/themes/{random_string(5)}/script.js")
-            
-            self.entry_stager_path.delete(0, tk.END)
-            self.entry_stager_path.insert(0, f"/blog/wp-includes/js/{random_string(4)}.js")
-            
-            self.entry_cmd_result_path.delete(0, tk.END)
-            self.entry_cmd_result_path.insert(0, f"/blog/trackback/{random_string(8)}")
-            
-            self.entry_file_upload_path.delete(0, tk.END)
-            self.entry_file_upload_path.insert(0, f"/blog/wp-content/uploads/{random_string(5)}")
+        # Handle custom pattern separately
+        if pattern == "custom":
+            # If custom is selected, don't change existing values unless they're empty
+            if not self.entry_beacon_path.get():
+                self.entry_beacon_path.delete(0, tk.END)
+                self.entry_beacon_path.insert(0, f"/custom/{random_string(6)}/beacon")
+            if not self.entry_agent_path.get():
+                self.entry_agent_path.delete(0, tk.END)
+                self.entry_agent_path.insert(0, f"/custom/{random_string(6)}/agent.js")
+            if not self.entry_stager_path.get():
+                self.entry_stager_path.delete(0, tk.END)
+                self.entry_stager_path.insert(0, f"/custom/{random_string(6)}/loader.js")
+            if not self.entry_cmd_result_path.get():
+                self.entry_cmd_result_path.delete(0, tk.END)
+                self.entry_cmd_result_path.insert(0, f"/custom/{random_string(6)}/results")
+            if not self.entry_file_upload_path.get():
+                self.entry_file_upload_path.delete(0, tk.END)
+                self.entry_file_upload_path.insert(0, f"/custom/{random_string(6)}/upload")
+            return
+        
+        # Load URL components if we haven't already
+        if not hasattr(self, 'url_components'):
+            self.url_components = self.load_url_components_from_file()
+        
+        # Generate random paths for each endpoint using the selected pattern and random components
+        base_path = f"/{pattern.lower()}"
+        
+        # Beacon path - select a random component
+        comp1 = random.choice(self.url_components)
+        self.entry_beacon_path.delete(0, tk.END)
+        self.entry_beacon_path.insert(0, f"{base_path}/{comp1}/{random_string(6)}")
+        
+        # Agent path - select a random component
+        comp2 = random.choice(self.url_components)
+        self.entry_agent_path.delete(0, tk.END)
+        self.entry_agent_path.insert(0, f"{base_path}/{comp2}/{random_string(6)}.js")
+        
+        # Stager path - select a random component
+        comp3 = random.choice(self.url_components)
+        self.entry_stager_path.delete(0, tk.END)
+        self.entry_stager_path.insert(0, f"{base_path}/{comp3}/{random_string(5)}.js")
+        
+        # Command result path - select a random component
+        comp4 = random.choice(self.url_components)
+        self.entry_cmd_result_path.delete(0, tk.END)
+        self.entry_cmd_result_path.insert(0, f"{base_path}/{comp4}/{random_string(7)}")
+        
+        # File upload path - select a random component
+        comp5 = random.choice(self.url_components)
+        self.entry_file_upload_path.delete(0, tk.END)
+        self.entry_file_upload_path.insert(0, f"{base_path}/{comp5}/{random_string(6)}")
         
         # Update the preview
         self.update_url_preview()
@@ -587,8 +639,14 @@ class CampaignConfigTab:
             messagebox.showerror("Error", f"Failed to write URL paths file: {e}")
             return
 
-         # Save the agent configuration
-            agent_config_tab.save_configuration()
+        # Save the agent configuration
+        try:
+            # Find the agent_config_tab in the parent notebook
+            notebook = self.parent
+            main_app = notebook.master
+            if hasattr(main_app, 'agent_config_tab'):
+                agent_config_tab = main_app.agent_config_tab
+                agent_config_tab.save_configuration()
         except Exception as e:
             self.logger(f"Error saving agent configuration: {e}")
 
