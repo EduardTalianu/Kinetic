@@ -224,7 +224,8 @@ class ClientFilesUI:
         
         # Log the upload
         self.logger(f"File upload initiated: {local_file_path} to {self.client_id}:{destination}")
-    
+        messagebox.showinfo("Upload Started", f"File upload initiated: {filename}\nDestination: {destination}")
+
     def download_file_from_client(self):
         """Download a file from the client to the local machine"""
         remote_path = self.remote_file_path.get().strip()
@@ -262,7 +263,8 @@ class ClientFilesUI:
         
         # Log the download
         self.logger(f"File download initiated: {self.client_id}:{remote_path} to {local_path}")
-    
+        messagebox.showinfo("Download Started", f"File download initiated from: {remote_path}")
+
     def download_directory_listing(self, directory):
         """Get a directory listing from the client"""
         if not directory:
@@ -276,8 +278,9 @@ class ClientFilesUI:
         else:
             display_dir = directory
         
-        # Create command to list directory contents
-        command_args = f"Get-ChildItem -Path '{directory}' | Select-Object Name, Length, LastWriteTime, Attributes | ConvertTo-Json"
+        # Create command for directory listing
+        # Using Get-DirectoryListing function for better formatting
+        command_args = f"Get-DirectoryListing -DirectoryPath '{directory}'"
         self.client_manager.add_command(self.client_id, "execute", command_args)
         
         # Set the preview text

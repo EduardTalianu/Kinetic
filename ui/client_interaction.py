@@ -221,6 +221,7 @@ class ClientInteractionUI:
         
         # Display command
         self.append_output(f"PS> {command}\n", color="#00FFFF")
+        self.append_output("Command sent. Waiting for client response...\n", color="#FFCC00")
         
         # Send command
         self.send_command(command)
@@ -242,7 +243,7 @@ class ClientInteractionUI:
         
         # Update the history tree - status will start as "Pending"
         self.update_history_tree()
-    
+
     def previous_command(self, event=None):
         """Navigate to previous command in history"""
         if not self.command_history:

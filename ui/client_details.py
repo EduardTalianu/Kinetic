@@ -307,7 +307,7 @@ class ClientDetailsUI:
         # Additional check in client info
         if not has_unique_key and 'key_rotation_time' in client_info:
             has_unique_key = True
-            
+                
         # Key type indicator
         key_type_frame = ttk.Frame(key_frame)
         key_type_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -316,7 +316,8 @@ class ClientDetailsUI:
         
         key_type = "Client-Specific Key" if has_unique_key else "Campaign Default Key"
         key_type_color = "#008000" if has_unique_key else "#FF8C00"  # Green if client-specific, orange if default
-        ttk.Label(key_type_frame, text=key_type, foreground=key_type_color, font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        self.key_type_label = ttk.Label(key_type_frame, text=key_type, foreground=key_type_color, font=("Arial", 10, "bold"))
+        self.key_type_label.pack(side=tk.LEFT, padx=5)
         
         # Key status details
         key_details_frame = ttk.Frame(key_frame)
@@ -331,10 +332,11 @@ class ClientDetailsUI:
         else:
             ttk.Label(key_details_frame, text="No key rotation has occurred").pack(anchor="w", padx=5, pady=2)
         
-        # Key rotation button - only enable if verified
-        rotation_button_frame = ttk.Frame(key_frame)
-        rotation_button_frame.pack(fill=tk.X, padx=5, pady=10)
+        # Key action buttons frame
+        key_action_frame = ttk.Frame(key_frame)
+        key_action_frame.pack(fill=tk.X, padx=5, pady=10)
         
+        # Key rotation button
         def request_key_rotation():
             nonlocal client_id  # Use the client_id from the outer scope
             
@@ -344,7 +346,7 @@ class ClientDetailsUI:
             if not client_id:
                 tk.messagebox.showerror("Key Rotation Error", "Cannot identify client ID for key rotation")
                 return
-                
+                    
             if verified:
                 # Add a key rotation command to the client
                 try:
@@ -358,16 +360,59 @@ class ClientDetailsUI:
                 tk.messagebox.showwarning("Key Rotation", "Client must be verified before key rotation can occur")
         
         rotation_button = ttk.Button(
-            rotation_button_frame, 
+            key_action_frame, 
             text="Request Key Rotation", 
             command=request_key_rotation,
             state="normal" if verified else "disabled"
         )
         rotation_button.pack(side=tk.LEFT, padx=5)
         
+        # NEW: Force Session Key button
+        def force_session_key():
+            nonlocal client_id, has_unique_key
+            
+            if not client_id:
+                tk.messagebox.showerror("Key Management Error", "Cannot identify client ID")
+                return
+            
+            try:
+                # Remove client-specific key
+                if hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys:
+                    del self.client_manager.client_keys[client_id]
+                
+                # Remove key rotation timestamp if present
+                if client_id in self.client_manager.clients and 'key_rotation_time' in self.client_manager.clients[client_id]:
+                    del self.client_manager.clients[client_id]['key_rotation_time']
+                
+                # Update UI
+                has_unique_key = False
+                self.key_type_label.config(text="Campaign Default Key", foreground="#FF8C00")
+                
+                tk.messagebox.showinfo("Key Management", 
+                    f"Forced use of campaign default key for client {client_id}.\n"
+                    f"The system will now use the campaign-wide key for this client.")
+                
+                # Log the change
+                self.logger(f"Forced use of campaign default key for client {client_id}")
+                
+                # Refresh the tab
+                self.refresh_verification_tab(parent_frame, {"client_id": client_id})
+                
+            except Exception as e:
+                tk.messagebox.showerror("Key Management Error", f"Failed to force session key: {str(e)}")
+        
+        # Add Force Session Key button
+        force_key_button = ttk.Button(
+            key_action_frame, 
+            text="Force Campaign Key", 
+            command=force_session_key,
+            state="normal" if has_unique_key else "disabled"
+        )
+        force_key_button.pack(side=tk.LEFT, padx=5)
+        
         # Add a note about key rotation
         ttk.Label(
-            rotation_button_frame, 
+            key_action_frame, 
             text="Note: Key rotation requires client verification",
             font=("Arial", 8, "italic"),
             foreground="#666666"

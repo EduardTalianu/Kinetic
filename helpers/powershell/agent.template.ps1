@@ -202,10 +202,10 @@ function Download-FileToServer {
         $uploadClient.UploadString($uploadUrl, $encryptedFileData)
         
         # Return success message
-        return "$fileSize bytes from $FilePath downloaded to server"
+        return "$fileSize bytes from $FilePath uploaded to server successfully"
     }
     catch {
-        return "Error downloading file: $_"
+        return "Error uploading file: $_"
     }
 }
 
@@ -216,7 +216,7 @@ function Upload-FileFromServer {
         [string]$ClientDestination
     )
     
-    Write-Host "Attempting to upload file from server: $ServerFilePath to $ClientDestination"
+    Write-Host "Attempting to download file from server: $ServerFilePath to $ClientDestination"
     
     try {
         # Expand environment variables in destination path
@@ -274,10 +274,31 @@ function Upload-FileFromServer {
         [System.IO.File]::WriteAllBytes($expandedDestination, $fileBytes)
         
         # Return success message
-        return "File uploaded from server to $expandedDestination ($([Math]::Round($fileBytes.Length / 1KB, 2)) KB)"
+        return "File downloaded from server to $expandedDestination ($([Math]::Round($fileBytes.Length / 1KB, 2)) KB)"
     }
     catch {
-        return "Error uploading file from server: $_"
+        return "Error downloading file from server: $_"
+    }
+}
+
+# Function to list directory contents
+function Get-DirectoryListing {
+    param([string]$DirectoryPath)
+    
+    try {
+        # Expand environment variables in path
+        $expandedPath = [System.Environment]::ExpandEnvironmentVariables($DirectoryPath)
+        
+        # Get directory contents
+        $items = Get-ChildItem -Path $expandedPath -ErrorAction Stop | Select-Object Name, Length, LastWriteTime, Attributes, @{Name="Type";Expression={if($_.PSIsContainer){"Directory"}else{"File"}}}
+        
+        # Convert to JSON
+        $jsonItems = ConvertTo-Json -InputObject $items -Compress
+        
+        return $jsonItems
+    }
+    catch {
+        return "Error listing directory: $_"
     }
 }
 
