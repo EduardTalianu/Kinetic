@@ -383,8 +383,9 @@ class CampaignConfigTab:
         """Generate random, legitimate-looking URLs based on the selected pattern"""
         pattern = self.url_pattern_var.get()
         
-        # Helper function to generate random strings
-        def random_string(length=6, include_numbers=True):
+        # Helper function to generate random strings of variable length
+        def random_string(min_length=4, max_length=12, include_numbers=True):
+            length = random.randint(min_length, max_length)
             chars = string.ascii_lowercase
             if include_numbers:
                 chars += string.digits
@@ -395,19 +396,19 @@ class CampaignConfigTab:
             # If custom is selected, don't change existing values unless they're empty
             if not self.entry_beacon_path.get():
                 self.entry_beacon_path.delete(0, tk.END)
-                self.entry_beacon_path.insert(0, f"/custom/{random_string(6)}/beacon")
+                self.entry_beacon_path.insert(0, f"/custom/{random_string()}/beacon")
             if not self.entry_agent_path.get():
                 self.entry_agent_path.delete(0, tk.END)
-                self.entry_agent_path.insert(0, f"/custom/{random_string(6)}/agent.js")
+                self.entry_agent_path.insert(0, f"/custom/{random_string()}/agent.js")
             if not self.entry_stager_path.get():
                 self.entry_stager_path.delete(0, tk.END)
-                self.entry_stager_path.insert(0, f"/custom/{random_string(6)}/loader.js")
+                self.entry_stager_path.insert(0, f"/custom/{random_string()}/loader.js")
             if not self.entry_cmd_result_path.get():
                 self.entry_cmd_result_path.delete(0, tk.END)
-                self.entry_cmd_result_path.insert(0, f"/custom/{random_string(6)}/results")
+                self.entry_cmd_result_path.insert(0, f"/custom/{random_string()}/results")
             if not self.entry_file_upload_path.get():
                 self.entry_file_upload_path.delete(0, tk.END)
-                self.entry_file_upload_path.insert(0, f"/custom/{random_string(6)}/upload")
+                self.entry_file_upload_path.insert(0, f"/custom/{random_string()}/upload")
             return
         
         # Load URL components if we haven't already
@@ -420,27 +421,27 @@ class CampaignConfigTab:
         # Beacon path - select a random component
         comp1 = random.choice(self.url_components)
         self.entry_beacon_path.delete(0, tk.END)
-        self.entry_beacon_path.insert(0, f"{base_path}/{comp1}/{random_string(6)}")
+        self.entry_beacon_path.insert(0, f"{base_path}/{comp1}/{random_string()}")
         
         # Agent path - select a random component
         comp2 = random.choice(self.url_components)
         self.entry_agent_path.delete(0, tk.END)
-        self.entry_agent_path.insert(0, f"{base_path}/{comp2}/{random_string(6)}.js")
+        self.entry_agent_path.insert(0, f"{base_path}/{comp2}/{random_string()}.js")
         
         # Stager path - select a random component
         comp3 = random.choice(self.url_components)
         self.entry_stager_path.delete(0, tk.END)
-        self.entry_stager_path.insert(0, f"{base_path}/{comp3}/{random_string(5)}.js")
+        self.entry_stager_path.insert(0, f"{base_path}/{comp3}/{random_string()}.js")
         
         # Command result path - select a random component
         comp4 = random.choice(self.url_components)
         self.entry_cmd_result_path.delete(0, tk.END)
-        self.entry_cmd_result_path.insert(0, f"{base_path}/{comp4}/{random_string(7)}")
+        self.entry_cmd_result_path.insert(0, f"{base_path}/{comp4}/{random_string()}")
         
         # File upload path - select a random component
         comp5 = random.choice(self.url_components)
         self.entry_file_upload_path.delete(0, tk.END)
-        self.entry_file_upload_path.insert(0, f"{base_path}/{comp5}/{random_string(6)}")
+        self.entry_file_upload_path.insert(0, f"{base_path}/{comp5}/{random_string()}")
         
         # Update the preview
         self.update_url_preview()
