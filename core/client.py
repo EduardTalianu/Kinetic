@@ -14,42 +14,38 @@ class ClientManager:
         self.client_keys = {}  # Storage for client-specific encryption keys
 
     def add_client(self, ip, hostname="Unknown", username="Unknown", machine_guid="Unknown", 
-                os_version="Unknown", mac_address="Unknown", system_info=None):
+                    os_version="Unknown", mac_address="Unknown", system_info=None, existing_id=None):
         """Register a client with enhanced identification data"""
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Generate a unique client_id from system properties
-        client_id = generate_client_id(ip, hostname, username, machine_guid, os_version)
         
         if system_info is None:
             system_info = {}
         
-        # Check if client already exists with a different ID but matching client_identifier
-        if 'client_identifier' in system_info:
-            client_identifier = system_info['client_identifier']
-            for existing_id, existing_client in self.clients.items():
-                existing_identifier = existing_client.get('system_info', {}).get('client_identifier')
-                if existing_identifier == client_identifier and existing_id != client_id:
-                    # We found the same client with a different ID
-                    # Update the existing client instead of creating a new one
-                    self.log_event(existing_id, "Client Updated", f"Client reconnected with new ID: {client_id} (was {existing_id})")
-                    
-                    # Update client info
-                    self.clients[existing_id]["last_seen"] = now
-                    self.clients[existing_id]["ip"] = ip
-                    self.clients[existing_id]["hostname"] = hostname
-                    self.clients[existing_id]["username"] = username
-                    self.clients[existing_id]["machine_guid"] = machine_guid
-                    self.clients[existing_id]["os_version"] = os_version
-                    self.clients[existing_id]["mac_address"] = mac_address
-                    
-                    # Update any new system info properties
-                    if system_info:
-                        self.clients[existing_id]["system_info"].update(system_info)
-                    
-                    return existing_id
+        # If an existing_id is provided, use it instead of generating a new one
+        if existing_id:
+            client_id = existing_id
+        else:
+            # Generate a unique client_id from system information
+            client_id = generate_client_id(ip, hostname, username, machine_guid, os_version)
         
-        if client_id not in self.clients:
+        # Handle updating existing client
+        if client_id in self.clients:
+            # Update existing client information
+            self.clients[client_id]["last_seen"] = now
+            self.clients[client_id]["ip"] = ip
+            self.clients[client_id]["hostname"] = hostname
+            self.clients[client_id]["username"] = username
+            self.clients[client_id]["machine_guid"] = machine_guid
+            self.clients[client_id]["os_version"] = os_version
+            self.clients[client_id]["mac_address"] = mac_address
+            
+            # Update any new system info properties while preserving existing ones
+            if system_info:
+                self.clients[client_id]["system_info"].update(system_info)
+                
+            self.log_event(client_id, "Client Updated", f"Client reconnected: {hostname}/{username}")
+        else:
+            # Create new client entry
             self.clients[client_id] = {
                 "last_seen": now,
                 "ip": ip,
@@ -68,19 +64,17 @@ class ClientManager:
                 }
             }
             self.log_event(client_id, "Client Connected", f"New client connected: {hostname}/{username}")
-        else:
-            # Update existing client information
-            self.clients[client_id]["last_seen"] = now
-            self.clients[client_id]["ip"] = ip
-            self.clients[client_id]["hostname"] = hostname
-            self.clients[client_id]["username"] = username
-            self.clients[client_id]["mac_address"] = mac_address
-            
-            # Update any new system info properties while preserving existing ones
-            if system_info:
-                self.clients[client_id]["system_info"].update(system_info)
-                
-            self.log_event(client_id, "Client Updated", f"Client reconnected: {hostname}/{username}")
+        
+        # Additional check for client_identifier in system_info
+        if 'client_identifier' in system_info:
+            client_identifier = system_info['client_identifier']
+            # Check if another client has the same identifier but different client_id
+            for existing_id, client_info in self.clients.items():
+                if (existing_id != client_id and 
+                    client_info.get('system_info', {}).get('client_identifier') == client_identifier):
+                    self.log_event(existing_id, "Client Updated", 
+                                f"Client reconnected with new ID: {client_id} (was {existing_id})")
+                    break
         
         return client_id
 
@@ -148,13 +142,31 @@ class ClientManager:
         """Add a result to a command in the client's history"""
         if client_id in self.clients:
             # Find the command with the matching timestamp
+            found = False
             for command in self.clients[client_id]["history"]:
                 if command.get("timestamp") == timestamp:
                     command["result"] = result
                     self.log_event(client_id, "Command Result", f"Result received for command at {timestamp}")
+                    found = True
+                    
                     # Notify listeners that the command has been updated
                     self.on_command_updated(client_id)
-                    return True
+            
+            if not found:
+                # Handle case where the command might be missing from history
+                self.log_event(client_id, "Command Result", f"Received result for unknown command timestamp: {timestamp}")
+                
+                # Create a placeholder command with the result
+                command = {
+                    "timestamp": timestamp,
+                    "command_type": "unknown",
+                    "args": "",
+                    "result": result
+                }
+                self.clients[client_id]["history"].append(command)
+                self.on_command_updated(client_id)
+            
+            return found
         return False
 
     def get_clients_info(self):

