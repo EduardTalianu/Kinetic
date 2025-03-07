@@ -14,35 +14,43 @@ class ClientManager:
         self.client_keys = {}  # Storage for client-specific encryption keys
 
     def add_client(self, ip, hostname="Unknown", username="Unknown", machine_guid="Unknown", 
-                    os_version="Unknown", mac_address="Unknown", system_info=None, existing_id=None):
-        """Register a client with enhanced identification data"""
+                os_version="Unknown", mac_address="Unknown", system_info=None, existing_id=None):
+        """Register a client using IP address as the client ID"""
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         if system_info is None:
             system_info = {}
         
-        # If an existing_id is provided, use it instead of generating a new one
-        if existing_id:
-            client_id = existing_id
-        else:
-            # Generate a unique client_id from system information
-            client_id = generate_client_id(ip, hostname, username, machine_guid, os_version)
+        # Use the existing_id if provided (should be the IP), otherwise use IP
+        client_id = existing_id if existing_id else ip
         
         # Handle updating existing client
         if client_id in self.clients:
             # Update existing client information
             self.clients[client_id]["last_seen"] = now
-            self.clients[client_id]["ip"] = ip
-            self.clients[client_id]["hostname"] = hostname
-            self.clients[client_id]["username"] = username
-            self.clients[client_id]["machine_guid"] = machine_guid
-            self.clients[client_id]["os_version"] = os_version
-            self.clients[client_id]["mac_address"] = mac_address
             
-            # Update any new system info properties while preserving existing ones
+            # Only update these fields if they're not "Unknown"
+            if hostname != "Unknown":
+                self.clients[client_id]["hostname"] = hostname
+            if username != "Unknown":
+                self.clients[client_id]["username"] = username
+            if machine_guid != "Unknown":
+                self.clients[client_id]["machine_guid"] = machine_guid
+            if os_version != "Unknown":
+                self.clients[client_id]["os_version"] = os_version
+            if mac_address != "Unknown":
+                self.clients[client_id]["mac_address"] = mac_address
+            
+            # Update any new system info values
             if system_info:
-                self.clients[client_id]["system_info"].update(system_info)
+                if "system_info" not in self.clients[client_id]:
+                    self.clients[client_id]["system_info"] = {}
                 
+                for key, value in system_info.items():
+                    # Don't overwrite with empty or Unknown values
+                    if value and value != "Unknown":
+                        self.clients[client_id]["system_info"][key] = value
+                        
             self.log_event(client_id, "Client Updated", f"Client reconnected: {hostname}/{username}")
         else:
             # Create new client entry
@@ -64,17 +72,6 @@ class ClientManager:
                 }
             }
             self.log_event(client_id, "Client Connected", f"New client connected: {hostname}/{username}")
-        
-        # Additional check for client_identifier in system_info
-        if 'client_identifier' in system_info:
-            client_identifier = system_info['client_identifier']
-            # Check if another client has the same identifier but different client_id
-            for existing_id, client_info in self.clients.items():
-                if (existing_id != client_id and 
-                    client_info.get('system_info', {}).get('client_identifier') == client_identifier):
-                    self.log_event(existing_id, "Client Updated", 
-                                f"Client reconnected with new ID: {client_id} (was {existing_id})")
-                    break
         
         return client_id
 

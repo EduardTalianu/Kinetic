@@ -135,8 +135,15 @@ class ClientVerifier:
 
 def generate_client_id(ip, hostname, username, machine_guid, os_version):
     """Generate a unique client ID from system information"""
-    # Create a combined string of identifying information
-    identifier = f"{ip}|{hostname}|{username}|{machine_guid}|{os_version}"
+    # Prioritize machine_guid if available as it's the most stable identifier
+    if machine_guid and machine_guid != "Unknown":
+        # Create a hash from the machine GUID alone for stability
+        return hashlib.sha256(machine_guid.encode()).hexdigest()[:16]
+    
+    # Otherwise use a combination of identifiers
+    # Create a combined string of identifying information - exclude IP as it might change
+    identifier = f"{hostname}|{username}|{os_version}"
+    
     # Hash it to create a stable, unique identifier
     return hashlib.sha256(identifier.encode()).hexdigest()[:16]
 
