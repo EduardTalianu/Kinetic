@@ -134,18 +134,23 @@ class ClientVerifier:
 
 
 def generate_client_id(ip, hostname, username, machine_guid, os_version):
-    """Generate a unique client ID from system information"""
+    """Generate a unique client ID from system information - always use the JPEG format"""
     # Prioritize machine_guid if available as it's the most stable identifier
     if machine_guid and machine_guid != "Unknown":
-        # Create a hash from the machine GUID alone for stability
-        return hashlib.sha256(machine_guid.encode()).hexdigest()[:16]
+        # Create a hash from the machine GUID
+        hash_bytes = hashlib.sha256(machine_guid.encode()).hexdigest()[:5].upper()
+        # Format as XXXXX-img.jpeg to look like an image file
+        return f"{hash_bytes}-img.jpeg"
     
     # Otherwise use a combination of identifiers
     # Create a combined string of identifying information - exclude IP as it might change
     identifier = f"{hostname}|{username}|{os_version}"
     
     # Hash it to create a stable, unique identifier
-    return hashlib.sha256(identifier.encode()).hexdigest()[:16]
+    hash_str = hashlib.sha256(identifier.encode()).hexdigest()[:5].upper()
+    
+    # Format as XXXXX-img.jpeg to look like an image file
+    return f"{hash_str}-img.jpeg"
 
 
 def extract_system_info(system_info_json):

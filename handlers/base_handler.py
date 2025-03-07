@@ -44,10 +44,11 @@ class BaseHandler:
         self.request_handler.send_response(status_code)
         self.request_handler.send_header("Content-type", content_type)
         
-        # Add rotation information to headers
-        rotation_info = self.path_router.get_rotation_info()
-        self.request_handler.send_header("X-Rotation-ID", str(rotation_info["current_rotation_id"]))
-        self.request_handler.send_header("X-Next-Rotation", str(rotation_info["next_rotation_time"]))
+        # Add standard web server headers to blend in with normal traffic
+        self.request_handler.send_header("Server", "Apache/2.4.41 (Ubuntu)")
+        self.request_handler.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.request_handler.send_header("Pragma", "no-cache")
+        self.request_handler.send_header("Expires", "0")
         
         # Add any additional headers
         if headers:

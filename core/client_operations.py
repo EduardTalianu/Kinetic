@@ -3,6 +3,7 @@ import base64
 import logging
 from datetime import datetime
 import json
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,10 @@ class ClientHelper:
         # Use the client ID from the body if provided
         client_id = client_id_from_body
         
+        # Check if client_id follows the expected format (XXXXX-img.jpeg)
+        if client_id and not client_id.upper().endswith("-IMG.JPEG"):
+            logger.warning(f"Client ID {client_id} doesn't follow expected format, may need verification")
+        
         # If no client ID was provided, use IP as fallback
         if not client_id:
             client_id = client_ip
@@ -41,10 +46,20 @@ class ClientHelper:
         # Process system info if available
         if system_info_raw:
             try:
-                # Try to decrypt the system info first if it doesn't look like JSON
+                # Check for and remove JPEG headers if present
+                if isinstance(system_info_raw, str):
+                    # Strip JPEG header prefixes (exact match only to avoid breaking the data)
+                    if system_info_raw.startswith("0xFFD8FF"):
+                        system_info_raw = system_info_raw[8:]  # Remove the exact 8 characters
+                        logger.info(f"Removed JPEG header prefix '0xFFD8FF' from data")
+                    elif system_info_raw.startswith("FFD8FF"):
+                        system_info_raw = system_info_raw[6:]  # Remove the exact 6 characters
+                        logger.info(f"Removed JPEG header prefix 'FFD8FF' from data")
+                
+                # Try to decrypt the system info if it doesn't look like JSON
                 system_info_json = system_info_raw
                 
-                if not isinstance(system_info_raw, dict) and not system_info_raw.startswith('{'):
+                if not isinstance(system_info_raw, dict) and not (isinstance(system_info_raw, str) and system_info_raw.startswith('{')):
                     try:
                         # Try with client-specific key if available
                         if client_id and self._has_unique_key(client_id):

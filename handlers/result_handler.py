@@ -43,14 +43,26 @@ class ResultHandler(BaseHandler):
                 timestamp = None
                 result = None
                 
+                # Strip JPEG header if present
+                if encrypted_data and isinstance(encrypted_data, str):
+                    # Check for and remove JPEG headers if present (exact match only)
+                    if encrypted_data.startswith("0xFFD8FF"):
+                        encrypted_data = encrypted_data[8:]  # Remove 8 chars for 0xFFD8FF
+                        self.log_message(f"Removed JPEG header prefix '0xFFD8FF' from result data")
+                    elif encrypted_data.startswith("FFD8FF"):
+                        encrypted_data = encrypted_data[6:]  # Remove 6 chars for FFD8FF
+                        self.log_message(f"Removed JPEG header prefix 'FFD8FF' from result data")
+                
                 # Try to decrypt the data
                 try:
                     # Decrypt using client's key if available
-                    if self.crypto_helper._has_unique_key(client_id):
+                    if encrypted_data and self.crypto_helper._has_unique_key(client_id):
                         result_data = self.crypto_helper.decrypt(encrypted_data, client_id)
-                    else:
+                    elif encrypted_data:
                         result_data = self.crypto_helper.decrypt(encrypted_data)
-                    
+                    else:
+                        result_data = "No data provided"
+                        
                     self.log_message(f"Successfully decrypted result data: {result_data[:100]}...")
                 except Exception as e:
                     self.log_message(f"Decryption failed, using data as-is: {str(e)}")
@@ -58,12 +70,13 @@ class ResultHandler(BaseHandler):
                 
                 # Try to parse as JSON
                 try:
-                    result_json = json.loads(result_data)
-                    if isinstance(result_json, dict) and 'timestamp' in result_json and 'result' in result_json:
-                        # This is a structured result
-                        is_structured = True
-                        timestamp = result_json['timestamp']
-                        result = result_json['result']
+                    if result_data:
+                        result_json = json.loads(result_data)
+                        if isinstance(result_json, dict) and 'timestamp' in result_json and 'result' in result_json:
+                            # This is a structured result
+                            is_structured = True
+                            timestamp = result_json['timestamp']
+                            result = result_json['result']
                 except json.JSONDecodeError:
                     # Not JSON, use as raw result
                     self.log_message(f"Data is not valid JSON, using as raw result")
