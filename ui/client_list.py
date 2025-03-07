@@ -96,6 +96,7 @@ class ClientListUI:
         """Refresh the client list display"""
         for item in self.tree.get_children():
             self.tree.delete(item)
+            
         for client_id, info in self.client_manager.get_clients_info().items():
             pending_count = len(info.get("pending_commands", []))
             
@@ -112,14 +113,30 @@ class ClientListUI:
             elif verification_status.get("confidence", 0) < 50:
                 tags = ("suspicious",)
 
+            # Fetch additional information with fallbacks
+            hostname = info.get("hostname", "Unknown")
+            username = info.get("username", "Unknown")
+            os_version = info.get("os_version", "Unknown")
+            
+            # Try to get from system_info if not available at top level
+            if hostname == "Unknown" and "system_info" in info:
+                hostname = info["system_info"].get("Hostname", "Unknown")
+                
+            if username == "Unknown" and "system_info" in info:
+                username = info["system_info"].get("Username", "Unknown")
+                
+            if os_version == "Unknown" and "system_info" in info:
+                os_version = info["system_info"].get("OsVersion", "Unknown")
+            
+            # Insert the client row
             self.tree.insert("", tk.END, iid=client_id, values=(
                 client_id,
-                info["ip"],
-                info["hostname"],
-                info.get("username", "Unknown"),
-                info.get("os_version", "Unknown"),
+                info.get("ip", "Unknown"),
+                hostname,
+                username,
+                os_version,
                 verification_text,
-                info["last_seen"],
+                info.get("last_seen", "Unknown"),
                 pending_count,
             ), tags=tags)
         

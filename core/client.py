@@ -21,8 +21,12 @@ class ClientManager:
         if system_info is None:
             system_info = {}
         
-        # Use the provided client_id, or fall back to IP
-        client_id = client_id if client_id else ip
+        # Use the provided client_id, or generate one based on system info, or fall back to IP
+        if not client_id:
+            if machine_guid != "Unknown":
+                client_id = hashlib.sha256(machine_guid.encode()).hexdigest()[:16]
+            else:
+                client_id = ip
         
         # Handle updating existing client
         if client_id in self.clients:
@@ -73,6 +77,9 @@ class ClientManager:
                 }
             }
             self.log_event(client_id, "Client Connected", f"New client connected: {hostname}/{username} from {ip}")
+        
+        # Ensure client info is saved to disk
+        self._save_clients()
         
         return client_id
 
