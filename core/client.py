@@ -14,20 +14,21 @@ class ClientManager:
         self.client_keys = {}  # Storage for client-specific encryption keys
 
     def add_client(self, ip, hostname="Unknown", username="Unknown", machine_guid="Unknown", 
-                os_version="Unknown", mac_address="Unknown", system_info=None, existing_id=None):
-        """Register a client using IP address as the client ID"""
+                os_version="Unknown", mac_address="Unknown", system_info=None, client_id=None):
+        """Register a client using ClientId as the primary identifier"""
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         if system_info is None:
             system_info = {}
         
-        # Use the existing_id if provided (should be the IP), otherwise use IP
-        client_id = existing_id if existing_id else ip
+        # Use the provided client_id, or fall back to IP
+        client_id = client_id if client_id else ip
         
         # Handle updating existing client
         if client_id in self.clients:
             # Update existing client information
             self.clients[client_id]["last_seen"] = now
+            self.clients[client_id]["ip"] = ip
             
             # Only update these fields if they're not "Unknown"
             if hostname != "Unknown":
@@ -71,7 +72,7 @@ class ClientManager:
                     "warnings": ["New client"]
                 }
             }
-            self.log_event(client_id, "Client Connected", f"New client connected: {hostname}/{username}")
+            self.log_event(client_id, "Client Connected", f"New client connected: {hostname}/{username} from {ip}")
         
         return client_id
 

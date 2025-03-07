@@ -68,10 +68,11 @@ class BeaconHandler(BaseHandler):
             # Set additional headers
             headers = {
                 "X-First-Contact": "true",
-                "X-Key-Issuance": "true"
+                "X-Key-Issuance": "true",
+                "X-Client-ID": client_id  # Always include client ID in headers
             }
             
-            # Convert commands to JSON - ensure this is properly formatted JSON!
+            # Convert commands to JSON
             commands_json = json.dumps(commands)
             
             # Send response without encryption for initial key exchange
@@ -85,8 +86,11 @@ class BeaconHandler(BaseHandler):
         # For established clients, encrypt the response
         encrypted_commands = self.crypto_helper.encrypt(commands_json, client_id)
         
-        # Set additional headers
-        headers = {}
+        # Add client ID to headers
+        headers = {
+            "X-Client-ID": client_id
+        }
+        
         if has_key_operation:
             headers["X-Key-Rotation"] = "true"
         
