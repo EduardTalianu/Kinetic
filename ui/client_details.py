@@ -155,9 +155,9 @@ class ClientDetailsUI:
             del self.client_details_tabs[client_id]
 
     def populate_system_info_tab(self, parent_frame, client_info):
-        """Populate the system information tab with client details"""
+        """Populate the system information tab with client details with nice formatting for the new ID format"""
         # Create scrollable canvas for system info
-        canvas = tk.Canvas(parent_frame, width=600)  # 30% wider (from approx. 462 to 600)
+        canvas = tk.Canvas(parent_frame, width=600)
         scrollbar = ttk.Scrollbar(parent_frame, orient="vertical", command=canvas.yview)
         
         scroll_frame = ttk.Frame(canvas)
@@ -176,32 +176,43 @@ class ClientDetailsUI:
         basic_frame = ttk.LabelFrame(scroll_frame, text="Basic Information")
         basic_frame.pack(fill=tk.X, padx=10, pady=5, anchor="n")
         
+        # Extract and format the client ID
+        client_id = client_info.get("client_id", "Unknown")
+        
+        # Check if client ID has the new format (e.g. "ABCDE-img.jpeg")
+        if "-img.jpeg" in client_id:
+            # Split the ID to highlight the random part separately
+            id_parts = client_id.split("-")
+            if len(id_parts) > 0:
+                random_part = id_parts[0]
+                formatted_id = f"{random_part} (Agent {client_id})"
+            else:
+                formatted_id = client_id
+        else:
+            formatted_id = client_id
+        
         # Two-column layout for basic info with increased width
         labels = [
-            ("Client ID:", client_info.get("client_id", "Unknown")),
+            ("Agent ID:", formatted_id),
             ("IP Address:", client_info.get("ip", "Unknown")),
             ("Hostname:", client_info.get("hostname", "Unknown")),
-            ("Username:", client_info.get("username", "Unknown")),
-            ("Machine GUID:", client_info.get("machine_guid", "Unknown")),
-            ("OS Version:", client_info.get("os_version", "Unknown")),
-            ("MAC Address:", client_info.get("mac_address", "Unknown")),
             ("Last Seen:", client_info.get("last_seen", "Unknown"))
         ]
         
         for i, (label, value) in enumerate(labels):
             ttk.Label(basic_frame, text=label, width=15, anchor="e").grid(row=i//2, column=i%2*2, sticky="e", padx=5, pady=2)
-            value_text = ttk.Label(basic_frame, text=value, width=32, anchor="w")  # Increased from 25 to 32
+            value_text = ttk.Label(basic_frame, text=value, width=32, anchor="w")
             value_text.grid(row=i//2, column=i%2*2+1, sticky="w", padx=5, pady=2)
             
-        # Advanced system information section
+        # Advanced system information section if available
         if "system_info" in client_info and client_info["system_info"]:
             advanced_frame = ttk.LabelFrame(scroll_frame, text="Advanced System Information")
             advanced_frame.pack(fill=tk.X, padx=10, pady=5, anchor="n")
             
             row = 0
             for key, value in client_info["system_info"].items():
-                # Skip keys already shown in basic info
-                if key.lower() not in ["hostname", "username", "machineguid", "osversion", "macaddress"]:
+                # Skip ClientId key since we already display it formatted
+                if key.lower() != 'clientid':
                     ttk.Label(advanced_frame, text=f"{key}:", width=15, anchor="e").grid(row=row, column=0, sticky="e", padx=5, pady=2)
                     
                     # Handle different value types
@@ -212,7 +223,7 @@ class ClientDetailsUI:
                     else:
                         value_str = str(value)
                     
-                    value_text = ttk.Label(advanced_frame, text=value_str, wraplength=400, anchor="w")  # Increased from 300 to 400
+                    value_text = ttk.Label(advanced_frame, text=value_str, wraplength=400, anchor="w")
                     value_text.grid(row=row, column=1, sticky="w", padx=5, pady=2)
                     row += 1
 

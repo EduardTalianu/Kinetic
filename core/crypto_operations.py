@@ -22,6 +22,10 @@ class CryptoHelper:
         # Fall back to campaign-wide key
         return self.crypto_manager.key
 
+    def _has_unique_key(self, client_id):
+        """Check if client has a unique encryption key"""
+        return hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys
+
     def encrypt(self, data, client_id=None):
         """Encrypt data using client key if available, otherwise campaign key"""
         key = self.get_client_key(client_id) if client_id else self.crypto_manager.key

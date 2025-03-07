@@ -28,7 +28,9 @@ function Update-PathRotation {
     if ($Paths) {
         $global:currentPaths = @{}
         foreach ($key in $Paths.Keys) {
-            $global:currentPaths[$key] = $Paths[$key]
+            if ($key -eq "beacon_path" -or $key -eq "cmd_result_path") {
+                $global:currentPaths[$key] = $Paths[$key]
+            }
         }
     }
     

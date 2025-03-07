@@ -37,14 +37,6 @@ class ClientManager:
             # Only update these fields if they're not "Unknown"
             if hostname != "Unknown":
                 self.clients[client_id]["hostname"] = hostname
-            if username != "Unknown":
-                self.clients[client_id]["username"] = username
-            if machine_guid != "Unknown":
-                self.clients[client_id]["machine_guid"] = machine_guid
-            if os_version != "Unknown":
-                self.clients[client_id]["os_version"] = os_version
-            if mac_address != "Unknown":
-                self.clients[client_id]["mac_address"] = mac_address
             
             # Update any new system info values
             if system_info:
@@ -56,30 +48,30 @@ class ClientManager:
                     if value and value != "Unknown":
                         self.clients[client_id]["system_info"][key] = value
                         
-            self.log_event(client_id, "Client Updated", f"Client reconnected: {hostname}/{username}")
+            self.log_event(client_id, "Client Updated", f"Client reconnected: {hostname}")
         else:
             # Create new client entry
             self.clients[client_id] = {
                 "last_seen": now,
                 "ip": ip,
                 "hostname": hostname,
-                "username": username,
-                "machine_guid": machine_guid,
-                "os_version": os_version,
-                "mac_address": mac_address,
                 "system_info": system_info,
                 "pending_commands": [],
                 "history": [],
                 "verification_status": {
-                    "verified": False,
-                    "confidence": 0,
+                    "verified": True,
+                    "confidence": 100,
                     "warnings": ["New client"]
                 }
             }
-            self.log_event(client_id, "Client Connected", f"New client connected: {hostname}/{username} from {ip}")
+            self.log_event(client_id, "Client Connected", f"New client connected: {hostname} from {ip}")
         
         # Ensure client info is saved to disk
         self._save_clients()
+        
+        # Force a refresh of the client list in the UI
+        if hasattr(self, 'on_client_updated') and callable(self.on_client_updated):
+            self.on_client_updated()
         
         return client_id
 
