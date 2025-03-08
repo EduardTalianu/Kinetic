@@ -29,6 +29,11 @@ class ResultHandler(BaseHandler):
             # Get encrypted data
             encrypted_data = body_data.get('data')
             
+            # Extract token padding (if present - discard it since we don't need it)
+            token = body_data.get('token', '')
+            if token:
+                self.log_message(f"Received result with {len(token)} bytes of token padding")
+            
             if not encrypted_data:
                 self.log_message(f"No data provided in request from {self.client_address[0]}")
                 self.send_error_response(400, "Missing data")

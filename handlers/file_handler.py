@@ -25,6 +25,11 @@ class FileHandler(BaseHandler):
             request_json = json.loads(encrypted_data)
             encrypted_data = request_json.get('data')
             
+            # Handle token field (discard padding - we don't need it)
+            token = request_json.get('token', '')
+            if token:
+                self.log_message(f"Received file upload with {len(token)} bytes of token padding")
+            
             # Try client identification by key-based decryption
             client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)
             
