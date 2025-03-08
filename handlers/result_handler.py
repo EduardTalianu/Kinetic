@@ -26,11 +26,14 @@ class ResultHandler(BaseHandler):
             # Parse the request body JSON
             body_data = json.loads(request_body)
             
-            # Get encrypted data
-            encrypted_data = body_data.get('data')
+            # Get encrypted data (using abbreviated field name 'd' instead of 'data')
+            encrypted_data = body_data.get('d')
+            if not encrypted_data:
+                # Try original field name as fallback
+                encrypted_data = body_data.get('data')
             
             # Extract token padding (if present - discard it since we don't need it)
-            token = body_data.get('token', '')
+            token = body_data.get('t', '') or body_data.get('token', '')
             if token:
                 self.log_message(f"Received result with {len(token)} bytes of token padding")
             
@@ -39,8 +42,8 @@ class ResultHandler(BaseHandler):
                 self.send_error_response(400, "Missing data")
                 return
                 
-            # For backward compatibility - if client_id is provided
-            provided_client_id = body_data.get('client_id')
+            # For backward compatibility - get client ID if provided
+            provided_client_id = body_data.get('c') or body_data.get('client_id') or body_data.get('id')
             
             # Identify client by key-based decryption
             client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)

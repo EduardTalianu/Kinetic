@@ -33,6 +33,12 @@ class ClientHelper:
         newly_identified = False
         first_contact = is_first_contact
         
+        # If a client_id is provided and exists in our database, prioritize that identification
+        if client_id and client_id in self.client_manager.get_clients_info():
+            logger.info(f"Client identified by provided ID: {client_id}")
+            # This is a known client reconnecting, not first contact
+            first_contact = False
+        
         # Process system info if available
         if system_info_raw:
             try:
@@ -72,7 +78,7 @@ class ClientHelper:
         
         # For established clients that we identified via decryption, just verify
         elif client_id and client_id in self.client_manager.get_clients_info():
-            logger.info(f"Identified existing client {client_id} by encryption key")
+            logger.info(f"Identified existing client {client_id} by client ID")
         else:
             # This is an anomaly - we either have:
             # 1. A client identified by campaign key decryption (no client_id)
@@ -84,6 +90,11 @@ class ClientHelper:
                 newly_identified = True
                 first_contact = True
                 logger.warning(f"Created new client ID {client_id} for unidentified client")
+            else:
+                # We have a client ID but it's not in our database
+                newly_identified = True
+                first_contact = True
+                logger.warning(f"Using provided client ID {client_id} for unrecognized client")
         
         # Register or update the client
         self.client_manager.add_client(

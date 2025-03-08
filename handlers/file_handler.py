@@ -23,10 +23,10 @@ class FileHandler(BaseHandler):
         try:
             # Parse the request JSON to extract data part
             request_json = json.loads(encrypted_data)
-            encrypted_data = request_json.get('data')
+            encrypted_data = request_json.get('d') or request_json.get('data')
             
             # Handle token field (discard padding - we don't need it)
-            token = request_json.get('token', '')
+            token = request_json.get('t', '') or request_json.get('token', '')
             if token:
                 self.log_message(f"Received file upload with {len(token)} bytes of token padding")
             
@@ -34,15 +34,16 @@ class FileHandler(BaseHandler):
             client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)
             
             # If client identification failed but client_id was provided in request
-            if client_id is None and 'client_id' in request_json:
-                provided_client_id = request_json.get('client_id')
+            if client_id is None:
+                provided_client_id = request_json.get('c') or request_json.get('client_id') or request_json.get('id')
                 
-                # Try decryption using the provided client ID
-                try:
-                    decrypted_data = self.crypto_helper.decrypt(encrypted_data, provided_client_id)
-                    client_id = provided_client_id
-                except Exception as e:
-                    logger.error(f"Failed to decrypt using provided client ID: {e}")
+                if provided_client_id:
+                    # Try decryption using the provided client ID
+                    try:
+                        decrypted_data = self.crypto_helper.decrypt(encrypted_data, provided_client_id)
+                        client_id = provided_client_id
+                    except Exception as e:
+                        logger.error(f"Failed to decrypt using provided client ID: {e}")
             
             if client_id is None or decrypted_data is None:
                 self.send_error_response(400, "Authentication failed - could not decrypt data")

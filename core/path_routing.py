@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime
+import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class PathRouter:
         """Create a command to update client with new path rotation info"""
         rotation_info = self.path_manager.get_rotation_info()
         return {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "command_type": "path_rotation",
             "args": json.dumps({
                 "rotation_id": rotation_info["current_rotation_id"],
