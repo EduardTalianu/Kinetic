@@ -37,6 +37,12 @@ class ResultHandler(BaseHandler):
                 
             self.log_message(f"Identified client from result: {client_id}")
             
+            # Find the original client ID if this is a rotated ID
+            original_client_id = self.client_manager.get_original_client_id(client_id)
+            if original_client_id != client_id:
+                self.log_message(f"Mapped rotated client ID {client_id} to original ID {original_client_id}")
+                client_id = original_client_id
+            
             # Process the result
             try:
                 result_data = None
@@ -90,6 +96,17 @@ class ResultHandler(BaseHandler):
                             is_structured = True
                             timestamp = result_json['timestamp']
                             result = result_json['result']
+                            
+                            # Also check for rotated client ID in the result
+                            if 'client_id' in result_json and result_json['client_id'] != client_id:
+                                received_client_id = result_json['client_id']
+                                self.log_message(f"Client reported ID {received_client_id} in result differs from tracked ID {client_id}")
+                                
+                                # Update mapping if this is a newly rotated ID
+                                current_id = self.client_manager.get_current_client_id(client_id)
+                                if current_id != received_client_id:
+                                    self.log_message(f"Updating client ID mapping from {current_id} to {received_client_id}")
+                                    self.client_manager.update_client_id_mapping(client_id, received_client_id)
                 except json.JSONDecodeError:
                     # Not JSON, use as raw result
                     self.log_message(f"Data is not valid JSON, using as raw result")
