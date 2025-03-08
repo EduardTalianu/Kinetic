@@ -573,18 +573,6 @@ class CampaignConfigTab:
                 if agent_config_tab.validate_inputs():
                     beacon_period = agent_config_tab.beacon_period_var.get()
                     kill_date_str = agent_config_tab.kill_date_var.get()
-                    
-                    # Apply auto rotation settings to client manager if it exists
-                    if hasattr(main_app, 'client_manager'):
-                        client_manager = main_app.client_manager
-                        # Set auto rotation settings
-                        client_manager.auto_rotation_enabled = agent_config_tab.auto_rotation_var.get()
-                        try:
-                            client_manager.rotation_frequency = int(agent_config_tab.rotation_frequency_var.get())
-                        except ValueError:
-                            client_manager.rotation_frequency = 17  # Default if parsing fails
-                        self.logger(f"Auto client ID rotation {'enabled' if client_manager.auto_rotation_enabled else 'disabled'} "
-                                f"with frequency {client_manager.rotation_frequency}")
                 else:
                     # Inputs not valid, abort campaign start
                     return

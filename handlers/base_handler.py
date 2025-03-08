@@ -85,22 +85,11 @@ class BaseHandler:
         return f"{campaign_name}_campaign"
     
     def identify_client(self):
-        """Identify client from headers or from IP address"""
-        client_id = None
-        client_identifier = self.headers.get('X-Client-ID')
+        """
+        Identify client through decryption
         
-        if client_identifier:
-            # Try to find the client ID from the identifier
-            for cid, client_info in self.client_manager.get_clients_info().items():
-                if client_info.get('system_info', {}).get('client_identifier') == client_identifier:
-                    client_id = cid
-                    break
-        
-        # If client wasn't identified by identifier, try by IP
-        if not client_id:
-            for cid, client_info in self.client_manager.get_clients_info().items():
-                if client_info.get('ip') == self.client_address[0]:
-                    client_id = cid
-                    break
-                    
-        return client_id
+        This is a placeholder that should be overridden by handlers 
+        that need to identify clients through key-based decryption
+        """
+        # This will be implemented by specific handlers
+        return None

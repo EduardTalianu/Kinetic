@@ -83,23 +83,6 @@ class AgentConfigTab:
         self.max_backoff_entry = ttk.Entry(fallback_frame, textvariable=self.max_backoff_var, width=5)
         self.max_backoff_entry.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
         ttk.Label(fallback_frame, text="Maximum time between reconnection attempts").grid(row=1, column=2, sticky=tk.W, padx=5, pady=5)
-
-         # Auto ID Rotation Settings
-        auto_rotation_frame = ttk.LabelFrame(main_frame, text="Automatic Client ID Rotation")
-        auto_rotation_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Label(auto_rotation_frame, text="Enable Auto ID Rotation:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.auto_rotation_var = tk.BooleanVar(value=True)
-        self.auto_rotation_check = ttk.Checkbutton(auto_rotation_frame, variable=self.auto_rotation_var)
-        self.auto_rotation_check.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
-        ttk.Label(auto_rotation_frame, text="Automatically rotate client ID for better security").grid(row=0, column=2, sticky=tk.W, padx=5, pady=5)
-        
-        ttk.Label(auto_rotation_frame, text="Rotation Frequency:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.rotation_frequency_var = tk.StringVar(value="17")
-        self.rotation_frequency_entry = ttk.Entry(auto_rotation_frame, textvariable=self.rotation_frequency_var, width=5)
-        self.rotation_frequency_entry.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
-        ttk.Label(auto_rotation_frame, text="Number of communications before rotating client ID").grid(row=1, column=2, sticky=tk.W, padx=5, pady=5)
-
         
         # Non-editable configuration information
         info_frame = ttk.LabelFrame(main_frame, text="Hardcoded Agent Settings (Non-Editable)")
@@ -169,7 +152,7 @@ class AgentConfigTab:
         # Validate inputs before saving
         if not self.validate_inputs():
             return
-        
+            
         # Get campaign name to determine save location
         campaign_name = ""
         if hasattr(self.campaign_tab, 'entry_campaign'):
@@ -186,8 +169,6 @@ class AgentConfigTab:
             "kill_date": self.kill_date_var.get(),
             "max_failures_before_fallback": self.max_failures_var.get(),
             "max_backoff_time": self.max_backoff_var.get(),
-            "auto_rotation_enabled": self.auto_rotation_var.get(),
-            "rotation_frequency": self.rotation_frequency_var.get(),
             "last_modified": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
@@ -237,19 +218,11 @@ class AgentConfigTab:
             if "max_backoff_time" in config:
                 self.max_backoff_var.set(config["max_backoff_time"])
                 
-            # Load new auto rotation settings
-            if "auto_rotation_enabled" in config:
-                self.auto_rotation_var.set(config["auto_rotation_enabled"])
-                
-            if "rotation_frequency" in config:
-                self.rotation_frequency_var.set(config["rotation_frequency"])
-            
             self.logger(f"Loaded agent configuration from {config_file}")
             return True
         except Exception as e:
             self.logger(f"Error loading agent configuration: {e}")
             return False
-
     
     def reset_to_defaults(self):
         """Reset all values to defaults"""
@@ -257,8 +230,6 @@ class AgentConfigTab:
         self.jitter_percentage_var.set("20")
         self.max_failures_var.set("3")
         self.max_backoff_var.set("300")
-        self.auto_rotation_var.set(True)
-        self.rotation_frequency_var.set("17")
         
         # Set kill date to 10 days in the future
         future_date = datetime.date.today() + datetime.timedelta(days=10)
@@ -325,15 +296,4 @@ class AgentConfigTab:
             messagebox.showerror("Validation Error", "Max backoff time must be a valid integer.")
             return False
         
-        try:
-            rotation_frequency = int(self.rotation_frequency_var.get())
-            if rotation_frequency <= 0:
-                messagebox.showerror("Validation Error", "Rotation frequency must be a positive integer.")
-                return False
-        except ValueError:
-            messagebox.showerror("Validation Error", "Rotation frequency must be a valid integer.")
-            return False
-        
         return True
-        
-  

