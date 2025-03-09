@@ -78,13 +78,18 @@ class MainGUI:
         if tab_id == 1:  # Agent Config tab (0-based index)
             self.agent_config_tab.sync_from_campaign_tab()
         
-        # If switching to Agent Generation tab, apply agent config first
+        # If switching to Agent Generation tab, check if agent config is saved
         elif tab_id == 2:  # Agent Generation tab
-            # We don't force applying configurations here, just let the user know they should
             campaign_name = self.campaign_tab.entry_campaign.get().strip()
+            
             if campaign_name:
-                # Try to load any saved configuration
-                self.agent_config_tab.load_configuration(campaign_name)
+                # Check if agent config exists
+                agent_config_file = os.path.join(f"{campaign_name}_campaign", "agent_config.json")
+                if not os.path.exists(agent_config_file):
+                    # Remind user to save agent config if not yet saved
+                    self.log_manager.log("Agent configuration not saved. Consider configuring and saving agent settings.")
+                else:
+                    self.log_manager.log("Agent configuration loaded from saved settings.")
 
     def populate_default_campaign_data(self):
         """Populates the Campaign Config tab with default values."""
@@ -92,7 +97,7 @@ class MainGUI:
         campaign_name = "Campaign_" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
         # Default IP
-        default_ip = "192.168.0.1"
+        default_ip = "127.0.0.1"
 
         # Random port between 1024 and 65535
         random_port = random.randint(1024, 65535)
@@ -101,9 +106,6 @@ class MainGUI:
         self.campaign_tab.entry_campaign.insert(0, campaign_name)
         self.campaign_tab.ip_var.set(default_ip)
         self.campaign_tab.entry_port.insert(0, str(random_port))
-        
-        # Set default values in agent config tab
-        # Beacon period and kill date are now set in agent_config_tab, not campaign_tab
         
         # Set up the log manager with the campaign folder
         self.log_manager.set_campaign_folder(campaign_name)

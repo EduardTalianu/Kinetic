@@ -11,9 +11,19 @@ class AgentConfigTab:
         self.logger = logger
         
         # Initialize variables that will be moved from campaign tab
-        self.beacon_period_var = tk.StringVar(value="5")  # Default value
+        self.beacon_period_var = tk.StringVar(value="3")  # Default value
         self.kill_date_var = tk.StringVar()
         self.jitter_percentage_var = tk.StringVar(value="20")  # Default jitter is 20%
+        
+        # Initialize new configurable options
+        self.user_agent_var = tk.StringVar(value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+        self.max_sleep_var = tk.StringVar(value="10")  # Default 10 minutes
+        self.username_var = tk.StringVar()
+        self.password_var = tk.StringVar()
+        self.proxy_enabled_var = tk.BooleanVar(value=False)
+        self.proxy_type_var = tk.StringVar(value="system")  # Default to system proxy
+        self.proxy_server_var = tk.StringVar()
+        self.proxy_port_var = tk.StringVar()
         
         # Set the default kill date (10 days in the future)
         future_date = datetime.date.today() + datetime.timedelta(days=10)
@@ -33,8 +43,7 @@ class AgentConfigTab:
         
         description = (
             "Configure parameters that affect agent behavior. These settings will be applied "
-            "when generating new agents. Note that some advanced parameters are hardcoded in "
-            "the agent and cannot be modified without changing the agent code."
+            "when generating new agents."
         )
         desc_label = ttk.Label(main_frame, text=description, wraplength=600, justify=tk.LEFT)
         desc_label.pack(anchor=tk.W, pady=(0, 15))
@@ -48,6 +57,14 @@ class AgentConfigTab:
         
         fallback_frame = ttk.LabelFrame(main_frame, text="Fallback & Recovery")
         fallback_frame.pack(fill=tk.X, pady=10)
+        
+        # New: Communication & Identity frame
+        comm_frame = ttk.LabelFrame(main_frame, text="Communication & Identity")
+        comm_frame.pack(fill=tk.X, pady=10)
+        
+        # New: Proxy Settings frame
+        proxy_frame = ttk.LabelFrame(main_frame, text="Proxy Settings")
+        proxy_frame.pack(fill=tk.X, pady=10)
         
         # Beacon Settings
         ttk.Label(beacon_frame, text="Beacon Period (seconds):").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
@@ -71,6 +88,17 @@ class AgentConfigTab:
         ttk.Button(security_frame, text="+ 30 Days", command=self.set_30_days_expiry).grid(
             row=0, column=3, sticky=tk.W, padx=5, pady=5)
         
+        # Username and Password
+        ttk.Label(security_frame, text="Username:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.username_entry = ttk.Entry(security_frame, textvariable=self.username_var, width=15)
+        self.username_entry.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(security_frame, text="Optional authentication username").grid(row=1, column=2, sticky=tk.W, padx=5, pady=5)
+        
+        ttk.Label(security_frame, text="Password:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        self.password_entry = ttk.Entry(security_frame, textvariable=self.password_var, width=15, show="*")
+        self.password_entry.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(security_frame, text="Optional authentication password").grid(row=2, column=2, sticky=tk.W, padx=5, pady=5)
+        
         # Failback & Recovery Settings
         ttk.Label(fallback_frame, text="Max Failures Before Fallback:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.max_failures_var = tk.StringVar(value="3")  # Default to 3
@@ -79,26 +107,56 @@ class AgentConfigTab:
         ttk.Label(fallback_frame, text="Number of failed connections before using fallback paths").grid(row=0, column=2, sticky=tk.W, padx=5, pady=5)
         
         ttk.Label(fallback_frame, text="Max Backoff Time (seconds):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.max_backoff_var = tk.StringVar(value="300")  # Default to 5 minutes
+        self.max_backoff_var = tk.StringVar(value="10")  
         self.max_backoff_entry = ttk.Entry(fallback_frame, textvariable=self.max_backoff_var, width=5)
         self.max_backoff_entry.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
         ttk.Label(fallback_frame, text="Maximum time between reconnection attempts").grid(row=1, column=2, sticky=tk.W, padx=5, pady=5)
         
-        # Non-editable configuration information
-        info_frame = ttk.LabelFrame(main_frame, text="Hardcoded Agent Settings (Non-Editable)")
-        info_frame.pack(fill=tk.X, pady=10)
+        ttk.Label(fallback_frame, text="Max Random Sleep Time (seconds):").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        self.max_sleep_entry = ttk.Entry(fallback_frame, textvariable=self.max_sleep_var, width=5)
+        self.max_sleep_entry.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(fallback_frame, text="Maximum duration for sleep when not communicating with server").grid(row=2, column=2, sticky=tk.W, padx=5, pady=5)
         
-        self.info_text = tk.Text(info_frame, height=8, wrap=tk.WORD, state=tk.NORMAL)
-        self.info_text.pack(fill=tk.X, padx=5, pady=5)
-        self.info_text.insert(tk.END, 
-            "The following settings are hardcoded in the agent and cannot be modified without changing the agent generation code:\n\n"
-            "• TLS Version: 1.2\n"
-            "• User-Agent String: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36\n"
-            "• Encryption: AES-256-CBC with PKCS7 padding\n"
-            "• Communication Paths: Set in Campaign Config tab\n"
-            "• Path Rotation: Set in Campaign Config tab\n"
-        )
-        self.info_text.config(state=tk.DISABLED)
+        # Communication & Identity Settings
+        ttk.Label(comm_frame, text="User-Agent:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.user_agent_entry = ttk.Entry(comm_frame, textvariable=self.user_agent_var, width=60)
+        self.user_agent_entry.grid(row=0, column=1, columnspan=3, sticky=tk.W, padx=5, pady=5)
+        
+        # User-Agent presets dropdown
+        ttk.Label(comm_frame, text="Presets:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        ua_presets = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/125.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+        ]
+        
+        self.ua_preset_combo = ttk.Combobox(comm_frame, values=ua_presets, width=57)
+        self.ua_preset_combo.grid(row=1, column=1, columnspan=3, sticky=tk.W, padx=5, pady=5)
+        self.ua_preset_combo.bind("<<ComboboxSelected>>", self.on_ua_preset_selected)
+        
+        # Proxy Settings
+        self.proxy_check = ttk.Checkbutton(proxy_frame, text="Enable Proxy", variable=self.proxy_enabled_var, command=self.toggle_proxy_options)
+        self.proxy_check.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        # Proxy Type Selection
+        ttk.Label(proxy_frame, text="Proxy Type:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        proxy_types = ["system", "http", "socks4", "socks5"]
+        self.proxy_type_combo = ttk.Combobox(proxy_frame, textvariable=self.proxy_type_var, values=proxy_types, width=10, state="disabled")
+        self.proxy_type_combo.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(proxy_frame, text="Type of proxy to use ('system' uses Windows/OS settings)").grid(row=1, column=2, sticky=tk.W, padx=5, pady=5)
+        
+        # Proxy Server
+        ttk.Label(proxy_frame, text="Proxy Server:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        self.proxy_server_entry = ttk.Entry(proxy_frame, textvariable=self.proxy_server_var, width=30, state="disabled")
+        self.proxy_server_entry.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(proxy_frame, text="Only needed for manual proxy configuration").grid(row=2, column=2, sticky=tk.W, padx=5, pady=5)
+        
+        # Proxy Port
+        ttk.Label(proxy_frame, text="Proxy Port:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        self.proxy_port_entry = ttk.Entry(proxy_frame, textvariable=self.proxy_port_var, width=10, state="disabled")
+        self.proxy_port_entry.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(proxy_frame, text="Port number for the proxy server").grid(row=3, column=2, sticky=tk.W, padx=5, pady=5)
         
         # Buttons for saving and applying configuration
         button_frame = ttk.Frame(main_frame)
@@ -106,6 +164,34 @@ class AgentConfigTab:
         
         ttk.Button(button_frame, text="Save Configuration", command=self.save_configuration).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Reset to Defaults", command=self.reset_to_defaults).pack(side=tk.LEFT, padx=5)
+    
+    def on_ua_preset_selected(self, event):
+        """Update the user agent entry when a preset is selected"""
+        selected_ua = self.ua_preset_combo.get()
+        if selected_ua:
+            self.user_agent_var.set(selected_ua)
+    
+    def toggle_proxy_options(self):
+        """Enable or disable proxy configuration options based on checkbox"""
+        state = "normal" if self.proxy_enabled_var.get() else "disabled"
+        self.proxy_type_combo.config(state=state)
+        
+        # Only enable server and port if not system proxy and proxy is enabled
+        manual_proxy_state = "normal" if (self.proxy_enabled_var.get() and self.proxy_type_var.get() != "system") else "disabled"
+        self.proxy_server_entry.config(state=manual_proxy_state)
+        self.proxy_port_entry.config(state=manual_proxy_state)
+        
+        # Make the type combo update the manual fields when changed
+        if state == "normal":
+            self.proxy_type_combo.bind("<<ComboboxSelected>>", self.on_proxy_type_changed)
+        else:
+            self.proxy_type_combo.unbind("<<ComboboxSelected>>")
+    
+    def on_proxy_type_changed(self, event):
+        """Update fields when proxy type changes"""
+        manual_proxy_state = "normal" if self.proxy_type_var.get() != "system" else "disabled"
+        self.proxy_server_entry.config(state=manual_proxy_state)
+        self.proxy_port_entry.config(state=manual_proxy_state)
     
     def sync_from_campaign_tab(self):
         """Sync values from campaign tab to keep compatibility with existing config files"""
@@ -169,6 +255,14 @@ class AgentConfigTab:
             "kill_date": self.kill_date_var.get(),
             "max_failures_before_fallback": self.max_failures_var.get(),
             "max_backoff_time": self.max_backoff_var.get(),
+            "max_sleep_time": self.max_sleep_var.get(),
+            "user_agent": self.user_agent_var.get(),
+            "username": self.username_var.get(),
+            "password": self.password_var.get(),
+            "proxy_enabled": self.proxy_enabled_var.get(),
+            "proxy_type": self.proxy_type_var.get(),
+            "proxy_server": self.proxy_server_var.get(),
+            "proxy_port": self.proxy_port_var.get(),
             "last_modified": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
@@ -182,6 +276,7 @@ class AgentConfigTab:
                 json.dump(config, f, indent=4)
                 
             self.logger(f"Agent configuration saved to {config_file}")
+            messagebox.showinfo("Success", "Agent configuration saved successfully.")
         except Exception as e:
             self.logger(f"Error saving agent configuration: {e}")
             messagebox.showerror("Error", f"Failed to save configuration: {e}")
@@ -218,6 +313,36 @@ class AgentConfigTab:
             if "max_backoff_time" in config:
                 self.max_backoff_var.set(config["max_backoff_time"])
                 
+            # Load new configurable settings
+            if "max_sleep_time" in config:
+                self.max_sleep_var.set(config["max_sleep_time"])
+                
+            if "user_agent" in config:
+                self.user_agent_var.set(config["user_agent"])
+                
+            if "username" in config:
+                self.username_var.set(config["username"])
+                
+            if "password" in config:
+                self.password_var.set(config["password"])
+                
+            # Proxy settings
+            if "proxy_enabled" in config:
+                self.proxy_enabled_var.set(config["proxy_enabled"])
+                self.toggle_proxy_options()
+                
+            if "proxy_type" in config:
+                self.proxy_type_var.set(config["proxy_type"])
+                
+            if "proxy_server" in config:
+                self.proxy_server_var.set(config["proxy_server"])
+                
+            if "proxy_port" in config:
+                self.proxy_port_var.set(config["proxy_port"])
+                
+            # Update UI state based on loaded values
+            self.toggle_proxy_options()
+                
             self.logger(f"Loaded agent configuration from {config_file}")
             return True
         except Exception as e:
@@ -230,10 +355,21 @@ class AgentConfigTab:
         self.jitter_percentage_var.set("20")
         self.max_failures_var.set("3")
         self.max_backoff_var.set("300")
+        self.max_sleep_var.set("600")
+        self.user_agent_var.set("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+        self.username_var.set("")
+        self.password_var.set("")
+        self.proxy_enabled_var.set(False)
+        self.proxy_type_var.set("system")
+        self.proxy_server_var.set("")
+        self.proxy_port_var.set("")
         
         # Set kill date to 10 days in the future
         future_date = datetime.date.today() + datetime.timedelta(days=10)
         self.kill_date_var.set(future_date.strftime("%d/%m/%Y"))
+        
+        # Update UI state based on new values
+        self.toggle_proxy_options()
         
         self.logger("Agent configuration reset to defaults")
         messagebox.showinfo("Reset", "Agent configuration has been reset to default values.")
@@ -295,5 +431,38 @@ class AgentConfigTab:
         except ValueError:
             messagebox.showerror("Validation Error", "Max backoff time must be a valid integer.")
             return False
+            
+        # Validate max sleep time (must be a positive integer)
+        try:
+            max_sleep = int(self.max_sleep_var.get())
+            if max_sleep <= 0:
+                messagebox.showerror("Validation Error", "Max sleep time must be a positive integer.")
+                return False
+        except ValueError:
+            messagebox.showerror("Validation Error", "Max sleep time must be a valid integer.")
+            return False
+            
+        # Validate User-Agent (must not be empty)
+        if not self.user_agent_var.get().strip():
+            messagebox.showerror("Validation Error", "User-Agent cannot be empty.")
+            return False
+            
+        # Validate proxy settings if enabled
+        if self.proxy_enabled_var.get():
+            if self.proxy_type_var.get() != "system":
+                # For manual proxy, validate server and port
+                if not self.proxy_server_var.get().strip():
+                    messagebox.showerror("Validation Error", "Proxy server cannot be empty when using manual proxy.")
+                    return False
+                
+                try:
+                    if self.proxy_port_var.get():
+                        port = int(self.proxy_port_var.get())
+                        if port <= 0 or port > 65535:
+                            messagebox.showerror("Validation Error", "Proxy port must be between 1 and 65535.")
+                            return False
+                except ValueError:
+                    messagebox.showerror("Validation Error", "Proxy port must be a valid integer.")
+                    return False
         
         return True

