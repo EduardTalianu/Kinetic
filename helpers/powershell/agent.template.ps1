@@ -700,7 +700,11 @@ function Start-RandomSleep {
     return $false
 }
 
-# Main agent loop
+# ============ File Operations Functions ============
+{{FILE_OPERATIONS_CODE}}
+# ================================================
+
+
 # Main agent loop
 function Start-AgentLoop {
     # Track failed connection attempts for fallback

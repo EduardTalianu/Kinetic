@@ -142,7 +142,7 @@ class FileDownloadHandler(BaseHandler):
             
     def _process_file_request(self, client_id, file_request_json):
         """
-        Process the file request and return the file data
+        Process the file request and return the file data with improved error handling
         
         Args:
             client_id: The client ID
@@ -152,8 +152,20 @@ class FileDownloadHandler(BaseHandler):
             Dictionary with file response information
         """
         try:
-            # Parse the file request
-            file_request = json.loads(file_request_json)
+            # Parse the file request with proper error handling
+            if isinstance(file_request_json, str):
+                try:
+                    file_request = json.loads(file_request_json)
+                except json.JSONDecodeError as e:
+                    self.log_message(f"Error parsing JSON request: {e}, content: {file_request_json[:100]}...")
+                    return {
+                        "Status": "Error",
+                        "Message": f"Invalid JSON format: {str(e)}"
+                    }
+            else:
+                # Already parsed JSON
+                file_request = file_request_json
+            
             file_path = file_request.get('FilePath')
             destination = file_request.get('Destination')
             

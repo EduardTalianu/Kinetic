@@ -58,15 +58,31 @@ class ClientFilesUI:
         upload_control_frame = ttk.Frame(self.upload_frame)
         upload_control_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        ttk.Label(upload_control_frame, text="Local File:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(upload_control_frame, text="Local File:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.upload_file_path = ttk.Entry(upload_control_frame, width=40)
-        self.upload_file_path.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        self.upload_file_path.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
         
         ttk.Button(upload_control_frame, text="Browse", 
-                  command=self.browse_local_file).pack(side=tk.LEFT, padx=5)
+                  command=self.browse_local_file).grid(row=0, column=2, padx=5, pady=5)
         
+        # Add destination path field
+        ttk.Label(upload_control_frame, text="Destination:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.upload_destination_path = ttk.Entry(upload_control_frame, width=40)
+        self.upload_destination_path.grid(row=1, column=1, padx=5, pady=5, sticky=tk.EW)
+        
+        # Default to %TEMP% directory for uploads
+        self.upload_destination_path.insert(0, "%TEMP%\\")
+        
+        # Destination path dropdown for common locations
+        upload_destinations = ["%TEMP%\\", "%USERPROFILE%\\Desktop\\", "%USERPROFILE%\\Documents\\", 
+                             "C:\\Windows\\Temp\\", "C:\\Users\\Public\\Documents\\"]
+        self.upload_dest_combo = ttk.Combobox(upload_control_frame, values=upload_destinations, width=15)
+        self.upload_dest_combo.grid(row=1, column=2, padx=5, pady=5)
+        self.upload_dest_combo.bind("<<ComboboxSelected>>", self.on_upload_dest_selected)
+        
+        # Upload button with clearer name
         ttk.Button(upload_control_frame, text="Upload to Client", 
-                  command=self.upload_file_to_client).pack(side=tk.LEFT, padx=5)
+                  command=self.upload_file_to_client).grid(row=2, column=1, padx=5, pady=5)
         
         # Upload history
         upload_history_frame = ttk.Frame(self.upload_frame)
@@ -75,19 +91,21 @@ class ClientFilesUI:
         ttk.Label(upload_history_frame, text="Upload History:").pack(anchor=tk.W, padx=5, pady=2)
         
         # Treeview for upload history
-        columns = ("Timestamp", "Filename", "Size", "Status")
+        columns = ("Timestamp", "Filename", "Destination", "Size", "Status")
         self.upload_tree = ttk.Treeview(upload_history_frame, columns=columns, show="headings", height=5)
         
         self.upload_tree.heading("Timestamp", text="Timestamp")
         self.upload_tree.heading("Filename", text="Filename")
+        self.upload_tree.heading("Destination", text="Destination")
         self.upload_tree.heading("Size", text="Size")
         self.upload_tree.heading("Status", text="Status")
         
         # Configure column widths
         self.upload_tree.column("Timestamp", width=150)
-        self.upload_tree.column("Filename", width=200)
-        self.upload_tree.column("Size", width=100)
-        self.upload_tree.column("Status", width=100)
+        self.upload_tree.column("Filename", width=150)
+        self.upload_tree.column("Destination", width=200)
+        self.upload_tree.column("Size", width=80)
+        self.upload_tree.column("Status", width=80)
         
         # Add scrollbar for upload tree
         upload_scrollbar = ttk.Scrollbar(upload_history_frame, orient="vertical", command=self.upload_tree.yview)
@@ -101,28 +119,31 @@ class ClientFilesUI:
         download_control_frame = ttk.Frame(self.download_frame)
         download_control_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        ttk.Label(download_control_frame, text="Remote File Path:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(download_control_frame, text="Remote File Path:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.remote_file_path = ttk.Entry(download_control_frame, width=40)
-        self.remote_file_path.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        self.remote_file_path.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
         
         ttk.Button(download_control_frame, text="Download from Client", 
-                  command=self.download_file_from_client).pack(side=tk.LEFT, padx=5)
+                  command=self.download_file_from_client).grid(row=0, column=2, padx=5, pady=5)
         
         # Remote file browsing
         browse_remote_frame = ttk.Frame(self.download_frame)
         browse_remote_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        ttk.Button(browse_remote_frame, text="List Common Directories", 
-                  command=self.list_common_directories).pack(side=tk.LEFT, padx=5)
+        ttk.Label(browse_remote_frame, text="Browse Location:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         
         remote_dir_combo_values = ["C:\\Users\\Public\\Documents", "C:\\Windows\\Temp", "%USERPROFILE%\\Downloads", 
-                                  "%USERPROFILE%\\Desktop", "%USERPROFILE%\\Documents"]
+                                  "%USERPROFILE%\\Desktop", "%USERPROFILE%\\Documents", "C:\\"]
         self.remote_dir_combo = ttk.Combobox(browse_remote_frame, values=remote_dir_combo_values, width=30)
-        self.remote_dir_combo.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        self.remote_dir_combo.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
         self.remote_dir_combo.bind("<<ComboboxSelected>>", self.on_remote_dir_selected)
         
-        ttk.Button(browse_remote_frame, text="Browse Directory", 
-                  command=lambda: self.download_directory_listing(self.remote_dir_combo.get())).pack(side=tk.LEFT, padx=5)
+        ttk.Button(browse_remote_frame, text="List Directory", 
+                  command=lambda: self.download_directory_listing(self.remote_dir_combo.get())).grid(row=0, column=2, padx=5, pady=5)
+        
+        # Drive info button - uses Get-DriveInfo function
+        ttk.Button(browse_remote_frame, text="List Drives", 
+                 command=self.get_drive_info).grid(row=1, column=0, padx=5, pady=5)
         
         # Download history
         download_history_frame = ttk.Frame(self.download_frame)
@@ -142,10 +163,10 @@ class ClientFilesUI:
         
         # Configure column widths
         self.download_tree.column("Timestamp", width=150)
-        self.download_tree.column("Remote Path", width=200)
-        self.download_tree.column("Local Path", width=200)
-        self.download_tree.column("Size", width=100)
-        self.download_tree.column("Status", width=100)
+        self.download_tree.column("Remote Path", width=180)
+        self.download_tree.column("Local Path", width=180)
+        self.download_tree.column("Size", width=80)
+        self.download_tree.column("Status", width=80)
         
         # Add scrollbar for download tree
         download_scrollbar = ttk.Scrollbar(download_history_frame, orient="vertical", command=self.download_tree.yview)
@@ -156,11 +177,62 @@ class ClientFilesUI:
         download_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # File preview area
-        preview_frame = ttk.LabelFrame(self.main_frame, text="File Preview")
+        preview_frame = ttk.LabelFrame(self.main_frame, text="Directory Listing / File Preview")
         preview_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Add directory listing mode controls
+        preview_controls = ttk.Frame(preview_frame)
+        preview_controls.pack(fill=tk.X, padx=5, pady=2)
+        
+        self.preview_mode = tk.StringVar(value="table")
+        ttk.Radiobutton(preview_controls, text="Table View", variable=self.preview_mode, 
+                       value="table", command=self.refresh_preview).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(preview_controls, text="Raw View", variable=self.preview_mode, 
+                       value="raw", command=self.refresh_preview).pack(side=tk.LEFT, padx=5)
         
         self.preview_text = scrolledtext.ScrolledText(preview_frame, wrap=tk.WORD, height=8)
         self.preview_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Directory listing treeview
+        self.dir_listing_frame = ttk.Frame(preview_frame)
+        self.dir_listing_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Create a treeview for directory listing
+        columns = ("Name", "Type", "Size", "Modified", "Attributes")
+        self.dir_tree = ttk.Treeview(self.dir_listing_frame, columns=columns, show="headings", height=8)
+        
+        self.dir_tree.heading("Name", text="Name")
+        self.dir_tree.heading("Type", text="Type")
+        self.dir_tree.heading("Size", text="Size")
+        self.dir_tree.heading("Modified", text="Modified")
+        self.dir_tree.heading("Attributes", text="Attributes")
+        
+        # Configure column widths
+        self.dir_tree.column("Name", width=200)
+        self.dir_tree.column("Type", width=80)
+        self.dir_tree.column("Size", width=80)
+        self.dir_tree.column("Modified", width=150)
+        self.dir_tree.column("Attributes", width=100)
+        
+        # Add scrollbar for directory tree
+        dir_scrollbar = ttk.Scrollbar(self.dir_listing_frame, orient="vertical", command=self.dir_tree.yview)
+        self.dir_tree.configure(yscrollcommand=dir_scrollbar.set)
+        
+        # Pack tree and scrollbar
+        self.dir_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        dir_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Add right-click context menu to directory tree
+        self.dir_context_menu = tk.Menu(self.dir_tree, tearoff=0)
+        self.dir_context_menu.add_command(label="Download Selected", command=self.download_selected_file)
+        self.dir_context_menu.add_command(label="Navigate to Directory", command=self.navigate_to_selected_dir)
+        self.dir_tree.bind("<Button-3>", self.show_dir_context_menu)
+        
+        # Double-click to navigate or download
+        self.dir_tree.bind("<Double-1>", self.on_dir_item_double_click)
+        
+        # Hide directory listing by default - show text area instead
+        self.dir_listing_frame.pack_forget()
         
         # Bind selection events to display file info
         self.download_tree.bind("<<TreeviewSelect>>", self.on_download_select)
@@ -173,6 +245,134 @@ class ClientFilesUI:
         ttk.Button(control_frame, text="Refresh", command=self.refresh_files_list).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Open Downloads Folder", command=self.open_downloads_folder).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Clear History", command=self.clear_history).pack(side=tk.LEFT, padx=5)
+        
+        # Current working directory indicator
+        self.cwd_var = tk.StringVar(value="Current path: Not set")
+        ttk.Label(control_frame, textvariable=self.cwd_var).pack(side=tk.RIGHT, padx=5)
+    
+    def show_dir_context_menu(self, event):
+        """Show context menu on right-click in directory tree"""
+        # Select the item under the cursor
+        item = self.dir_tree.identify_row(event.y)
+        if item:
+            self.dir_tree.selection_set(item)
+            self.dir_context_menu.post(event.x_root, event.y_root)
+    
+    def download_selected_file(self):
+        """Download the selected file from directory listing"""
+        selected = self.dir_tree.selection()
+        if not selected:
+            return
+        
+        # Get the selected item data
+        item_values = self.dir_tree.item(selected[0], 'values')
+        if not item_values:
+            return
+        
+        # Get file name and current directory
+        file_name = item_values[0]
+        file_type = item_values[1]
+        
+        # Only proceed if it's a file, not a directory
+        if file_type.lower() != "file":
+            messagebox.showinfo("Selection Error", "Please select a file to download, not a directory.")
+            return
+        
+        # Get current directory from the cwd_var or use empty string
+        current_dir = self.cwd_var.get().replace("Current path: ", "")
+        if not current_dir or current_dir == "Not set":
+            messagebox.showerror("Error", "Current directory not set. Please browse to a directory first.")
+            return
+        
+        # Create full path
+        full_path = os.path.join(current_dir, file_name)
+        
+        # Set the remote file path
+        self.remote_file_path.delete(0, tk.END)
+        self.remote_file_path.insert(0, full_path)
+        
+        # Download the file
+        self.download_file_from_client()
+
+    def navigate_to_selected_dir(self):
+        """Navigate to the selected directory in the directory listing"""
+        selected = self.dir_tree.selection()
+        if not selected:
+            return
+        
+        # Get the selected item data
+        item_values = self.dir_tree.item(selected[0], 'values')
+        if not item_values:
+            return
+        
+        # Get directory name and type
+        dir_name = item_values[0]
+        dir_type = item_values[1]
+        
+        # Only proceed if it's a directory
+        if dir_type.lower() != "directory":
+            messagebox.showinfo("Selection Error", "Please select a directory to navigate to, not a file.")
+            return
+        
+        # Get current directory from the cwd_var or use empty string
+        current_dir = self.cwd_var.get().replace("Current path: ", "")
+        if not current_dir or current_dir == "Not set":
+            messagebox.showerror("Error", "Current directory not set. Please browse to a directory first.")
+            return
+        
+        # Create full path
+        new_path = os.path.join(current_dir, dir_name)
+        
+        # Update the remote directory combo and browse to it
+        self.remote_dir_combo.set(new_path)
+        self.download_directory_listing(new_path)
+    
+    def on_dir_item_double_click(self, event):
+        """Handle double-click on directory item - navigate or download"""
+        selected = self.dir_tree.selection()
+        if not selected:
+            return
+        
+        # Get the selected item data
+        item_values = self.dir_tree.item(selected[0], 'values')
+        if not item_values:
+            return
+        
+        # Get name and type
+        name = item_values[0]
+        item_type = item_values[1]
+        
+        if item_type.lower() == "directory":
+            # Navigate to directory
+            self.navigate_to_selected_dir()
+        else:
+            # Download file
+            self.download_selected_file()
+    
+    def refresh_preview(self):
+        """Refresh preview based on selected mode"""
+        mode = self.preview_mode.get()
+        
+        if mode == "table":
+            # Show directory listing table, hide text
+            self.preview_text.pack_forget()
+            self.dir_listing_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        else:
+            # Show text preview, hide directory table
+            self.dir_listing_frame.pack_forget()
+            self.preview_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    
+    def get_drive_info(self):
+        """Get drive information from the client"""
+        # Send the command to get drive info
+        self.client_manager.add_command(self.client_id, "execute", "Get-DriveInfo")
+        
+        # Show a message
+        self.preview_text.delete(1.0, tk.END)
+        self.preview_text.insert(tk.END, "Requesting drive information...\n")
+        
+        # Log the request
+        self.logger(f"Requesting drive information from client {self.client_id}")
     
     def browse_local_file(self):
         """Open file dialog to select a local file to upload"""
@@ -181,9 +381,17 @@ class ClientFilesUI:
             self.upload_file_path.delete(0, tk.END)
             self.upload_file_path.insert(0, file_path)
     
+    def on_upload_dest_selected(self, event):
+        """Handle selection of upload destination from dropdown"""
+        selected_dest = self.upload_dest_combo.get()
+        if selected_dest:
+            self.upload_destination_path.delete(0, tk.END)
+            self.upload_destination_path.insert(0, selected_dest)
+    
     def upload_file_to_client(self):
         """Upload a file from the local machine to the client"""
         local_file_path = self.upload_file_path.get().strip()
+        destination_path = self.upload_destination_path.get().strip()
         
         if not local_file_path:
             messagebox.showerror("Error", "Please select a file to upload")
@@ -193,28 +401,28 @@ class ClientFilesUI:
             messagebox.showerror("Error", "File does not exist")
             return
         
-        # Generate a reasonable destination path
-        filename = os.path.basename(local_file_path)
-        destination = f"%TEMP%\\{filename}"  # Default to temp directory
+        if not destination_path:
+            messagebox.showerror("Error", "Please specify a destination path")
+            return
         
         # Get file size for display
         file_size = os.path.getsize(local_file_path)
         file_size_str = self.format_file_size(file_size)
         
-        # Create command to upload the file
+        # Create command to upload the file using our custom function
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        command_args = f"Upload-File '{local_file_path}' '{destination}'"
+        command_args = f"Upload-File -SourcePath '{local_file_path}' -DestinationPath '{destination_path}'"
         
         # Add command to client manager
-        self.client_manager.add_command(self.client_id, "file_upload", command_args)
+        self.client_manager.add_command(self.client_id, "execute", command_args)
         
         # Add to upload history
         upload_id = f"upload_{timestamp}"
         self.uploaded_files[upload_id] = {
             "timestamp": timestamp,
             "local_path": local_file_path,
-            "remote_path": destination,
-            "filename": filename,
+            "remote_path": destination_path,
+            "filename": os.path.basename(local_file_path),
             "size": file_size_str,
             "status": "Pending"
         }
@@ -223,8 +431,8 @@ class ClientFilesUI:
         self.update_upload_tree()
         
         # Log the upload
-        self.logger(f"File upload initiated: {local_file_path} to {self.client_id}:{destination}")
-        messagebox.showinfo("Upload Started", f"File upload initiated: {filename}\nDestination: {destination}")
+        self.logger(f"File upload initiated: {local_file_path} to {self.client_id}:{destination_path}")
+        messagebox.showinfo("Upload Started", f"File upload initiated: {os.path.basename(local_file_path)}\nDestination: {destination_path}")
 
     def download_file_from_client(self):
         """Download a file from the client to the local machine"""
@@ -240,9 +448,9 @@ class ClientFilesUI:
         # Create command to download the file
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Send the download command
-        command_args = f"{remote_path}"
-        self.client_manager.add_command(self.client_id, "download", command_args)
+        # Use the Download-File function we added
+        command_args = f"Download-File -FilePath '{remote_path}'"
+        self.client_manager.add_command(self.client_id, "execute", command_args)
         
         # Add to download history
         download_id = f"download_{timestamp}"
@@ -278,49 +486,29 @@ class ClientFilesUI:
         else:
             display_dir = directory
         
+        # Save the current directory in the UI
+        self.cwd_var.set(f"Current path: {display_dir}")
+        
         # Create command for directory listing
         # Using Get-DirectoryListing function for better formatting
         command_args = f"Get-DirectoryListing -DirectoryPath '{directory}'"
         self.client_manager.add_command(self.client_id, "execute", command_args)
         
-        # Set the preview text
+        # Set the preview text and ensure raw view is displayed
         self.preview_text.delete(1.0, tk.END)
         self.preview_text.insert(tk.END, f"Getting directory listing for {display_dir}...\n")
         
+        # Switch to table view for directory listing
+        self.preview_mode.set("table")
+        self.refresh_preview()
+        
         # Log the request
         self.logger(f"Requesting directory listing: {self.client_id}:{display_dir}")
-    
-    def list_common_directories(self):
-        """Display a list of common directories in the preview pane"""
-        common_dirs = [
-            "C:\\Users\\Public\\Documents",
-            "C:\\Windows\\Temp",
-            "%USERPROFILE%\\Downloads",
-            "%USERPROFILE%\\Desktop",
-            "%USERPROFILE%\\Documents",
-            "C:\\Program Files",
-            "C:\\Program Files (x86)",
-            "%APPDATA%",
-            "%LOCALAPPDATA%",
-            "C:\\ProgramData"
-        ]
-        
-        self.preview_text.delete(1.0, tk.END)
-        self.preview_text.insert(tk.END, "Common Windows Directories:\n\n")
-        
-        for directory in common_dirs:
-            self.preview_text.insert(tk.END, f"• {directory}\n")
-        
-        self.preview_text.insert(tk.END, "\nSelect one from the dropdown or enter a custom path.")
     
     def on_remote_dir_selected(self, event):
         """Handle selection of a remote directory from the dropdown"""
         selected_dir = self.remote_dir_combo.get()
         if selected_dir:
-            # Auto-fill the remote file path field as a starting point
-            self.remote_file_path.delete(0, tk.END)
-            self.remote_file_path.insert(0, selected_dir)
-            
             # Automatically request a directory listing
             self.download_directory_listing(selected_dir)
     
@@ -337,13 +525,13 @@ class ClientFilesUI:
                 result = command.get('result', '')
                 
                 # Handle download commands
-                if command_type == "download" and timestamp:
+                if command_type == "execute" and "Download-File" in args and timestamp:
                     download_id = f"download_{timestamp}"
                     if download_id in self.downloaded_files:
                         download_info = self.downloaded_files[download_id]
                         
                         # Check if result indicates success
-                        if "Downloaded" in result or "bytes saved" in result:
+                        if "Successfully downloaded" in result or "bytes" in result:
                             download_info["status"] = "Completed"
                             
                             # Try to extract file size if provided
@@ -359,88 +547,167 @@ class ClientFilesUI:
                             download_info["error"] = result
                 
                 # Handle file upload commands
-                elif command_type == "file_upload" and timestamp:
+                elif command_type == "execute" and "Upload-File" in args and timestamp:
                     upload_id = f"upload_{timestamp}"
                     if upload_id in self.uploaded_files:
                         upload_info = self.uploaded_files[upload_id]
                         
                         # Check if result indicates success
-                        if "successfully" in result or "uploaded" in result:
+                        if "Successfully" in result or "uploaded" in result:
                             upload_info["status"] = "Completed"
                         elif "Error" in result or "failed" in result:
                             upload_info["status"] = "Failed"
                             upload_info["error"] = result
                 
                 # Handle directory listing results
-                elif command_type == "execute" and "Get-ChildItem" in args:
+                elif command_type == "execute" and "Get-DirectoryListing" in args:
                     try:
-                        # Try to parse JSON output of Get-ChildItem
-                        dir_listing = json.loads(result)
-                        
-                        # Format for display in preview
-                        self.display_directory_listing(dir_listing, args)
-                    except json.JSONDecodeError:
-                        # If not valid JSON, just show the raw result
+                        # Try to parse JSON output
+                        self.display_directory_listing(result, args)
+                    except Exception as e:
+                        # If there's an error parsing the JSON, just show the raw output
                         self.preview_text.delete(1.0, tk.END)
                         self.preview_text.insert(tk.END, f"Directory Listing Results:\n\n{result}")
+                        self.logger(f"Error parsing directory listing: {e}")
+                
+                # Handle drive info results
+                elif command_type == "execute" and "Get-DriveInfo" in args:
+                    try:
+                        # Try to parse JSON output
+                        self.display_drive_info(result)
+                    except Exception as e:
+                        # If there's an error parsing the JSON, just show the raw output
+                        self.preview_text.delete(1.0, tk.END)
+                        self.preview_text.insert(tk.END, f"Drive Information Results:\n\n{result}")
+                        self.logger(f"Error parsing drive info: {e}")
         
         # Update the UI
         self.update_upload_tree()
         self.update_download_tree()
     
-    def display_directory_listing(self, listing, command):
-        """Display a formatted directory listing in the preview text area"""
+    def display_drive_info(self, result):
+        """Display drive information in the preview area"""
+        self.preview_mode.set("raw")  # Switch to raw view for drive info
+        self.refresh_preview()
+        
+        self.preview_text.delete(1.0, tk.END)
+        self.preview_text.insert(tk.END, "Available Drives:\n\n")
+        
+        try:
+            # Parse the JSON
+            drives = json.loads(result)
+            
+            # Format as a table
+            header = f"{'Drive':<8} {'Type':<10} {'Volume Name':<20} {'Size':<10} {'Free':<10} {'% Free':<8}\n"
+            separator = "-" * 70 + "\n"
+            
+            self.preview_text.insert(tk.END, header)
+            self.preview_text.insert(tk.END, separator)
+            
+            for drive in drives:
+                drive_letter = drive.get('DriveLetter', '')
+                drive_type = drive.get('DriveType', '')
+                volume_name = drive.get('VolumeName', '')
+                size_gb = drive.get('SizeGB', 0)
+                free_gb = drive.get('FreeSpaceGB', 0)
+                percent_free = drive.get('PercentFree', 0)
+                
+                line = f"{drive_letter:<8} {drive_type:<10} {volume_name:<20} {size_gb:<10.2f} {free_gb:<10.2f} {percent_free:<8.2f}%\n"
+                self.preview_text.insert(tk.END, line)
+            
+            self.preview_text.insert(tk.END, "\nTo navigate to a drive, select it from the dropdown or enter the path manually.")
+            
+            # Update the dropdown with drives
+            drive_values = self.remote_dir_combo['values']
+            for drive in drives:
+                drive_letter = drive.get('DriveLetter', '')
+                if drive_letter and drive_letter + "\\" not in drive_values:
+                    drive_values = (*drive_values, drive_letter + "\\")
+            
+            self.remote_dir_combo['values'] = drive_values
+            
+        except Exception as e:
+            # If there's an error parsing the JSON, just show the raw output
+            self.preview_text.insert(tk.END, f"Error parsing drive information: {e}\n\nRaw result:\n{result}")
+    
+    def display_directory_listing(self, listing_result, command):
+        """Display a formatted directory listing in the preview text area and treeview"""
         # Extract directory path from command
         directory = command.split("'")[1] if "'" in command else "Unknown"
+        
+        # Update the UI based on preview mode
+        self.refresh_preview()
+        
+        # Clear the tree
+        for item in self.dir_tree.get_children():
+            self.dir_tree.delete(item)
         
         self.preview_text.delete(1.0, tk.END)
         self.preview_text.insert(tk.END, f"Directory Listing for: {directory}\n\n")
         
-        # If the result is a single object, convert to list
-        if isinstance(listing, dict):
-            listing = [listing]
-        
-        # Create table header
-        header = f"{'Name':<40} {'Size':<12} {'Last Modified':<20} {'Attributes':<15}\n"
-        self.preview_text.insert(tk.END, header)
-        self.preview_text.insert(tk.END, "-" * 90 + "\n")
-        
-        # Process each item
-        for item in listing:
-            try:
-                name = item.get('Name', 'Unknown')
-                size = item.get('Length', 0)
-                size_str = self.format_file_size(size) if size else 'Directory'
-                
-                # Convert .NET date format if needed
-                last_write = item.get('LastWriteTime', '')
-                if isinstance(last_write, dict) and 'DateTime' in last_write:
-                    last_write = last_write['DateTime']
-                
-                attrs = item.get('Attributes', '')
-                
-                # Format as a table row
-                row = f"{name:<40} {size_str:<12} {last_write:<20} {attrs:<15}\n"
-                self.preview_text.insert(tk.END, row)
-                
-                # Add a context menu option to quickly download this file
-                if size > 0:  # Only for files, not directories
-                    full_path = os.path.join(directory, name)
-                    full_path = full_path.replace('\\\\', '\\')  # Normalize path
+        try:
+            # Parse JSON
+            listing = json.loads(listing_result)
+            
+            # If the result is a single object, convert to list
+            if isinstance(listing, dict):
+                listing = [listing]
+            
+            # Sort listing - directories first, then files alphabetically
+            sorted_listing = sorted(listing, key=lambda x: (0 if x.get('Type', '') == 'Directory' else 1, x.get('Name', '')))
+            
+            # Add parent directory entry for navigation
+            if directory and directory not in ["C:\\", "\\"]:
+                # Add ".." entry for going up one level
+                parent_dir = os.path.dirname(directory)
+                if parent_dir:
+                    self.dir_tree.insert("", "end", values=("..", "Directory", "", "", ""), tags=("parent",))
+            
+            # Process each item
+            for item in sorted_listing:
+                try:
+                    name = item.get('Name', 'Unknown')
+                    size = item.get('Length', 0)
+                    item_type = item.get('Type', '')
+                    modified = item.get('LastWriteTime', '')
+                    attributes = item.get('Attributes', '')
                     
-                    # Add double-click handler?
-                    # TODO: Implement if needed
-            except Exception as e:
-                self.logger(f"Error processing directory item: {e}")
-        
-        # Add instructions
-        self.preview_text.insert(tk.END, "\n\nTo download a file, copy its full path to the 'Remote File Path' field and click 'Download from Client'.")
-        
-        # Make it easy to use these results
-        path_option = os.path.join(directory, "[filename]")
-        path_option = path_option.replace('\\\\', '\\')  # Normalize path
-        self.remote_file_path.delete(0, tk.END)
-        self.remote_file_path.insert(0, path_option)
+                    # Handle .NET date format if needed
+                    if isinstance(modified, dict) and 'DateTime' in modified:
+                        modified = modified['DateTime']
+                    
+                    # Format size for display
+                    if size and item_type.lower() != 'directory':
+                        size_str = self.format_file_size(size)
+                    else:
+                        size_str = ""
+                    
+                    # Add to treeview
+                    self.dir_tree.insert("", "end", values=(name, item_type, size_str, modified, attributes), 
+                                       tags=(item_type.lower(),))
+                    
+                    # Add to text preview as well
+                    self.preview_text.insert(tk.END, f"{name:<40} {item_type:<12} {size_str:<12} {modified}\n")
+                    
+                except Exception as e:
+                    self.logger(f"Error processing directory item: {e}")
+            
+            # Configure tag colors
+            self.dir_tree.tag_configure("directory", background="#E5F3FF")
+            self.dir_tree.tag_configure("parent", background="#F0F0F0")
+            
+            # Add instructions to text preview
+            self.preview_text.insert(tk.END, "\n\nTo download a file, double-click on it or right-click and select 'Download Selected'.\n")
+            self.preview_text.insert(tk.END, "To navigate to a directory, double-click on it or right-click and select 'Navigate to Directory'.")
+            
+        except json.JSONDecodeError as e:
+            # If it's not JSON, display as raw text
+            self.preview_text.insert(tk.END, listing_result)
+            self.logger(f"Error parsing directory listing JSON: {e}")
+        except Exception as e:
+            # Generic error handling
+            self.preview_text.insert(tk.END, f"Error displaying directory listing: {e}\n\n{listing_result}")
+            self.logger(f"Error displaying directory listing: {e}")
     
     def update_upload_tree(self):
         """Update the upload history treeview"""
@@ -454,6 +721,7 @@ class ClientFilesUI:
             self.upload_tree.insert("", tk.END, iid=upload_id, values=(
                 info["timestamp"],
                 info["filename"],
+                info["remote_path"],
                 info["size"],
                 status
             ), tags=(status.lower(),))
@@ -496,6 +764,9 @@ class ClientFilesUI:
             info = self.uploaded_files[upload_id]
             
             # Display info in preview
+            self.preview_mode.set("raw")
+            self.refresh_preview()
+            
             self.preview_text.delete(1.0, tk.END)
             self.preview_text.insert(tk.END, f"Upload Details\n\n")
             self.preview_text.insert(tk.END, f"Filename: {info['filename']}\n")
@@ -519,6 +790,9 @@ class ClientFilesUI:
             info = self.downloaded_files[download_id]
             
             # Display info in preview
+            self.preview_mode.set("raw")
+            self.refresh_preview()
+            
             self.preview_text.delete(1.0, tk.END)
             self.preview_text.insert(tk.END, f"Download Details\n\n")
             self.preview_text.insert(tk.END, f"Remote Path: {info['remote_path']}\n")
@@ -610,79 +884,3 @@ class ClientFilesUI:
             return f"{size_bytes / (1024 * 1024):.1f} MB"
         else:
             return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
-        
-    def update_file_status(self):
-        """Update the status of file transfers based on command results"""
-        # Get client history
-        history = self.client_manager.get_client_history(self.client_id)
-        
-        for command in history:
-            timestamp = command.get('timestamp', '')
-            command_type = command.get('command_type', '')
-            args = command.get('args', '')
-            
-            # Check if the command has a result
-            if 'result' in command:
-                result = command.get('result', '')
-                
-                # Process file_upload commands
-                if command_type == "file_upload" and "Upload-File" in args:
-                    # Extract paths from args
-                    parts = args.replace("Upload-File ", "").strip()
-                    if "' '" in parts:
-                        server_path, client_path = parts.split("' '", 1)
-                        server_path = server_path.strip("'")
-                        client_path = client_path.strip("'")
-                        
-                        upload_id = f"upload_{timestamp}"
-                        
-                        # Add to uploads if not already there
-                        if upload_id not in self.uploaded_files:
-                            file_size = "Unknown"
-                            try:
-                                if os.path.exists(server_path):
-                                    file_size = self.format_file_size(os.path.getsize(server_path))
-                            except:
-                                pass
-                                
-                            self.uploaded_files[upload_id] = {
-                                "timestamp": timestamp,
-                                "local_path": server_path,
-                                "remote_path": client_path,
-                                "filename": os.path.basename(server_path),
-                                "size": file_size,
-                                "status": "Pending"
-                            }
-                        
-                        # Update status based on result
-                        if "successfully" in result or "upload" in result:
-                            self.uploaded_files[upload_id]["status"] = "Completed"
-                        elif "Error" in result or "failed" in result:
-                            self.uploaded_files[upload_id]["status"] = "Failed"
-                            self.uploaded_files[upload_id]["error"] = result
-                
-                # Process download commands
-                elif command_type == "download":
-                    download_id = f"download_{timestamp}"
-                    if download_id in self.downloaded_files:
-                        download_info = self.downloaded_files[download_id]
-                        
-                        # Check if result indicates success
-                        if "bytes" in result or "downloaded" in result or "from" in result:
-                            download_info["status"] = "Completed"
-                            
-                            # Try to extract file size if provided
-                            if "bytes" in result:
-                                try:
-                                    size_str = result.split("bytes")[0].strip().split(" ")[-1]
-                                    size = int(size_str)
-                                    download_info["size"] = self.format_file_size(size)
-                                except:
-                                    download_info["size"] = "Unknown"
-                        elif "Error" in result or "failed" in result:
-                            download_info["status"] = "Failed"
-                            download_info["error"] = result
-                            
-        # Update the UI
-        self.update_upload_tree()
-        self.update_download_tree()

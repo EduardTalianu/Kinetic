@@ -545,11 +545,32 @@ class CampaignConfigTab:
         
         # Get custom URL paths
         use_custom_urls = self.url_random_var.get()
-        beacon_path = self.entry_beacon_path.get().strip() if use_custom_urls else "/beacon"
-        agent_path = self.entry_agent_path.get().strip() if use_custom_urls else "/raw_agent" 
-        stager_path = self.entry_stager_path.get().strip() if use_custom_urls else "/b64_stager"
-        cmd_result_path = self.entry_cmd_result_path.get().strip() if use_custom_urls else "/command_result"
-        file_upload_path = self.entry_file_upload_path.get().strip() if use_custom_urls else "/file_upload"
+        
+        if use_custom_urls:
+            # If using custom URLs, get them from the UI entries
+            url_paths = {
+                "beacon_path": self.entry_beacon_path.get().strip(),
+                "agent_path": self.entry_agent_path.get().strip(),
+                "stager_path": self.entry_stager_path.get().strip(),
+                "cmd_result_path": self.entry_cmd_result_path.get().strip(),
+                "file_upload_path": self.entry_file_upload_path.get().strip(),
+                "file_request_path": "/file_request"  # Add default file_request_path
+            }
+        else:
+            # Using default paths
+            url_paths = {
+                "beacon_path": "/beacon",
+                "agent_path": "/raw_agent",
+                "stager_path": "/b64_stager",
+                "cmd_result_path": "/command_result",
+                "file_upload_path": "/file_upload",
+                "file_request_path": "/file_request"  # Added file_request_path
+            }
+
+        # Ensure all paths have leading slash
+        for key, path in url_paths.items():
+            if not path.startswith('/'):
+                url_paths[key] = '/' + path
         
         # Get path rotation settings
         path_rotation = self.path_rotation_var.get()
@@ -624,14 +645,6 @@ class CampaignConfigTab:
             return
 
         # Save URL paths configuration
-        url_paths = {
-            "beacon_path": beacon_path,
-            "agent_path": agent_path,
-            "stager_path": stager_path,
-            "cmd_result_path": cmd_result_path,
-            "file_upload_path": file_upload_path
-        }
-        
         url_paths_file = os.path.join(campaign_dir, "url_paths.json")
         try:
             with open(url_paths_file, "w") as f:
@@ -662,11 +675,12 @@ class CampaignConfigTab:
             f"Key Path: {key_path}\n"
             f"Custom URLs: {use_custom_urls}\n"
             f"URL Pattern: {self.url_pattern_var.get()}\n"
-            f"Beacon Path: {beacon_path}\n"
-            f"Agent Path: {agent_path}\n"
-            f"Stager Path: {stager_path}\n"
-            f"Command Result Path: {cmd_result_path}\n"
-            f"File Upload Path: {file_upload_path}\n"
+            f"Beacon Path: {url_paths['beacon_path']}\n"
+            f"Agent Path: {url_paths['agent_path']}\n"
+            f"Stager Path: {url_paths['stager_path']}\n"
+            f"Command Result Path: {url_paths['cmd_result_path']}\n"
+            f"File Upload Path: {url_paths['file_upload_path']}\n"
+            f"File Request Path: {url_paths['file_request_path']}\n"
             f"Path Rotation Enabled: {path_rotation}\n"
             f"Rotation Interval: {rotation_interval} seconds\n"
         )
