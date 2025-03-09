@@ -55,6 +55,7 @@ function Upload-File {
     .PARAMETER DestinationPath
         Path where the file should be saved on the client
     #>
+    [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)]
         [string]$SourcePath,
@@ -69,19 +70,27 @@ function Upload-File {
             $DestinationPath = [System.Environment]::ExpandEnvironmentVariables($DestinationPath)
         }
         
+        # Make sure the destination path ends with a filename, not just a directory
+        if ($DestinationPath.EndsWith('\') -or $DestinationPath.EndsWith('/')) {
+            # If only a directory was provided, append the source filename
+            $filename = [System.IO.Path]::GetFileName($SourcePath)
+            $DestinationPath = Join-Path -Path $DestinationPath -ChildPath $filename
+        }
+        
         # Create destination directory if it doesn't exist
-        $destinationDir = Split-Path -Path $DestinationPath -Parent
+        $destinationDir = [System.IO.Path]::GetDirectoryName($DestinationPath)
         if (-not (Test-Path -Path $destinationDir -PathType Container)) {
+            Write-Host "Creating directory: $destinationDir"
             New-Item -Path $destinationDir -ItemType Directory -Force | Out-Null
         }
         
-        # Prepare request data with properly escaped quotes
+        # Create file request JSON
         $fileRequest = @{
             FilePath = $SourcePath
             Destination = $DestinationPath
         }
 
-        # Convert to JSON with explicit ConvertTo-Json call
+        # Convert to JSON
         $requestJson = ConvertTo-Json -InputObject $fileRequest -Compress
         Write-Verbose "Request JSON: $requestJson"
         
@@ -133,7 +142,19 @@ function Upload-File {
             
             # Get file content and save it
             $fileContent = [System.Convert]::FromBase64String($fileResponse.FileContent)
-            [System.IO.File]::WriteAllBytes($DestinationPath, $fileContent)
+            
+            # Write bytes to file with error handling
+            try {
+                [System.IO.File]::WriteAllBytes($DestinationPath, $fileContent)
+            }
+            catch {
+                Write-Host "Error writing to file directly, trying stream approach"
+                # Try alternative file writing method if direct approach fails
+                $fileStream = New-Object System.IO.FileStream($DestinationPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+                $fileStream.Write($fileContent, 0, $fileContent.Length)
+                $fileStream.Close()
+                $fileStream.Dispose()
+            }
             
             return "Successfully downloaded $($fileResponse.FileName) ($($fileResponse.FileSize) bytes) to $DestinationPath"
         }
@@ -155,6 +176,7 @@ function Download-File {
     .PARAMETER FilePath
         Path to the file on the client to upload
     #>
+    [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)]
         [string]$FilePath
@@ -171,8 +193,39 @@ function Download-File {
             return "Error: File not found: $FilePath"
         }
         
-        # Read file content
-        $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
+        # Try to read file with proper error handling for locked files
+        $fileBytes = $null
+        try {
+            # First attempt: standard read
+            $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
+        }
+        catch [System.IO.IOException] {
+            Write-Host "File is in use, trying alternative read method"
+            try {
+                # Second attempt: Open with FileShare.ReadWrite to allow reading even if file is in use
+                $fileStream = [System.IO.File]::Open($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                $memStream = New-Object System.IO.MemoryStream
+                $fileStream.CopyTo($memStream)
+                $fileBytes = $memStream.ToArray()
+                $fileStream.Close()
+                $memStream.Close()
+            }
+            catch {
+                # Third attempt: try to make a copy of the file first
+                Write-Host "Alternative read failed, trying to make a copy first"
+                $tempFile = [System.IO.Path]::GetTempFileName()
+                Copy-Item -Path $FilePath -Destination $tempFile -Force
+                $fileBytes = [System.IO.File]::ReadAllBytes($tempFile)
+                Remove-Item -Path $tempFile -Force
+            }
+        }
+        
+        # If we still couldn't read the file, return an error
+        if ($null -eq $fileBytes) {
+            return "Error: Could not read file content - file may be locked or in use"
+        }
+        
+        # Convert to base64
         $fileContent = [System.Convert]::ToBase64String($fileBytes)
         
         # Prepare file upload data
@@ -214,6 +267,7 @@ function Download-File {
         
         # Send the upload
         $uploadUrl = "http://$serverAddress$fileUploadPath"
+        Write-Host "Sending file upload to $uploadUrl"
         $response = $webClient.UploadString($uploadUrl, $payloadJson)
         
         return "Successfully uploaded $FilePath to server ($($fileBytes.Length) bytes)"

@@ -409,6 +409,12 @@ class CampaignConfigTab:
             if not self.entry_file_upload_path.get():
                 self.entry_file_upload_path.delete(0, tk.END)
                 self.entry_file_upload_path.insert(0, f"/custom/{random_string()}/upload")
+            if not hasattr(self, 'entry_file_request_path'):
+                # Create the field if it doesn't exist
+                self.entry_file_request_path = ttk.Entry(self.frame)
+            if not self.entry_file_request_path.get():
+                self.entry_file_request_path.delete(0, tk.END)
+                self.entry_file_request_path.insert(0, f"/custom/{random_string()}/request")
             return
         
         # Load URL components if we haven't already
@@ -442,6 +448,14 @@ class CampaignConfigTab:
         comp5 = random.choice(self.url_components)
         self.entry_file_upload_path.delete(0, tk.END)
         self.entry_file_upload_path.insert(0, f"{base_path}/{comp5}/{random_string()}")
+        
+        # File request path - select a random component 
+        comp6 = random.choice(self.url_components)
+        if not hasattr(self, 'entry_file_request_path'):
+            # Create the field if it doesn't exist
+            self.entry_file_request_path = ttk.Entry(self.frame)
+        self.entry_file_request_path.delete(0, tk.END)
+        self.entry_file_request_path.insert(0, f"{base_path}/{comp6}/{random_string()}")
         
         # Update the preview
         self.update_url_preview()
@@ -554,7 +568,7 @@ class CampaignConfigTab:
                 "stager_path": self.entry_stager_path.get().strip(),
                 "cmd_result_path": self.entry_cmd_result_path.get().strip(),
                 "file_upload_path": self.entry_file_upload_path.get().strip(),
-                "file_request_path": "/file_request"  # Add default file_request_path
+                "file_request_path": self.entry_file_request_path.get().strip(),
             }
         else:
             # Using default paths
