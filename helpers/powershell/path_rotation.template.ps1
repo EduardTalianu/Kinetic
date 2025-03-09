@@ -25,11 +25,12 @@ function Update-PathRotation {
     $global:nextRotationTime = $NextRotationTime
     
     # Update paths if provided
-    if ($Paths) {
+    if ($Paths -and $Paths.Count -gt 0) {
         $global:currentPaths = @{}
         foreach ($key in $Paths.Keys) {
             if ($key -eq "beacon_path" -or $key -eq "cmd_result_path") {
                 $global:currentPaths[$key] = $Paths[$key]
+                Write-Host "Updated path $key to: $($Paths[$key])"
             }
         }
     }

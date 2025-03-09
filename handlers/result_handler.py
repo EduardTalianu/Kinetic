@@ -1,12 +1,18 @@
 import json
 import logging
 import base64
+import re
 from handlers.base_handler import BaseHandler
 
 logger = logging.getLogger(__name__)
 
 class ResultHandler(BaseHandler):
     """Handler for command result data from clients"""
+    
+    def __init__(self, request_handler, client_manager, crypto_helper, client_helper, path_router):
+        super().__init__(request_handler, client_manager, crypto_helper, client_helper, path_router)
+        # Add tracking for processed rotation results
+        self.processed_rotation_results = {}
     
     def handle(self):
         """Process command result data from client"""
@@ -89,7 +95,26 @@ class ResultHandler(BaseHandler):
                 
                 # Process structured result if parsed successfully
                 if is_structured and timestamp and result:
-                    self.log_message(f"Processing structured result for timestamp {timestamp}")
+                    # Check for duplicate path rotation results
+                    if "Path rotation updated: ID" in result:
+                        # Extract rotation ID from the result
+                        rotation_id_match = re.search(r"ID (\d+)", result)
+                        if rotation_id_match:
+                            rotation_id = rotation_id_match.group(1)
+                            
+                            # Initialize tracking for this client if needed
+                            if client_id not in self.processed_rotation_results:
+                                self.processed_rotation_results[client_id] = set()
+                                
+                            # Check if we've already processed this rotation ID for this client
+                            if rotation_id in self.processed_rotation_results[client_id]:
+                                self.log_message(f"Skipping duplicate path rotation result for ID {rotation_id}")
+                                # Send success response but don't process the duplicate
+                                self.send_success_response()
+                                return
+                                
+                            # Track this rotation result
+                            self.processed_rotation_results[client_id].add(rotation_id)
                     
                     # Add the result to the command history
                     success = self.client_manager.add_command_result(client_id, timestamp, result)

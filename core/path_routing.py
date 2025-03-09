@@ -64,12 +64,19 @@ class PathRouter:
     def create_path_rotation_command(self):
         """Create a command to update client with new path rotation info"""
         rotation_info = self.path_manager.get_rotation_info()
+        
+        # Create a simplified dictionary with just the paths needed
+        paths_dict = {
+            "beacon_path": rotation_info["current_paths"]["beacon_path"],
+            "cmd_result_path": rotation_info["current_paths"]["cmd_result_path"]
+        }
+        
         return {
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "command_type": "path_rotation",
             "args": json.dumps({
                 "rotation_id": rotation_info["current_rotation_id"],
                 "next_rotation_time": rotation_info["next_rotation_time"],
-                "paths": rotation_info["current_paths"]
+                "paths": paths_dict
             })
         }
