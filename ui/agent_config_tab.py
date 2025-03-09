@@ -11,13 +11,14 @@ class AgentConfigTab:
         self.logger = logger
         
         # Initialize variables that will be moved from campaign tab
-        self.beacon_period_var = tk.StringVar(value="3")  # Default value
+        self.beacon_period_var = tk.StringVar(value="5")  # Default value
         self.kill_date_var = tk.StringVar()
         self.jitter_percentage_var = tk.StringVar(value="20")  # Default jitter is 20%
         
         # Initialize new configurable options
         self.user_agent_var = tk.StringVar(value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
-        self.max_sleep_var = tk.StringVar(value="10")  # Default 10 minutes
+        self.random_sleep_enabled_var = tk.BooleanVar(value=False)  # Default is disabled
+        self.max_sleep_var = tk.StringVar(value="10")  # Default 10 seconds
         self.username_var = tk.StringVar()
         self.password_var = tk.StringVar()
         self.proxy_enabled_var = tk.BooleanVar(value=False)
@@ -78,6 +79,15 @@ class AgentConfigTab:
         self.jitter_combo.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
         ttk.Label(beacon_frame, text="Random variation in beacon timing to avoid detection").grid(row=1, column=2, sticky=tk.W, padx=5, pady=5)
         
+        # Random sleep option - Added toggle
+        self.sleep_check = ttk.Checkbutton(beacon_frame, text="Enable Random Sleep", variable=self.random_sleep_enabled_var, command=self.toggle_sleep_options)
+        self.sleep_check.grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        ttk.Label(beacon_frame, text="Max Sleep Time (seconds):").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        self.max_sleep_entry = ttk.Entry(beacon_frame, textvariable=self.max_sleep_var, width=10, state="disabled")
+        self.max_sleep_entry.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(beacon_frame, text="Maximum duration for random sleep periods between operations").grid(row=3, column=2, sticky=tk.W, padx=5, pady=5)
+        
         # Security Settings
         ttk.Label(security_frame, text="Kill Date:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         self.kill_date_entry = ttk.Entry(security_frame, textvariable=self.kill_date_var, width=15)
@@ -107,15 +117,10 @@ class AgentConfigTab:
         ttk.Label(fallback_frame, text="Number of failed connections before using fallback paths").grid(row=0, column=2, sticky=tk.W, padx=5, pady=5)
         
         ttk.Label(fallback_frame, text="Max Backoff Time (seconds):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.max_backoff_var = tk.StringVar(value="10")  
+        self.max_backoff_var = tk.StringVar(value="10")  # Default to 10 seconds
         self.max_backoff_entry = ttk.Entry(fallback_frame, textvariable=self.max_backoff_var, width=5)
         self.max_backoff_entry.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
         ttk.Label(fallback_frame, text="Maximum time between reconnection attempts").grid(row=1, column=2, sticky=tk.W, padx=5, pady=5)
-        
-        ttk.Label(fallback_frame, text="Max Random Sleep Time (seconds):").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-        self.max_sleep_entry = ttk.Entry(fallback_frame, textvariable=self.max_sleep_var, width=5)
-        self.max_sleep_entry.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
-        ttk.Label(fallback_frame, text="Maximum duration for sleep when not communicating with server").grid(row=2, column=2, sticky=tk.W, padx=5, pady=5)
         
         # Communication & Identity Settings
         ttk.Label(comm_frame, text="User-Agent:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
@@ -165,6 +170,11 @@ class AgentConfigTab:
         ttk.Button(button_frame, text="Save Configuration", command=self.save_configuration).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Reset to Defaults", command=self.reset_to_defaults).pack(side=tk.LEFT, padx=5)
     
+    def toggle_sleep_options(self):
+        """Enable or disable sleep configuration options based on checkbox"""
+        state = "normal" if self.random_sleep_enabled_var.get() else "disabled"
+        self.max_sleep_entry.config(state=state)
+        
     def on_ua_preset_selected(self, event):
         """Update the user agent entry when a preset is selected"""
         selected_ua = self.ua_preset_combo.get()
@@ -255,6 +265,7 @@ class AgentConfigTab:
             "kill_date": self.kill_date_var.get(),
             "max_failures_before_fallback": self.max_failures_var.get(),
             "max_backoff_time": self.max_backoff_var.get(),
+            "random_sleep_enabled": self.random_sleep_enabled_var.get(),
             "max_sleep_time": self.max_sleep_var.get(),
             "user_agent": self.user_agent_var.get(),
             "username": self.username_var.get(),
@@ -314,6 +325,10 @@ class AgentConfigTab:
                 self.max_backoff_var.set(config["max_backoff_time"])
                 
             # Load new configurable settings
+            if "random_sleep_enabled" in config:
+                self.random_sleep_enabled_var.set(config["random_sleep_enabled"])
+                self.toggle_sleep_options()  # Update UI based on this value
+                
             if "max_sleep_time" in config:
                 self.max_sleep_var.set(config["max_sleep_time"])
                 
@@ -341,6 +356,7 @@ class AgentConfigTab:
                 self.proxy_port_var.set(config["proxy_port"])
                 
             # Update UI state based on loaded values
+            self.toggle_sleep_options()
             self.toggle_proxy_options()
                 
             self.logger(f"Loaded agent configuration from {config_file}")
@@ -354,8 +370,9 @@ class AgentConfigTab:
         self.beacon_period_var.set("5")
         self.jitter_percentage_var.set("20")
         self.max_failures_var.set("3")
-        self.max_backoff_var.set("300")
-        self.max_sleep_var.set("600")
+        self.max_backoff_var.set("10")
+        self.random_sleep_enabled_var.set(False)
+        self.max_sleep_var.set("10")
         self.user_agent_var.set("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
         self.username_var.set("")
         self.password_var.set("")
@@ -369,6 +386,7 @@ class AgentConfigTab:
         self.kill_date_var.set(future_date.strftime("%d/%m/%Y"))
         
         # Update UI state based on new values
+        self.toggle_sleep_options()
         self.toggle_proxy_options()
         
         self.logger("Agent configuration reset to defaults")
@@ -433,14 +451,15 @@ class AgentConfigTab:
             return False
             
         # Validate max sleep time (must be a positive integer)
-        try:
-            max_sleep = int(self.max_sleep_var.get())
-            if max_sleep <= 0:
-                messagebox.showerror("Validation Error", "Max sleep time must be a positive integer.")
+        if self.random_sleep_enabled_var.get():
+            try:
+                max_sleep = int(self.max_sleep_var.get())
+                if max_sleep <= 0:
+                    messagebox.showerror("Validation Error", "Max sleep time must be a positive integer.")
+                    return False
+            except ValueError:
+                messagebox.showerror("Validation Error", "Max sleep time must be a valid integer.")
                 return False
-        except ValueError:
-            messagebox.showerror("Validation Error", "Max sleep time must be a valid integer.")
-            return False
             
         # Validate User-Agent (must not be empty)
         if not self.user_agent_var.get().strip():

