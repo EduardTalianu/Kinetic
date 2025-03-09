@@ -80,7 +80,7 @@ function Upload-File {
         # Create destination directory if it doesn't exist
         $destinationDir = [System.IO.Path]::GetDirectoryName($DestinationPath)
         if (-not (Test-Path -Path $destinationDir -PathType Container)) {
-            Write-Host "Creating directory: $destinationDir"
+            Write-Verbose "Creating directory: $destinationDir"
             New-Item -Path $destinationDir -ItemType Directory -Force | Out-Null
         }
         
@@ -128,12 +128,32 @@ function Upload-File {
         
         # Parse the response with proper error handling
         try {
+            # First validate we actually got JSON back
+            if (-not $response.StartsWith('{')) {
+                throw "Server response is not valid JSON: $response"
+            }
+            
             $responseObj = ConvertFrom-Json -InputObject $response -ErrorAction Stop
+            
+            # Check if response has the expected structure
+            if (-not $responseObj.d) {
+                throw "Response missing data field 'd'"
+            }
+            
             $encryptedData = $responseObj.d
             
             # Decrypt the response
             $decryptedResponse = Decrypt-Data -EncryptedBase64 $encryptedData
-            $fileResponse = ConvertFrom-Json -InputObject $decryptedResponse -ErrorAction Stop
+            
+            # Validate the decrypted response is proper JSON
+            try {
+                $fileResponse = ConvertFrom-Json -InputObject $decryptedResponse -ErrorAction Stop
+            }
+            catch {
+                Write-Host "Error parsing decrypted response as JSON: $_"
+                Write-Host "Raw decrypted response: $decryptedResponse"
+                throw "Invalid JSON in decrypted response"
+            }
             
             # Check if file was found
             if ($fileResponse.Status -eq "Error") {
@@ -159,10 +179,12 @@ function Upload-File {
             return "Successfully downloaded $($fileResponse.FileName) ($($fileResponse.FileSize) bytes) to $DestinationPath"
         }
         catch {
+            Write-Host "Error parsing server response: $_"
             return "Error parsing server response: $_"
         }
     }
     catch {
+        Write-Host "Error uploading file: $_"
         return "Error uploading file: $_"
     }
 }
@@ -268,11 +290,43 @@ function Download-File {
         # Send the upload
         $uploadUrl = "http://$serverAddress$fileUploadPath"
         Write-Host "Sending file upload to $uploadUrl"
-        $response = $webClient.UploadString($uploadUrl, $payloadJson)
         
-        return "Successfully uploaded $FilePath to server ($($fileBytes.Length) bytes)"
+        try {
+            $response = $webClient.UploadString($uploadUrl, $payloadJson)
+            
+            # Parse and process the response if present
+            if ($response -and $response.StartsWith('{')) {
+                try {
+                    $responseObj = ConvertFrom-Json -InputObject $response -ErrorAction Stop
+                    
+                    if ($responseObj.d) {
+                        # Decrypt the response
+                        $decryptedResponse = Decrypt-Data -EncryptedBase64 $responseObj.d
+                        $responseData = ConvertFrom-Json -InputObject $decryptedResponse -ErrorAction Stop
+                        
+                        if ($responseData.Status -eq "Success") {
+                            return "Successfully uploaded $FilePath to server ($($fileBytes.Length) bytes): $($responseData.Message)"
+                        }
+                        else {
+                            return "Upload completed with status: $($responseData.Status) - $($responseData.Message)"
+                        }
+                    }
+                }
+                catch {
+                    Write-Host "Error processing response: $_"
+                }
+            }
+            
+            # If we couldn't parse the response or there was no structured response
+            return "Successfully uploaded $FilePath to server ($($fileBytes.Length) bytes)"
+        }
+        catch {
+            Write-Host "Error sending file upload: $_"
+            return "Error uploading file: $_"
+        }
     }
     catch {
+        Write-Host "Error preparing file for upload: $_"
         return "Error downloading file: $_"
     }
 }

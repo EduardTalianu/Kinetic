@@ -30,6 +30,11 @@ class FileDownloadHandler(BaseHandler):
             token = request_json.get('t', '') or request_json.get('token', '')
             if token:
                 self.log_message(f"Received file download request with {len(token)} bytes of token padding")
+                
+            # Verify presence of encrypted data
+            if not encrypted_data:
+                self.send_error_response(400, "Missing encrypted data field")
+                return
             
             # Identify client by key-based decryption
             client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)
@@ -54,62 +59,32 @@ class FileDownloadHandler(BaseHandler):
             response = self._process_file_request(client_id, decrypted_data)
             
             # Encrypt the response
-            encrypted_response = self.crypto_helper.encrypt(json.dumps(response), client_id)
+            response_json = json.dumps(response)
+            encrypted_response = self.crypto_helper.encrypt(response_json, client_id)
             
             # Add token padding to the response
             token_padding = self._generate_token_padding()
             
-            # Send the encrypted response with token padding using abbreviated field names
+            # Send the encrypted response with token padding using standardized format
             self.send_response(200, "application/json", json.dumps({
                 "d": encrypted_response,  # Shortened from "data"
                 "t": token_padding        # Shortened from "token"
             }))
             
-        except json.JSONDecodeError:
-            # For backward compatibility, try to parse the request body directly
-            try:
-                # Use IP-based identification as fallback (less secure)
-                client_id = self._identify_client_by_ip()
-                
-                if client_id:
-                    # Try to decrypt using the client's key
-                    decrypted_data = self.crypto_helper.decrypt(request_body, client_id)
-                else:
-                    # Try using the campaign key
-                    decrypted_data = self.crypto_helper.decrypt(request_body)
-                    client_id = self._identify_client_by_ip()  # Still need a client ID for processing
-                
-                # Process the request
-                response = self._process_file_request(client_id or self.client_address[0], decrypted_data)
-                
-                # Encrypt the response
-                if client_id:
-                    encrypted_response = self.crypto_helper.encrypt(json.dumps(response), client_id)
-                else:
-                    encrypted_response = self.crypto_helper.encrypt(json.dumps(response))
-                
-                # Add token padding
-                token_padding = self._generate_token_padding()
-                
-                # Send the encrypted response with token padding using abbreviated field names
-                self.send_response(200, "application/json", json.dumps({
-                    "d": encrypted_response,  # Shortened from "data"
-                    "t": token_padding        # Shortened from "token"
-                }))
-            except Exception as e:
-                logger.error(f"Error handling legacy file download request: {e}")
-                self.send_error_response(500, "Server Error")
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {e} - Request body: {request_body[:100]}...")
+            self.send_error_response(400, f"Invalid JSON format: {str(e)}")
         except Exception as e:
             logger.error(f"Error handling file download request: {e}")
             
-            # Send error response
+            # Send structured error response
             error_response = {
                 "Status": "Error",
                 "Message": str(e)
             }
             
             try:
-                if client_id:
+                if 'client_id' in locals() and client_id:
                     encrypted_error = self.crypto_helper.encrypt(json.dumps(error_response), client_id)
                     token_padding = self._generate_token_padding()
                     self.send_response(200, "application/json", json.dumps({
@@ -118,7 +93,8 @@ class FileDownloadHandler(BaseHandler):
                     }))
                 else:
                     self.send_error_response(500, "Server Error")
-            except:
+            except Exception as e2:
+                logger.error(f"Error sending error response: {e2}")
                 self.send_error_response(500, "Server Error")
     
     def _generate_token_padding(self):
@@ -237,10 +213,11 @@ class FileDownloadHandler(BaseHandler):
                 "FileContent": file_content_base64
             }
             
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing JSON in file request: {e}")
             return {
                 "Status": "Error",
-                "Message": "Invalid file request format"
+                "Message": f"Invalid file request format: {str(e)}"
             }
         except Exception as e:
             logger.error(f"Error processing file request: {e}")

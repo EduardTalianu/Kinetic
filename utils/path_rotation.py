@@ -30,11 +30,18 @@ class PathRotationManager:
             "agent_path": "/raw_agent",
             "stager_path": "/b64_stager",
             "cmd_result_path": "/command_result",
-            "file_upload_path": "/file_upload"
+            "file_upload_path": "/file_upload",
+            "file_request_path": "/file_request"  # Make sure this is included
         }
         
         # Set current paths to initial_paths or defaults
         self.current_paths = initial_paths.copy() if initial_paths else self.default_paths.copy()
+        
+        # Ensure all required paths are present
+        for key, path in self.default_paths.items():
+            if key not in self.current_paths:
+                self.current_paths[key] = path
+                self.logger(f"Added missing path {key}: {path}")
         
         # Save initial paths to history
         self.path_history.append({
@@ -52,6 +59,7 @@ class PathRotationManager:
         self.url_components = self._load_url_components()
         
         self.logger(f"Path rotation manager initialized with interval {rotation_interval} seconds")
+        self.logger(f"Initial paths: {self.current_paths}")
     
     def _load_url_patterns(self):
         """Load URL patterns from links.txt file in helpers/links folder"""
@@ -136,7 +144,14 @@ class PathRotationManager:
                 self.path_history = state.get("path_history", self.path_history)
                 self.rotation_interval = state.get("rotation_interval", self.rotation_interval)
                 
+                # Ensure all required paths are present after loading
+                for key, path in self.default_paths.items():
+                    if key not in self.current_paths:
+                        self.current_paths[key] = path
+                        self.logger(f"Added missing path {key}: {path} after loading state")
+                
                 self.logger(f"Path rotation state loaded from {self.state_file}")
+                self.logger(f"Current paths after loading: {self.current_paths}")
                 return True
             except Exception as e:
                 self.logger(f"Error loading path rotation state: {e}")
@@ -190,6 +205,8 @@ class PathRotationManager:
                 path = f"/custom/{random_part}/results"
             elif path_type == "file_upload_path":
                 path = f"/custom/{random_part}/upload"
+            elif path_type == "file_request_path":
+                path = f"/custom/{random_part}/request"
             else:
                 path = f"/custom/{random_part}/{path_type.replace('_path', '')}"
         else:
@@ -201,6 +218,10 @@ class PathRotationManager:
                 path = f"{base_path}/{selected_component}/{random_part}"
             elif path_type == "agent_path" or path_type == "stager_path":
                 path = f"{base_path}/{selected_component}/{random_part}.js"
+            elif path_type == "file_upload_path":
+                path = f"{base_path}/{selected_component}/{random_part}"
+            elif path_type == "file_request_path":
+                path = f"{base_path}/{selected_component}/{random_part}"
             else:
                 path = f"{base_path}/{selected_component}/{random_part}"
         
@@ -273,7 +294,7 @@ class PathRotationManager:
         
         # Generate new paths for each type
         new_paths = {}
-        for path_type in self.current_paths:
+        for path_type in self.default_paths:
             new_paths[path_type] = self._generate_path(self.rotation_counter, path_type)
         
         # Update current paths
@@ -296,11 +317,17 @@ class PathRotationManager:
         # Log the rotation
         next_rotation = datetime.fromtimestamp(self.last_rotation_time + self.rotation_interval)
         self.logger(f"Path rotation {self.rotation_counter} completed. Next rotation at {next_rotation}")
+        self.logger(f"New paths: {self.current_paths}")
         
         return True
     
     def get_current_paths(self):
         """Get the current paths"""
+        # Make sure all required paths are present
+        for key, path in self.default_paths.items():
+            if key not in self.current_paths:
+                self.current_paths[key] = path
+                self.logger(f"Added missing path {key}: {path} to current paths")
         return self.current_paths.copy()
     
     def get_path_by_rotation_id(self, rotation_id):
@@ -315,7 +342,12 @@ class PathRotationManager:
         """
         for entry in self.path_history:
             if entry["rotation_id"] == rotation_id:
-                return entry["paths"].copy()
+                # Ensure all required paths are included
+                paths = entry["paths"].copy()
+                for key, path in self.default_paths.items():
+                    if key not in paths:
+                        paths[key] = path
+                return paths
         
         # If not found in history, generate it deterministically
         if rotation_id > 0:

@@ -20,6 +20,8 @@ class PathRouter:
         current_paths = self.path_manager.get_current_paths()
         for key, path in current_paths.items():
             self.path_mapping[path] = key
+            # Log the mapping for debugging
+            logger.debug(f"Mapped {path} to {key}")
         
         # Also add previous rotation's paths for graceful transition
         if self.path_manager.rotation_counter > 0:
@@ -28,6 +30,8 @@ class PathRouter:
                 for key, path in previous_paths.items():
                     if path not in self.path_mapping:  # Don't overwrite current paths
                         self.path_mapping[path] = f"previous_{key}"
+                        # Log the mapping for debugging
+                        logger.debug(f"Mapped previous path {path} to previous_{key}")
     
     def check_rotation(self):
         """Check if rotation is needed and update mapping if it is"""
