@@ -13,6 +13,9 @@ class FileDownloadHandler(BaseHandler):
     
     def handle(self):
         """Process file download request from client"""
+        # Log the specific path being used for debugging
+        self.log_message(f"File download request received on path: {self.request_handler.path}")
+        
         # Get content data
         content_length = int(self.headers.get('Content-Length', 0))
         if content_length == 0:
@@ -167,6 +170,7 @@ class FileDownloadHandler(BaseHandler):
                 os.path.join(downloads_folder, file_path),  # In downloads folder
                 os.path.join(uploads_folder, file_path),  # In uploads folder
                 os.path.join(campaign_folder, file_path),  # In campaign folder
+                os.path.join(campaign_folder, "agents", file_path)  # In agents folder
             ]
             
             # If client_id is available, also check in client-specific upload/download folders
@@ -178,15 +182,19 @@ class FileDownloadHandler(BaseHandler):
                 filename = os.path.basename(file_path)
                 possible_locations.append(os.path.join(uploads_folder, client_id, filename))
                 possible_locations.append(os.path.join(downloads_folder, client_id, filename))
+                possible_locations.append(os.path.join(campaign_folder, "agents", filename))
             
             # Try each location
             actual_path = None
             for path in possible_locations:
+                self.log_message(f"Checking path: {path}")
                 if os.path.exists(path) and os.path.isfile(path):
                     actual_path = path
+                    self.log_message(f"File found at: {path}")
                     break
             
             if not actual_path:
+                self.log_message(f"File not found in any of {len(possible_locations)} possible locations")
                 return {
                     "Status": "Error",
                     "Message": f"File not found: {file_path}"

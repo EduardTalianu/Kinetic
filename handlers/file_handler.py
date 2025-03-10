@@ -206,6 +206,9 @@ class FileHandler(BaseHandler):
         file_content_base64 = file_info['FileContent']
         
         try:
+            # Sanitize filename to prevent directory traversal attacks
+            file_name = os.path.basename(file_name).replace('..', '_')
+            
             # Decode base64 content
             file_content_bytes = base64.b64decode(file_content_base64)
             
@@ -229,8 +232,14 @@ class FileHandler(BaseHandler):
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         file_path = os.path.join(uploads_folder, f"upload_{timestamp}.txt")
         
-        with open(file_path, 'w') as f:
-            f.write(content)
+        try:
+            # Try writing with utf-8 first
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+        except UnicodeEncodeError:
+            # Fall back to ascii with encoding error replacement
+            with open(file_path, 'w', encoding='ascii', errors='replace') as f:
+                f.write(content)
             
         self.log_message(f"Raw text uploaded from {client_id or self.client_address[0]} and saved to {file_path}")
         if client_id:
