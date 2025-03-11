@@ -1,8 +1,8 @@
-# Kinetic Compliance Matrix (KCM)
+# Kinetic
 
 ## Command and Control Framework for Security Testing
 
-Kinetic Compliance Matrix is a modular and extensible command and control (C2) framework designed for security testing and assessment purposes. This tool provides a comprehensive platform for managing client connections, executing commands, and gathering system information during authorized security assessments.
+Kinetic is a modular and extensible command and control (C2) framework designed for security testing and assessment purposes. This tool provides a comprehensive platform for managing client connections, executing commands, and gathering system information during authorized security assessments.
 
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.6+-green.svg)
