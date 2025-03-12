@@ -40,143 +40,25 @@ class ClientFilesUI:
         self.main_frame = ttk.Frame(self.parent_frame)
         self.main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Create a paned window to separate upload and download sections
-        self.paned_window = ttk.PanedWindow(self.main_frame, orient=tk.VERTICAL)
-        self.paned_window.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Create notebook for subtabs
+        self.files_notebook = ttk.Notebook(self.main_frame)
+        self.files_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Upload section (server to client)
-        self.upload_frame = ttk.LabelFrame(self.paned_window, text="Upload Files to Client")
+        # Create upload tab (server to client)
+        self.upload_tab = ttk.Frame(self.files_notebook)
+        self.files_notebook.add(self.upload_tab, text="Upload to Client")
         
-        # Download section (client to server)
-        self.download_frame = ttk.LabelFrame(self.paned_window, text="Download Files from Client")
+        # Create download tab (client to server)
+        self.download_tab = ttk.Frame(self.files_notebook)
+        self.files_notebook.add(self.download_tab, text="Download from Client")
         
-        # Add frames to paned window
-        self.paned_window.add(self.upload_frame, weight=1)
-        self.paned_window.add(self.download_frame, weight=1)
+        # Add upload UI components
+        self.create_upload_widgets()
         
-        # === UPLOAD SECTION (Server to Client) ===
-        upload_control_frame = ttk.Frame(self.upload_frame)
-        upload_control_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Add download UI components
+        self.create_download_widgets()
         
-        ttk.Label(upload_control_frame, text="Local File:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.upload_file_path = ttk.Entry(upload_control_frame, width=40)
-        self.upload_file_path.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
-        
-        ttk.Button(upload_control_frame, text="Browse", 
-                  command=self.browse_local_file).grid(row=0, column=2, padx=5, pady=5)
-        
-        # Add destination path field
-        ttk.Label(upload_control_frame, text="Destination:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        self.upload_destination_path = ttk.Entry(upload_control_frame, width=40)
-        self.upload_destination_path.grid(row=1, column=1, padx=5, pady=5, sticky=tk.EW)
-        
-        # Default to %TEMP% directory for uploads
-        self.upload_destination_path.insert(0, "%TEMP%\\")
-        
-        # Destination path dropdown for common locations
-        upload_destinations = ["%TEMP%\\", "%USERPROFILE%\\Desktop\\", "%USERPROFILE%\\Documents\\", 
-                             "C:\\Windows\\Temp\\", "C:\\Users\\Public\\Documents\\"]
-        self.upload_dest_combo = ttk.Combobox(upload_control_frame, values=upload_destinations, width=15)
-        self.upload_dest_combo.grid(row=1, column=2, padx=5, pady=5)
-        self.upload_dest_combo.bind("<<ComboboxSelected>>", self.on_upload_dest_selected)
-        
-        # Upload button with clearer name
-        ttk.Button(upload_control_frame, text="Upload to Client", 
-                  command=self.upload_file_to_client).grid(row=2, column=1, padx=5, pady=5)
-        
-        # Upload history
-        upload_history_frame = ttk.Frame(self.upload_frame)
-        upload_history_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        ttk.Label(upload_history_frame, text="Upload History:").pack(anchor=tk.W, padx=5, pady=2)
-        
-        # Treeview for upload history
-        columns = ("Timestamp", "Filename", "Destination", "Size", "Status")
-        self.upload_tree = ttk.Treeview(upload_history_frame, columns=columns, show="headings", height=5)
-        
-        self.upload_tree.heading("Timestamp", text="Timestamp")
-        self.upload_tree.heading("Filename", text="Filename")
-        self.upload_tree.heading("Destination", text="Destination")
-        self.upload_tree.heading("Size", text="Size")
-        self.upload_tree.heading("Status", text="Status")
-        
-        # Configure column widths
-        self.upload_tree.column("Timestamp", width=150)
-        self.upload_tree.column("Filename", width=150)
-        self.upload_tree.column("Destination", width=200)
-        self.upload_tree.column("Size", width=80)
-        self.upload_tree.column("Status", width=80)
-        
-        # Add scrollbar for upload tree
-        upload_scrollbar = ttk.Scrollbar(upload_history_frame, orient="vertical", command=self.upload_tree.yview)
-        self.upload_tree.configure(yscrollcommand=upload_scrollbar.set)
-        
-        # Pack tree and scrollbar
-        self.upload_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        upload_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # === DOWNLOAD SECTION (Client to Server) ===
-        download_control_frame = ttk.Frame(self.download_frame)
-        download_control_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Label(download_control_frame, text="Remote File Path:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.remote_file_path = ttk.Entry(download_control_frame, width=40)
-        self.remote_file_path.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
-        
-        ttk.Button(download_control_frame, text="Download from Client", 
-                  command=self.download_file_from_client).grid(row=0, column=2, padx=5, pady=5)
-        
-        # Remote file browsing
-        browse_remote_frame = ttk.Frame(self.download_frame)
-        browse_remote_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Label(browse_remote_frame, text="Browse Location:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        
-        remote_dir_combo_values = ["C:\\Users\\Public\\Documents", "C:\\Windows\\Temp", "%USERPROFILE%\\Downloads", 
-                                  "%USERPROFILE%\\Desktop", "%USERPROFILE%\\Documents", "C:\\"]
-        self.remote_dir_combo = ttk.Combobox(browse_remote_frame, values=remote_dir_combo_values, width=30)
-        self.remote_dir_combo.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
-        self.remote_dir_combo.bind("<<ComboboxSelected>>", self.on_remote_dir_selected)
-        
-        ttk.Button(browse_remote_frame, text="List Directory", 
-                  command=lambda: self.download_directory_listing(self.remote_dir_combo.get())).grid(row=0, column=2, padx=5, pady=5)
-        
-        # Drive info button - uses Get-DriveInfo function
-        ttk.Button(browse_remote_frame, text="List Drives", 
-                 command=self.get_drive_info).grid(row=1, column=0, padx=5, pady=5)
-        
-        # Download history
-        download_history_frame = ttk.Frame(self.download_frame)
-        download_history_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        ttk.Label(download_history_frame, text="Download History:").pack(anchor=tk.W, padx=5, pady=2)
-        
-        # Treeview for download history
-        columns = ("Timestamp", "Remote Path", "Local Path", "Size", "Status")
-        self.download_tree = ttk.Treeview(download_history_frame, columns=columns, show="headings", height=5)
-        
-        self.download_tree.heading("Timestamp", text="Timestamp")
-        self.download_tree.heading("Remote Path", text="Remote Path")
-        self.download_tree.heading("Local Path", text="Local Path")
-        self.download_tree.heading("Size", text="Size")
-        self.download_tree.heading("Status", text="Status")
-        
-        # Configure column widths
-        self.download_tree.column("Timestamp", width=150)
-        self.download_tree.column("Remote Path", width=180)
-        self.download_tree.column("Local Path", width=180)
-        self.download_tree.column("Size", width=80)
-        self.download_tree.column("Status", width=80)
-        
-        # Add scrollbar for download tree
-        download_scrollbar = ttk.Scrollbar(download_history_frame, orient="vertical", command=self.download_tree.yview)
-        self.download_tree.configure(yscrollcommand=download_scrollbar.set)
-        
-        # Pack tree and scrollbar
-        self.download_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        download_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # File preview area
+        # File preview area - keep this common between tabs at the bottom
         preview_frame = ttk.LabelFrame(self.main_frame, text="Directory Listing / File Preview")
         preview_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
@@ -234,10 +116,6 @@ class ClientFilesUI:
         # Hide directory listing by default - show text area instead
         self.dir_listing_frame.pack_forget()
         
-        # Bind selection events to display file info
-        self.download_tree.bind("<<TreeviewSelect>>", self.on_download_select)
-        self.upload_tree.bind("<<TreeviewSelect>>", self.on_upload_select)
-        
         # Control buttons at the bottom
         control_frame = ttk.Frame(self.main_frame)
         control_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -249,6 +127,134 @@ class ClientFilesUI:
         # Current working directory indicator
         self.cwd_var = tk.StringVar(value="Current path: Not set")
         ttk.Label(control_frame, textvariable=self.cwd_var).pack(side=tk.RIGHT, padx=5)
+        
+    def create_upload_widgets(self):
+        """Create widgets specific to the upload tab"""
+        # Upload control frame
+        upload_control_frame = ttk.Frame(self.upload_tab)
+        upload_control_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(upload_control_frame, text="Local File:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.upload_file_path = ttk.Entry(upload_control_frame, width=40)
+        self.upload_file_path.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
+        
+        ttk.Button(upload_control_frame, text="Browse", 
+                  command=self.browse_local_file).grid(row=0, column=2, padx=5, pady=5)
+        
+        # Add destination path field
+        ttk.Label(upload_control_frame, text="Destination:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.upload_destination_path = ttk.Entry(upload_control_frame, width=40)
+        self.upload_destination_path.grid(row=1, column=1, padx=5, pady=5, sticky=tk.EW)
+        
+        # Default to %TEMP% directory for uploads
+        self.upload_destination_path.insert(0, "%TEMP%\\")
+        
+        # Destination path dropdown for common locations
+        upload_destinations = ["%TEMP%\\", "%USERPROFILE%\\Desktop\\", "%USERPROFILE%\\Documents\\", 
+                             "C:\\Windows\\Temp\\", "C:\\Users\\Public\\Documents\\"]
+        self.upload_dest_combo = ttk.Combobox(upload_control_frame, values=upload_destinations, width=15)
+        self.upload_dest_combo.grid(row=1, column=2, padx=5, pady=5)
+        self.upload_dest_combo.bind("<<ComboboxSelected>>", self.on_upload_dest_selected)
+        
+        # Upload button with clearer name
+        ttk.Button(upload_control_frame, text="Upload to Client", 
+                  command=self.upload_file_to_client).grid(row=2, column=1, padx=5, pady=5)
+        
+        # Upload history
+        upload_history_frame = ttk.LabelFrame(self.upload_tab, text="Upload History")
+        upload_history_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Treeview for upload history
+        columns = ("Timestamp", "Filename", "Destination", "Size", "Status")
+        self.upload_tree = ttk.Treeview(upload_history_frame, columns=columns, show="headings", height=8)
+        
+        self.upload_tree.heading("Timestamp", text="Timestamp")
+        self.upload_tree.heading("Filename", text="Filename")
+        self.upload_tree.heading("Destination", text="Destination")
+        self.upload_tree.heading("Size", text="Size")
+        self.upload_tree.heading("Status", text="Status")
+        
+        # Configure column widths
+        self.upload_tree.column("Timestamp", width=150)
+        self.upload_tree.column("Filename", width=150)
+        self.upload_tree.column("Destination", width=200)
+        self.upload_tree.column("Size", width=80)
+        self.upload_tree.column("Status", width=80)
+        
+        # Add scrollbar for upload tree
+        upload_scrollbar = ttk.Scrollbar(upload_history_frame, orient="vertical", command=self.upload_tree.yview)
+        self.upload_tree.configure(yscrollcommand=upload_scrollbar.set)
+        
+        # Pack tree and scrollbar
+        self.upload_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        upload_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Bind selection event
+        self.upload_tree.bind("<<TreeviewSelect>>", self.on_upload_select)
+    
+    def create_download_widgets(self):
+        """Create widgets specific to the download tab"""
+        # Remote browsing controls
+        browse_remote_frame = ttk.Frame(self.download_tab)
+        browse_remote_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(browse_remote_frame, text="Browse Location:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        remote_dir_combo_values = ["C:\\Users\\Public\\Documents", "C:\\Windows\\Temp", "%USERPROFILE%\\Downloads", 
+                                  "%USERPROFILE%\\Desktop", "%USERPROFILE%\\Documents", "C:\\"]
+        self.remote_dir_combo = ttk.Combobox(browse_remote_frame, values=remote_dir_combo_values, width=30)
+        self.remote_dir_combo.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
+        self.remote_dir_combo.bind("<<ComboboxSelected>>", self.on_remote_dir_selected)
+        
+        ttk.Button(browse_remote_frame, text="List Directory", 
+                  command=lambda: self.download_directory_listing(self.remote_dir_combo.get())).grid(row=0, column=2, padx=5, pady=5)
+        
+        # Drive info button - uses Get-DriveInfo function
+        ttk.Button(browse_remote_frame, text="List Drives", 
+                 command=self.get_drive_info).grid(row=1, column=0, padx=5, pady=5)
+        
+        # Direct file download section
+        download_control_frame = ttk.Frame(self.download_tab)
+        download_control_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(download_control_frame, text="Remote File Path:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.remote_file_path = ttk.Entry(download_control_frame, width=40)
+        self.remote_file_path.grid(row=0, column=1, padx=5, pady=5, sticky=tk.EW)
+        
+        ttk.Button(download_control_frame, text="Download from Client", 
+                  command=self.download_file_from_client).grid(row=0, column=2, padx=5, pady=5)
+        
+        # Download history
+        download_history_frame = ttk.LabelFrame(self.download_tab, text="Download History")
+        download_history_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Treeview for download history
+        columns = ("Timestamp", "Remote Path", "Local Path", "Size", "Status")
+        self.download_tree = ttk.Treeview(download_history_frame, columns=columns, show="headings", height=8)
+        
+        self.download_tree.heading("Timestamp", text="Timestamp")
+        self.download_tree.heading("Remote Path", text="Remote Path")
+        self.download_tree.heading("Local Path", text="Local Path")
+        self.download_tree.heading("Size", text="Size")
+        self.download_tree.heading("Status", text="Status")
+        
+        # Configure column widths
+        self.download_tree.column("Timestamp", width=150)
+        self.download_tree.column("Remote Path", width=180)
+        self.download_tree.column("Local Path", width=180)
+        self.download_tree.column("Size", width=80)
+        self.download_tree.column("Status", width=80)
+        
+        # Add scrollbar for download tree
+        download_scrollbar = ttk.Scrollbar(download_history_frame, orient="vertical", command=self.download_tree.yview)
+        self.download_tree.configure(yscrollcommand=download_scrollbar.set)
+        
+        # Pack tree and scrollbar
+        self.download_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        download_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Bind selection event
+        self.download_tree.bind("<<TreeviewSelect>>", self.on_download_select)
     
     def show_dir_context_menu(self, event):
         """Show context menu on right-click in directory tree"""
@@ -290,6 +296,9 @@ class ClientFilesUI:
         # Set the remote file path
         self.remote_file_path.delete(0, tk.END)
         self.remote_file_path.insert(0, full_path)
+        
+        # Switch to the download tab
+        self.files_notebook.select(self.download_tab)
         
         # Download the file
         self.download_file_from_client()
@@ -371,6 +380,10 @@ class ClientFilesUI:
         self.preview_text.delete(1.0, tk.END)
         self.preview_text.insert(tk.END, "Requesting drive information...\n")
         
+        # Switch to raw view mode to display the results
+        self.preview_mode.set("raw")
+        self.refresh_preview()
+        
         # Log the request
         self.logger(f"Requesting drive information from client {self.client_id}")
     
@@ -433,6 +446,9 @@ class ClientFilesUI:
         # Log the upload
         self.logger(f"File upload initiated: {local_file_path} to {self.client_id}:{destination_path}")
         messagebox.showinfo("Upload Started", f"File upload initiated: {os.path.basename(local_file_path)}\nDestination: {destination_path}")
+        
+        # Select the upload tab to show progress
+        self.files_notebook.select(self.upload_tab)
 
     def download_file_from_client(self):
         """Download a file from the client to the local machine"""
@@ -472,6 +488,9 @@ class ClientFilesUI:
         # Log the download
         self.logger(f"File download initiated: {self.client_id}:{remote_path} to {local_path}")
         messagebox.showinfo("Download Started", f"File download initiated from: {remote_path}")
+        
+        # Select the download tab to show progress
+        self.files_notebook.select(self.download_tab)
 
     def download_directory_listing(self, directory):
         """Get a directory listing from the client"""
