@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import ttk, scrolledtext, messagebox
 import datetime
 import json
 import os
@@ -32,6 +32,14 @@ class ClientInteractionUI:
         self.command_history = []
         self.command_index = 0
         self.displayed_results = set()  # Track which commands have been displayed
+        self.active_filters = {
+            "opsec_safe": False,
+            "requires_admin": False,
+            "windows": True,
+            "linux": False,
+            "powershell": True,
+            "cmd": True
+        }
         
         # Initialize command loader
         self.command_loader = CommandLoader()
@@ -60,9 +68,9 @@ class ClientInteractionUI:
         # Create a frame for command history
         history_frame = ttk.LabelFrame(self.paned_window, text="Command History")
         
-        # Add both frames to the paned window
-        self.paned_window.add(console_frame, weight=3)  # Console gets more space
-        self.paned_window.add(history_frame, weight=1)
+        # Add both frames to the paned window with updated weights to give Command Categories more space
+        self.paned_window.add(console_frame, weight=5)  # Console gets more space
+        self.paned_window.add(history_frame, weight=2)  # History gets less space
         
         # Create output display with improved styling
         self.output_text = scrolledtext.ScrolledText(
@@ -118,7 +126,7 @@ class ClientInteractionUI:
         
         # Command history in the history frame - tree view for better organization
         columns = ("Timestamp", "Type", "Command", "Status")
-        self.history_tree = ttk.Treeview(history_frame, columns=columns, show="headings", height=8)
+        self.history_tree = ttk.Treeview(history_frame, columns=columns, show="headings", height=6)  # Reduced height
         self.history_tree.heading("Timestamp", text="Timestamp")
         self.history_tree.heading("Type", text="Type")
         self.history_tree.heading("Command", text="Command")
@@ -145,13 +153,78 @@ class ClientInteractionUI:
         self.create_command_subtabs()
     
     def create_command_subtabs(self):
-        """Create subtabs for categorized commands"""
+        """Create subtabs for categorized commands with filtering"""
         # Create notebook and container
         commands_frame = ttk.LabelFrame(self.main_frame, text="Command Categories")
         commands_frame.pack(fill=tk.X, padx=5, pady=5)
         
+        # Add filters at the top of the commands frame
+        filter_frame = ttk.Frame(commands_frame)
+        filter_frame.pack(fill=tk.X, padx=5, pady=(5, 0))
+        
+        # Create filter checkboxes
+        filter_title = ttk.Label(filter_frame, text="Filters:", font=("Arial", 9, "bold"))
+        filter_title.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # OPSEC Safe filter
+        self.opsec_filter_var = tk.BooleanVar(value=self.active_filters["opsec_safe"])
+        opsec_check = ttk.Checkbutton(filter_frame, text="OPSEC Safe", 
+                                    variable=self.opsec_filter_var, 
+                                    command=lambda: self.toggle_filter("opsec_safe"))
+        opsec_check.pack(side=tk.LEFT, padx=5)
+        
+        # Requires Admin filter
+        self.admin_filter_var = tk.BooleanVar(value=self.active_filters["requires_admin"])
+        admin_check = ttk.Checkbutton(filter_frame, text="Requires Admin", 
+                                    variable=self.admin_filter_var,
+                                    command=lambda: self.toggle_filter("requires_admin"))
+        admin_check.pack(side=tk.LEFT, padx=5)
+        
+        # Target OS filters
+        os_frame = ttk.Frame(filter_frame)
+        os_frame.pack(side=tk.LEFT, padx=5)
+        
+        os_label = ttk.Label(os_frame, text="OS:")
+        os_label.pack(side=tk.LEFT)
+        
+        self.windows_filter_var = tk.BooleanVar(value=self.active_filters["windows"])
+        windows_check = ttk.Checkbutton(os_frame, text="Windows", 
+                                    variable=self.windows_filter_var,
+                                    command=lambda: self.toggle_filter("windows"))
+        windows_check.pack(side=tk.LEFT)
+        
+        self.linux_filter_var = tk.BooleanVar(value=self.active_filters["linux"])
+        linux_check = ttk.Checkbutton(os_frame, text="Linux", 
+                                    variable=self.linux_filter_var,
+                                    command=lambda: self.toggle_filter("linux"))
+        linux_check.pack(side=tk.LEFT)
+        
+        # Command type filters
+        type_frame = ttk.Frame(filter_frame)
+        type_frame.pack(side=tk.LEFT, padx=5)
+        
+        type_label = ttk.Label(type_frame, text="Type:")
+        type_label.pack(side=tk.LEFT)
+        
+        self.ps_filter_var = tk.BooleanVar(value=self.active_filters["powershell"])
+        ps_check = ttk.Checkbutton(type_frame, text="PowerShell", 
+                                variable=self.ps_filter_var,
+                                command=lambda: self.toggle_filter("powershell"))
+        ps_check.pack(side=tk.LEFT)
+        
+        self.cmd_filter_var = tk.BooleanVar(value=self.active_filters["cmd"])
+        cmd_check = ttk.Checkbutton(type_frame, text="CMD", 
+                                variable=self.cmd_filter_var,
+                                command=lambda: self.toggle_filter("cmd"))
+        cmd_check.pack(side=tk.LEFT)
+        
+        # Clear filters button
+        clear_filters = ttk.Button(filter_frame, text="Clear Filters", command=self.clear_filters)
+        clear_filters.pack(side=tk.RIGHT, padx=5)
+        
+        # Create notebook for command categories
         self.commands_notebook = ttk.Notebook(commands_frame)
-        self.commands_notebook.pack(fill=tk.X, padx=5, pady=5)
+        self.commands_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # Load categories from command loader
         categories = self.command_loader.get_categories()
@@ -169,33 +242,295 @@ class ClientInteractionUI:
                 empty_label = ttk.Label(tab_frame, text=f"No commands found in '{category}' category")
                 empty_label.pack(padx=10, pady=10)
                 continue
-            
-            # Create button grid - up to 4 buttons per row
-            row_frame = None
-            for i, (cmd_name, cmd_info) in enumerate(commands.items()):
-                # Create a new row frame every 4 buttons
-                if i % 4 == 0:
-                    row_frame = ttk.Frame(tab_frame)
-                    row_frame.pack(fill=tk.X, padx=5, pady=2)
                 
-                # Create button with tooltip (description)
-                display_name = cmd_name.replace('_', ' ').title()
+            # Create scrollable frame for commands
+            scroll_canvas = tk.Canvas(tab_frame)
+            scrollbar = ttk.Scrollbar(tab_frame, orient="vertical", command=scroll_canvas.yview)
+            scroll_frame = ttk.Frame(scroll_canvas)
+            
+            scroll_frame.bind("<Configure>", 
+                lambda e, canvas=scroll_canvas: canvas.configure(scrollregion=canvas.bbox("all")))
+            
+            scroll_canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+            scroll_canvas.configure(yscrollcommand=scrollbar.set)
+            
+            scroll_canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            
+            # Create button grid - normal sized buttons
+            row = 0
+            col = 0
+            max_cols = 4  # Back to 4 columns
+            
+            # Add command metadata and tags
+            command_metadata = self.load_command_metadata()
+            
+            for cmd_name, cmd_info in commands.items():
+                # Get additional metadata and tags for this command if available
+                metadata = command_metadata.get(cmd_name, {})
+                tags = metadata.get("tags", {})
+                
+                # Skip commands that don't match current filters
+                if not self.command_matches_filters(tags):
+                    continue
                 
                 # Command execution function
                 def make_command_func(cat=category, cmd=cmd_name):
                     return lambda: self.command_loader.execute_command(cat, cmd, self, self.client_id)
                 
+                # Create button with normal dimensions - just like original
+                display_name = cmd_name.replace('_', ' ').title()
+                
                 cmd_button = ttk.Button(
-                    row_frame,
+                    scroll_frame,
                     text=display_name,
                     width=15,
                     command=make_command_func()
                 )
-                cmd_button.pack(side=tk.LEFT, padx=5, pady=2)
                 
                 # Add tooltip with description if available
                 if cmd_info['description']:
                     self.create_tooltip(cmd_button, cmd_info['description'])
+                
+                # Position the button in the grid
+                cmd_button.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+                
+                # Update grid position
+                col += 1
+                if col >= max_cols:
+                    col = 0
+                    row += 1
+            
+            # Configure grid weights
+            for i in range(max_cols):
+                scroll_frame.columnconfigure(i, weight=1)
+    
+    def load_command_metadata(self):
+        """Load command metadata including tags"""
+        metadata = {}
+        
+        # Load tags from loaded commands
+        for category in self.command_loader.get_categories():
+            commands = self.command_loader.get_commands(category)
+            for cmd_name, cmd_info in commands.items():
+                metadata[cmd_name] = {
+                    "tags": cmd_info.get('tags', {})
+                }
+        
+        # Fall back to hard-coded metadata if no tags were loaded
+        if not any(metadata.get(cmd, {}).get('tags', {}) for cmd in metadata):
+            # Basic fallback metadata for common commands
+            default_metadata = {
+                "whoami": {
+                    "tags": {
+                        "opsec_safe": True,
+                        "requires_admin": False,
+                        "windows": True,
+                        "linux": True,
+                        "powershell": False,
+                        "cmd": True
+                    }
+                },
+                "whoami_ps": {
+                    "tags": {
+                        "opsec_safe": True,
+                        "requires_admin": False,
+                        "windows": True,
+                        "linux": False,
+                        "powershell": True,
+                        "cmd": False
+                    }
+                }
+            }
+            
+            # Add default metadata
+            for cmd_name, cmd_meta in default_metadata.items():
+                metadata[cmd_name] = cmd_meta
+        
+        return metadata
+    
+    def command_matches_filters(self, tags):
+        """Check if command matches current filters"""
+        # If no filters are active, show all commands
+        if not any(self.active_filters.values()):
+            return True
+        
+        # Check OPSEC filter
+        if self.active_filters["opsec_safe"] and not tags.get("opsec_safe", False):
+            return False
+            
+        # Check Admin filter
+        if self.active_filters["requires_admin"] and not tags.get("requires_admin", False):
+            return False
+        
+        # Check OS filters
+        os_filters_active = self.active_filters["windows"] or self.active_filters["linux"]
+        if os_filters_active:
+            matches_os = False
+            if self.active_filters["windows"] and tags.get("windows", True):
+                matches_os = True
+            if self.active_filters["linux"] and tags.get("linux", False):
+                matches_os = True
+            if not matches_os:
+                return False
+        
+        # Check command type filters
+        type_filters_active = self.active_filters["powershell"] or self.active_filters["cmd"]
+        if type_filters_active:
+            matches_type = False
+            if self.active_filters["powershell"] and tags.get("powershell", True):
+                matches_type = True
+            if self.active_filters["cmd"] and tags.get("cmd", False):
+                matches_type = True
+            if not matches_type:
+                return False
+        
+        return True
+    
+    def toggle_filter(self, filter_name):
+        """Toggle a filter and refresh the command display"""
+        if filter_name == "opsec_safe":
+            self.active_filters["opsec_safe"] = self.opsec_filter_var.get()
+        elif filter_name == "requires_admin":
+            self.active_filters["requires_admin"] = self.admin_filter_var.get()
+        elif filter_name == "windows":
+            self.active_filters["windows"] = self.windows_filter_var.get()
+        elif filter_name == "linux":
+            self.active_filters["linux"] = self.linux_filter_var.get()
+        elif filter_name == "powershell":
+            self.active_filters["powershell"] = self.ps_filter_var.get()
+        elif filter_name == "cmd":
+            self.active_filters["cmd"] = self.cmd_filter_var.get()
+        
+        # Recreate the command tabs with new filters
+        self.refresh_command_tabs()
+    
+    def clear_filters(self):
+        """Clear all filters and refresh command display"""
+        self.active_filters = {
+            "opsec_safe": False,
+            "requires_admin": False,
+            "windows": True,
+            "linux": False,
+            "powershell": True,
+            "cmd": True
+        }
+        
+        # Update the UI checkboxes
+        self.opsec_filter_var.set(False)
+        self.admin_filter_var.set(False)
+        self.windows_filter_var.set(True)
+        self.linux_filter_var.set(False)
+        self.ps_filter_var.set(True)
+        self.cmd_filter_var.set(True)
+        
+        # Refresh the command tabs
+        self.refresh_command_tabs()
+    
+    def refresh_command_tabs(self):
+        """Refresh command tabs based on current filters"""
+        # Remember current selected tab
+        selected_tab = self.commands_notebook.select()
+        selected_index = self.commands_notebook.index(selected_tab) if selected_tab else 0
+        
+        # Remove existing tabs
+        for tab in self.commands_notebook.tabs():
+            self.commands_notebook.forget(tab)
+        
+        # Reload categories
+        categories = self.command_loader.get_categories()
+        
+        # Recreate tabs for each category
+        for category in categories:
+            tab_frame = ttk.Frame(self.commands_notebook)
+            self.commands_notebook.add(tab_frame, text=category.capitalize())
+            
+            # Get commands for this category
+            commands = self.command_loader.get_commands(category)
+            
+            # Skip empty categories
+            if not commands:
+                empty_label = ttk.Label(tab_frame, text=f"No commands found in '{category}' category")
+                empty_label.pack(padx=10, pady=10)
+                continue
+                
+            # Create scrollable frame for commands
+            scroll_canvas = tk.Canvas(tab_frame)
+            scrollbar = ttk.Scrollbar(tab_frame, orient="vertical", command=scroll_canvas.yview)
+            scroll_frame = ttk.Frame(scroll_canvas)
+            
+            scroll_frame.bind("<Configure>", 
+                lambda e, canvas=scroll_canvas: canvas.configure(scrollregion=canvas.bbox("all")))
+            
+            scroll_canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+            scroll_canvas.configure(yscrollcommand=scrollbar.set)
+            
+            scroll_canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            
+            # Create button grid
+            row = 0
+            col = 0
+            max_cols = 4
+            
+            # Load command metadata and tags
+            command_metadata = self.load_command_metadata()
+            
+            # Count visible commands after filtering
+            visible_commands = 0
+            
+            for cmd_name, cmd_info in commands.items():
+                # Get tags for this command
+                metadata = command_metadata.get(cmd_name, {})
+                tags = metadata.get("tags", {})
+                
+                # Skip commands that don't match current filters
+                if not self.command_matches_filters(tags):
+                    continue
+                
+                visible_commands += 1
+                
+                # Command execution function
+                def make_command_func(cat=category, cmd=cmd_name):
+                    return lambda: self.command_loader.execute_command(cat, cmd, self, self.client_id)
+                
+                # Normal sized button with regular dimensions
+                display_name = cmd_name.replace('_', ' ').title()
+                cmd_button = ttk.Button(
+                    scroll_frame,
+                    text=display_name,
+                    width=15,
+                    command=make_command_func()
+                )
+                
+                # Add tooltip with description if available
+                if cmd_info['description']:
+                    self.create_tooltip(cmd_button, cmd_info['description'])
+                
+                # Position the button in the grid
+                cmd_button.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+                
+                # Update grid position
+                col += 1
+                if col >= max_cols:
+                    col = 0
+                    row += 1
+            
+            # Display message if no commands match filters
+            if visible_commands == 0:
+                no_match_label = ttk.Label(tab_frame, text="No commands match the current filters")
+                no_match_label.pack(padx=10, pady=10)
+            
+            # Configure grid weights
+            for i in range(max_cols):
+                scroll_frame.columnconfigure(i, weight=1)
+        
+        # Try to select the same tab index
+        if self.commands_notebook.tabs():
+            if selected_index < len(self.commands_notebook.tabs()):
+                self.commands_notebook.select(selected_index)
+            else:
+                self.commands_notebook.select(0)
     
     def create_tooltip(self, widget, text):
         """Create a simple tooltip for a widget"""
