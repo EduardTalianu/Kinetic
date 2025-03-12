@@ -71,10 +71,18 @@ class CommandLoader:
                             if hasattr(module, 'get_description') and callable(module.get_description):
                                 description = module.get_description()
                                 
+                            # Get tags if available, otherwise use defaults
+                            tags = {}
+                            if hasattr(module, 'get_tags') and callable(module.get_tags):
+                                tags = module.get_tags()
+                            else:
+                                tags = self._get_default_tags(module_name, category)
+                                
                             # Add command to the appropriate category
                             self.commands[category][module_name] = {
                                 'module': module,
-                                'description': description
+                                'description': description,
+                                'tags': tags
                             }
                             print(f"Loaded command module: {category}/{module_name}")
                         else:
@@ -89,9 +97,47 @@ class CommandLoader:
         logger.info(f"Loaded {total_commands} command modules from {len(self.commands)} categories")
         print(f"Loaded {total_commands} command modules from {len(self.commands)} categories")
     
+    def _get_default_tags(self, module_name, category):
+        """Generate default tags based on module name and category"""
+        # Some simple heuristics based on command name and category
+        is_powershell = "_ps" in module_name
+        is_cmd = not is_powershell
+        is_admin = any(word in module_name for word in ["admin", "registry", "service", "driver", "priv"])
+        
+        # Special case for whoami and whoami_ps
+        if module_name == "whoami":
+            return {
+                "opsec_safe": True,
+                "requires_admin": False,
+                "windows": True,
+                "linux": True,
+                "powershell": False,
+                "cmd": True
+            }
+        elif module_name == "whoami_ps":
+            return {
+                "opsec_safe": True,
+                "requires_admin": False,
+                "windows": True,
+                "linux": False,
+                "powershell": True,
+                "cmd": False
+            }
+        
+        # Default tags based on category and module name
+        return {
+            "opsec_safe": not is_admin,
+            "requires_admin": is_admin,
+            "windows": True,
+            "linux": category != "activedirectory" and not is_powershell,
+            "powershell": is_powershell,
+            "cmd": is_cmd
+        }
+    
     def get_categories(self):
         """Get a list of all command categories"""
-        return list(self.commands.keys())
+        # Return only categories that have commands
+        return [cat for cat in self.commands.keys() if self.commands[cat]]
     
     def get_commands(self, category):
         """Get all commands in a category"""

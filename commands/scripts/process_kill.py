@@ -33,3 +33,14 @@ def execute(client_interaction_ui, client_id):
 def get_description():
     """Get command description"""
     return "Kill a process by name (provides a script template)"
+
+def get_tags():
+    """Get command tags for categorization and filtering"""
+    return {
+        "opsec_safe": False,     # Process termination might be detected/logged
+        "requires_admin": False, # Depends on the process, but can work without admin for user processes
+        "windows": True,         # Works on Windows
+        "linux": False,          # Uses PowerShell, Windows-specific
+        "powershell": True,      # Is a PowerShell command
+        "cmd": False             # Not a CMD command
+    }

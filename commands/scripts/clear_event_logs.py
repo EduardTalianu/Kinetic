@@ -30,3 +30,14 @@ def execute(client_interaction_ui, client_id):
 def get_description():
     """Get command description"""
     return "Clear all Windows event logs (requires admin)"
+
+def get_tags():
+    """Get command tags for categorization and filtering"""
+    return {
+        "opsec_safe": False,     # Clearing logs is highly detectable and suspicious
+        "requires_admin": True,  # Requires admin privileges to clear logs
+        "windows": True,         # Works on Windows
+        "linux": False,          # Uses PowerShell, Windows-specific
+        "powershell": True,      # Is a PowerShell command
+        "cmd": False             # Not a CMD command
+    }
