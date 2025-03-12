@@ -207,13 +207,38 @@ class FileDownloadHandler(BaseHandler):
             file_size = len(file_content)
             file_content_base64 = base64.b64encode(file_content).decode('utf-8')
             
+            # Also save a copy to the uploads folder for reference
+            # This makes sure we track files sent to clients
+            if client_id:
+                client_uploads_folder = os.path.join(uploads_folder, client_id)
+                os.makedirs(client_uploads_folder, exist_ok=True)
+                
+                # Save a copy of the file to the uploads folder with a tracking prefix
+                upload_filename = f"sent_to_client_{os.path.basename(actual_path)}"
+                upload_path = os.path.join(client_uploads_folder, upload_filename)
+                
+                try:
+                    # Only save if it doesn't already exist or is different
+                    should_save = True
+                    if os.path.exists(upload_path):
+                        # Compare file contents
+                        with open(upload_path, 'rb') as existing_file:
+                            existing_content = existing_file.read()
+                        should_save = existing_content != file_content
+                    
+                    if should_save:
+                        with open(upload_path, 'wb') as f:
+                            f.write(file_content)
+                        self.log_message(f"Saved copy of sent file to {upload_path}")
+                except Exception as e:
+                    self.log_message(f"Warning: Could not save copy of sent file: {e}")
+            
             # Log the successful file access
             self.log_message(f"File found at {actual_path}, sending to client ({file_size} bytes)")
             if client_id:
-                self.client_manager.log_event(client_id, "File Download", f"Sending file: {actual_path} ({file_size} bytes)")
+                self.client_manager.log_event(client_id, "File Upload To Client", f"Sending file: {actual_path} ({file_size} bytes) to client destination: {destination}")
             
-            # Create and return the response - keep the original field names for backward compatibility
-            # We don't abbreviate these since they're within the encrypted payload
+            # Create and return the response
             return {
                 "Status": "Success",
                 "FileName": os.path.basename(actual_path),
