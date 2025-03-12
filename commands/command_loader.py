@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class CommandLoader:
-    """Handles loading command modules from the cmd directory"""
+    """Handles loading command modules from the commands directory"""
     
     def __init__(self):
         """Initialize the command loader"""
@@ -25,14 +25,15 @@ class CommandLoader:
         self.load_commands()
     
     def load_commands(self):
-        """Load all command modules from the cmd directory"""
-        # Check if cmd directory exists
+        """Load all command modules from the commands directory"""
+        # Check if commands directory exists
         if not os.path.exists(self.cmd_dir):
             os.makedirs(self.cmd_dir, exist_ok=True)
             # Create category directories
             for category in self.commands.keys():
                 os.makedirs(os.path.join(self.cmd_dir, category), exist_ok=True)
             logger.warning(f"Command directory structure created at {self.cmd_dir}")
+            print(f"Command directory structure created at {self.cmd_dir}")
             return
         
         # Load commands from each category directory
@@ -42,8 +43,16 @@ class CommandLoader:
             # Create category directory if it doesn't exist
             if not os.path.exists(category_dir):
                 os.makedirs(category_dir, exist_ok=True)
+                print(f"Created missing category directory: {category_dir}")
                 continue
             
+            # Print the contents of the category directory for debugging
+            print(f"Checking {category_dir} for commands...")
+            if os.path.exists(category_dir):
+                print(f"Files in {category_dir}: {os.listdir(category_dir)}")
+            else:
+                print(f"Directory does not exist: {category_dir}")
+                
             # Load Python modules from this directory
             for filename in os.listdir(category_dir):
                 if filename.endswith('.py') and not filename.startswith('__'):
@@ -67,15 +76,18 @@ class CommandLoader:
                                 'module': module,
                                 'description': description
                             }
-                            logger.debug(f"Loaded command module: {category}/{module_name}")
+                            print(f"Loaded command module: {category}/{module_name}")
                         else:
-                            logger.warning(f"Module {module_name} missing required 'execute' function")
+                            print(f"Module {module_name} missing required 'execute' function")
                     except Exception as e:
-                        logger.error(f"Error loading module {module_name}: {e}")
+                        print(f"Error loading module {module_name}: {e}")
+                        import traceback
+                        traceback.print_exc()
         
         # Log summary of loaded commands
         total_commands = sum(len(cmds) for cmds in self.commands.values())
         logger.info(f"Loaded {total_commands} command modules from {len(self.commands)} categories")
+        print(f"Loaded {total_commands} command modules from {len(self.commands)} categories")
     
     def get_categories(self):
         """Get a list of all command categories"""
