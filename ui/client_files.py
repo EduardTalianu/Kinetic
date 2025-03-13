@@ -423,6 +423,7 @@ class ClientFilesUI:
         file_size_str = self.format_file_size(file_size)
         
         # Create command to upload the file using our custom function
+        # Ensure we're using the correct parameter name (DestinationPath) to match the agent's function
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         command_args = f"Upload-File -SourcePath '{local_file_path}' -DestinationPath '{destination_path}'"
         

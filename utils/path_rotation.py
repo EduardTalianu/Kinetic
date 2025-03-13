@@ -58,6 +58,9 @@ class PathRotationManager:
         self.url_patterns = self._load_url_patterns()
         self.url_components = self._load_url_components()
         
+        # Generate a pool of additional paths for modular operations
+        self.current_paths["path_pool"] = self.generate_path_pool(self.rotation_counter, pool_size=10)
+        
         self.logger(f"Path rotation manager initialized with interval {rotation_interval} seconds")
         self.logger(f"Initial paths: {self.current_paths}")
     
@@ -150,6 +153,11 @@ class PathRotationManager:
                         self.current_paths[key] = path
                         self.logger(f"Added missing path {key}: {path} after loading state")
                 
+                # Make sure we have a path_pool
+                if "path_pool" not in self.current_paths or not self.current_paths["path_pool"]:
+                    self.current_paths["path_pool"] = self.generate_path_pool(self.rotation_counter, pool_size=10)
+                    self.logger(f"Generated new path pool after loading state")
+                
                 self.logger(f"Path rotation state loaded from {self.state_file}")
                 self.logger(f"Current paths after loading: {self.current_paths}")
                 return True
@@ -158,77 +166,67 @@ class PathRotationManager:
                 return False
         return False
     
-    def _generate_path(self, seed, path_type, min_length=4, max_length=12):
+    def generate_path_pool(self, seed, pool_size=10):
         """
-        Generate a deterministic but unpredictable path based on seed and path type
+        Generate a pool of random paths for use with modular operations
         
         Args:
-            seed: Seed value (e.g. rotation counter)
-            path_type: Type of path (e.g. 'beacon', 'agent')
-            min_length: Minimum length of the random part of the path
-            max_length: Maximum length of the random part of the path
-            
+            seed: Seed value for deterministic generation
+            pool_size: Number of paths to generate
+        
         Returns:
-            Generated path string with leading slash
+            List of path strings
         """
-        # Create a deterministic seed by combining the rotation counter and path type
-        combined_seed = f"{seed}_{path_type}"
+        paths = []
         
-        # Use SHA-256 hash to get a deterministic but unpredictable value
-        hash_obj = hashlib.sha256(combined_seed.encode())
-        hash_hex = hash_obj.hexdigest()
-        
-        # Use the hash to seed the random generator for this specific path
-        random.seed(int(hash_hex, 16) % (2**32))
-        
-        # Select a pattern category based on hash (deterministic)
-        pattern_selector = int(hash_hex[0:2], 16) % len(self.url_patterns)
-        selected_pattern_type = self.url_patterns[pattern_selector]
-        
-        # Select a component based on hash (deterministic)
-        component_selector = int(hash_hex[2:4], 16) % len(self.url_components)
-        selected_component = self.url_components[component_selector]
-        
-        # Generate the random part of the path deterministically with variable length
-        length_seed = int(hash_hex[4:8], 16)
-        random_part = self._random_string(min_length, max_length, seed=length_seed)
-        
-        # For custom pattern, use a different structure
-        if selected_pattern_type == "custom":
-            if path_type == "beacon_path":
-                path = f"/custom/{random_part}/beacon"
-            elif path_type == "agent_path":
-                path = f"/custom/{random_part}/agent.js"
-            elif path_type == "stager_path":
-                path = f"/custom/{random_part}/loader.js"
-            elif path_type == "cmd_result_path":
-                path = f"/custom/{random_part}/results"
-            elif path_type == "file_upload_path":
-                path = f"/custom/{random_part}/upload"
-            elif path_type == "file_request_path":
-                path = f"/custom/{random_part}/request"
-            else:
-                path = f"/custom/{random_part}/{path_type.replace('_path', '')}"
-        else:
-            # Base path using the selected pattern
-            base_path = f"/{selected_pattern_type.lower()}"
+        # Generate paths with diverse patterns
+        for i in range(pool_size):
+            # Create a deterministic seed for each path
+            path_seed = f"{seed}_path_{i}"
+            hash_obj = hashlib.sha256(path_seed.encode())
+            hash_hex = hash_obj.hexdigest()
             
-            # Create paths based on path type
-            if path_type == "beacon_path":
-                path = f"{base_path}/{selected_component}/{random_part}"
-            elif path_type == "agent_path" or path_type == "stager_path":
-                path = f"{base_path}/{selected_component}/{random_part}.js"
-            elif path_type == "file_upload_path":
-                path = f"{base_path}/{selected_component}/{random_part}"
-            elif path_type == "file_request_path":
-                path = f"{base_path}/{selected_component}/{random_part}"
+            # Use the hash to determine path characteristics
+            pattern_index = int(hash_hex[0:2], 16) % len(self.url_patterns)
+            pattern = self.url_patterns[pattern_index]
+            
+            component_index = int(hash_hex[2:4], 16) % len(self.url_components)
+            component = self.url_components[component_index]
+            
+            # Determine if we'll use an extension
+            use_extension = (int(hash_hex[4:6], 16) % 5) < 2  # 40% chance
+            
+            # Generate random path parts
+            random_part1 = self._random_string(4, 10, seed=int(hash_hex[6:10], 16))
+            random_part2 = self._random_string(4, 8, seed=int(hash_hex[10:14], 16))
+            
+            # Determine extension if needed
+            extension = ""
+            if use_extension:
+                extensions = [".php", ".js", ".html", ".aspx", ".json", ".txt", ".xml", ".css"]
+                ext_index = int(hash_hex[14:16], 16) % len(extensions)
+                extension = extensions[ext_index]
+            
+            # Create the path based on pattern
+            if pattern == "custom":
+                if use_extension:
+                    path = f"/custom/{random_part1}/{random_part2}{extension}"
+                else:
+                    path = f"/custom/{random_part1}/{random_part2}"
             else:
-                path = f"{base_path}/{selected_component}/{random_part}"
+                if use_extension:
+                    path = f"/{pattern.lower()}/{component}/{random_part1}{extension}"
+                else:
+                    # Use deeper path structure occasionally
+                    if i % 3 == 0:  # Every third path gets a deeper structure
+                        path = f"/{pattern.lower()}/{component}/{random_part1}/{random_part2}"
+                    else:
+                        path = f"/{pattern.lower()}/{component}/{random_part1}"
+            
+            # Add path to pool
+            paths.append(path)
         
-        # Restore the global random state to avoid affecting other code
-        random.setstate(random.getstate())
-        
-        return path
+        return paths
         
     def _random_string(self, min_length=4, max_length=12, include_numbers=True, seed=None):
         """Generate a random string of variable length, optionally with a specific seed"""
@@ -255,7 +253,6 @@ class PathRotationManager:
             random.setstate(old_state)
             
         return result
-
     
     def check_rotation(self):
         """
@@ -278,7 +275,7 @@ class PathRotationManager:
         
         Args:
             force: Force rotation even if interval hasn't elapsed
-            
+        
         Returns:
             True if rotation occurred, False otherwise
         """
@@ -292,10 +289,14 @@ class PathRotationManager:
         self.rotation_counter += 1
         self.last_rotation_time = current_time
         
-        # Generate new paths for each type
+        # Generate standard paths for each type
         new_paths = {}
         for path_type in self.default_paths:
             new_paths[path_type] = self._generate_path(self.rotation_counter, path_type)
+        
+        # Generate a pool of additional paths for modular use (10 paths)
+        path_pool = self.generate_path_pool(self.rotation_counter, pool_size=10)
+        new_paths["path_pool"] = path_pool
         
         # Update current paths
         self.current_paths = new_paths
@@ -317,9 +318,51 @@ class PathRotationManager:
         # Log the rotation
         next_rotation = datetime.fromtimestamp(self.last_rotation_time + self.rotation_interval)
         self.logger(f"Path rotation {self.rotation_counter} completed. Next rotation at {next_rotation}")
-        self.logger(f"New paths: {self.current_paths}")
+        self.logger(f"Path pool generated with {len(path_pool)} paths for modular operations")
         
         return True
+    
+    def _generate_path(self, rotation_id, path_type):
+        """
+        Generate a path for a specific type
+        
+        Args:
+            rotation_id: The rotation ID for seed
+            path_type: The type of path to generate
+        
+        Returns:
+            A path string
+        """
+        # Create a deterministic seed based on rotation ID and path type
+        seed_str = f"{rotation_id}_{path_type}"
+        seed = int.from_bytes(hashlib.md5(seed_str.encode()).digest()[:4], byteorder='little')
+        random.seed(seed)
+        
+        # Get a random pattern and component
+        pattern = random.choice(self.url_patterns)
+        component = random.choice(self.url_components)
+        
+        # Generate random parts
+        random_part1 = self._random_string(4, 10)
+        
+        # Restore random state
+        random.seed()
+        
+        # Generate path based on path type
+        if path_type == "beacon_path":
+            path = f"/{pattern.lower()}/{component}/{random_part1}"
+        elif path_type == "agent_path":
+            path = f"/{pattern.lower()}/{component}/{random_part1}.js"
+        elif path_type == "stager_path":
+            path = f"/{pattern.lower()}/{component}/{random_part1}.js"
+        elif path_type.endswith("_path"):
+            # Other paths use a simplified format
+            path = f"/{pattern.lower()}/{component}/{random_part1}"
+        else:
+            # Default path format
+            path = f"/{pattern.lower()}/{component}/{random_part1}"
+        
+        return path
     
     def get_current_paths(self):
         """Get the current paths"""
@@ -354,6 +397,9 @@ class PathRotationManager:
             paths = {}
             for path_type in self.default_paths:
                 paths[path_type] = self._generate_path(rotation_id, path_type)
+            
+            # Generate path pool
+            paths["path_pool"] = self.generate_path_pool(rotation_id, pool_size=10)
             return paths
         
         return None
