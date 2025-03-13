@@ -37,9 +37,6 @@ class FileHandler(BaseHandler):
                         self.send_error_response(401, "Authentication failed")
                         return
                     
-                    # Get destination path if provided
-                    destination_path = payload.get("DestinationPath", "")
-                    
                     # Save the file
                     file_path = self._save_structured_file_from_client(
                         self.get_client_downloads_folder(client_id), 
@@ -212,6 +209,9 @@ class FileHandler(BaseHandler):
         
         # Files from client to server go in the downloads folder
         downloads_folder = self.get_client_downloads_folder(client_id_for_path)
+        
+        # Log the folder we're saving to
+        self.log_message(f"Saving file from client to downloads folder: {downloads_folder}")
         
         # Try to parse as JSON for structured file upload
         try:

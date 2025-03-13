@@ -422,6 +422,17 @@ class ClientFilesUI:
         file_size = os.path.getsize(local_file_path)
         file_size_str = self.format_file_size(file_size)
         
+        # If destination is just a directory (ends with slash), append the filename
+        if destination_path.endswith("\\") or destination_path.endswith("/"):
+            filename = os.path.basename(local_file_path)
+            # Use combination to ensure proper path joining
+            if destination_path.endswith("\\"):
+                destination_path = destination_path + filename
+            else:
+                destination_path = destination_path + "\\" + filename
+            
+            self.logger(f"Appending filename to destination path: {destination_path}")
+        
         # Create command to upload the file using our custom function
         # Ensure we're using the correct parameter name (DestinationPath) to match the agent's function
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

