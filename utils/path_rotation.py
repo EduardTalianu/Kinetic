@@ -6,19 +6,17 @@ import json
 import os
 from datetime import datetime, timedelta
 
-
-
 class PathRotationManager:
-    def __init__(self, campaign_folder, logger, initial_paths=None, rotation_interval=3600, pool_size=10):
+    def __init__(self, campaign_folder, logger, initial_paths=None, rotation_interval=3600, pool_size=30):
         """
         Initialize the path rotation manager
         
         Args:
             campaign_folder: Path to the campaign folder
             logger: Logger function to log events
-            initial_paths: Initial URL paths (optional)
+            initial_paths: Initial URL paths (optional) - will be ignored in pool-only mode
             rotation_interval: Time in seconds between path rotations (default: 1 hour)
-            pool_size: Number of paths to generate in the path pool (default: 10)
+            pool_size: Number of paths to generate in the path pool (default: 30)
         """
         self.campaign_folder = campaign_folder
         self.logger = logger
@@ -28,45 +26,21 @@ class PathRotationManager:
         self.path_history = []
         self.pool_size = pool_size  # Store the path pool size
         
-        # Default paths as fallback
-        self.default_paths = {
-            "beacon_path": "/beacon",
-            "agent_path": "/raw_agent",
-            "stager_path": "/b64_stager",
-            "cmd_result_path": "/command_result",
-            "file_upload_path": "/file_upload",
-            "file_request_path": "/file_request"  # Make sure this is included
-        }
-        
-        # Set current paths to initial_paths or defaults
-        self.current_paths = initial_paths.copy() if initial_paths else self.default_paths.copy()
-        
-        # Ensure all required paths are present
-        for key, path in self.default_paths.items():
-            if key not in self.current_paths:
-                self.current_paths[key] = path
-                self.logger(f"Added missing path {key}: {path}")
-        
-        # Save initial paths to history
-        self.path_history.append({
-            "timestamp": self.last_rotation_time,
-            "rotation_id": self.rotation_counter,
-            "paths": self.current_paths.copy()
-        })
-        
         # Create the state file if it doesn't exist
         self.state_file = os.path.join(self.campaign_folder, "path_rotation_state.json")
-        self._save_state()
         
         # Load URL patterns and components
         self.url_patterns = self._load_url_patterns()
         self.url_components = self._load_url_components()
         
-        # Generate a pool of additional paths for modular operations
-        self.current_paths["path_pool"] = self.generate_path_pool(self.rotation_counter, pool_size=self.pool_size)
+        # Generate path pool - this is now our only path storage mechanism
+        self.current_paths = {"path_pool": self.generate_path_pool(self.rotation_counter, pool_size=self.pool_size)}
         
-        self.logger(f"Path rotation manager initialized with interval {rotation_interval} seconds and pool size {pool_size}")
-        self.logger(f"Initial paths: {self.current_paths}")
+        # Save initial state
+        self._save_state()
+        
+        self.logger(f"Pool-only path rotation manager initialized with interval {rotation_interval} seconds and pool size {pool_size}")
+        self.logger(f"Generated {len(self.current_paths['path_pool'])} paths in pool")
     
     def _load_url_patterns(self):
         """Load URL patterns from links.txt file in helpers/links folder"""
@@ -130,7 +104,7 @@ class PathRotationManager:
             "current_paths": self.current_paths,
             "path_history": self.path_history,
             "rotation_interval": self.rotation_interval,
-            "pool_size": self.pool_size  # Save pool size in state
+            "pool_size": self.pool_size
         }
         
         try:
@@ -151,13 +125,7 @@ class PathRotationManager:
                 self.current_paths = state.get("current_paths", self.current_paths)
                 self.path_history = state.get("path_history", self.path_history)
                 self.rotation_interval = state.get("rotation_interval", self.rotation_interval)
-                self.pool_size = state.get("pool_size", self.pool_size)  # Load pool size from state
-                
-                # Ensure all required paths are present after loading
-                for key, path in self.default_paths.items():
-                    if key not in self.current_paths:
-                        self.current_paths[key] = path
-                        self.logger(f"Added missing path {key}: {path} after loading state")
+                self.pool_size = state.get("pool_size", self.pool_size)
                 
                 # Make sure we have a path_pool
                 if "path_pool" not in self.current_paths or not self.current_paths["path_pool"]:
@@ -165,7 +133,7 @@ class PathRotationManager:
                     self.logger(f"Generated new path pool after loading state")
                 
                 self.logger(f"Path rotation state loaded from {self.state_file}")
-                self.logger(f"Current paths after loading: {self.current_paths}")
+                self.logger(f"Current path pool has {len(self.current_paths['path_pool'])} paths")
                 return True
             except Exception as e:
                 self.logger(f"Error loading path rotation state: {e}")
@@ -300,17 +268,11 @@ class PathRotationManager:
         self.rotation_counter += 1
         self.last_rotation_time = current_time
         
-        # Generate standard paths for each type
-        new_paths = {}
-        for path_type in self.default_paths:
-            new_paths[path_type] = self._generate_path(self.rotation_counter, path_type)
-        
-        # Generate a pool of additional paths for modular use with configured pool size
+        # Generate a pool of paths - this is all we need now
         path_pool = self.generate_path_pool(self.rotation_counter, pool_size=self.pool_size)
-        new_paths["path_pool"] = path_pool
         
         # Update current paths
-        self.current_paths = new_paths
+        self.current_paths = {"path_pool": path_pool}
         
         # Add to history (keep last 10 rotations)
         self.path_history.append({
@@ -327,62 +289,16 @@ class PathRotationManager:
         self._save_state()
         
         # Log the rotation
-        next_rotation = datetime.datetime.fromtimestamp(self.last_rotation_time + self.rotation_interval)
+        next_rotation = datetime.fromtimestamp(self.last_rotation_time + self.rotation_interval)
         self.logger(f"Path rotation {self.rotation_counter} completed. Next rotation at {next_rotation}")
-        self.logger(f"Path pool generated with {len(path_pool)} paths for modular operations")
+        self.logger(f"Path pool generated with {len(path_pool)} paths")
         
         return True
     
-    def _generate_path(self, rotation_id, path_type):
-        """
-        Generate a path for a specific type
-        
-        Args:
-            rotation_id: The rotation ID for seed
-            path_type: The type of path to generate
-        
-        Returns:
-            A path string
-        """
-        # Create a deterministic seed based on rotation ID and path type
-        seed_str = f"{rotation_id}_{path_type}"
-        seed = int.from_bytes(hashlib.md5(seed_str.encode()).digest()[:4], byteorder='little')
-        random.seed(seed)
-        
-        # Get a random pattern and component
-        pattern = random.choice(self.url_patterns)
-        component = random.choice(self.url_components)
-        
-        # Generate random parts
-        random_part1 = self._random_string(4, 10)
-        
-        # Restore random state
-        random.seed()
-        
-        # Generate path based on path type
-        if path_type == "beacon_path":
-            path = f"/{pattern.lower()}/{component}/{random_part1}"
-        elif path_type == "agent_path":
-            path = f"/{pattern.lower()}/{component}/{random_part1}.js"
-        elif path_type == "stager_path":
-            path = f"/{pattern.lower()}/{component}/{random_part1}.js"
-        elif path_type.endswith("_path"):
-            # Other paths use a simplified format
-            path = f"/{pattern.lower()}/{component}/{random_part1}"
-        else:
-            # Default path format
-            path = f"/{pattern.lower()}/{component}/{random_part1}"
-        
-        return path
-    
     def get_current_paths(self):
         """Get the current paths"""
-        # Make sure all required paths are present
-        for key, path in self.default_paths.items():
-            if key not in self.current_paths:
-                self.current_paths[key] = path
-                self.logger(f"Added missing path {key}: {path} to current paths")
-        return self.current_paths.copy()
+        # Just return the current paths - we only have the path_pool now
+        return self.current_paths
     
     def get_path_by_rotation_id(self, rotation_id):
         """
@@ -396,21 +312,12 @@ class PathRotationManager:
         """
         for entry in self.path_history:
             if entry["rotation_id"] == rotation_id:
-                # Ensure all required paths are included
-                paths = entry["paths"].copy()
-                for key, path in self.default_paths.items():
-                    if key not in paths:
-                        paths[key] = path
-                return paths
+                return entry["paths"]
         
         # If not found in history, generate it deterministically
         if rotation_id > 0:
-            paths = {}
-            for path_type in self.default_paths:
-                paths[path_type] = self._generate_path(rotation_id, path_type)
-            
             # Generate path pool with current pool size
-            paths["path_pool"] = self.generate_path_pool(rotation_id, pool_size=self.pool_size)
+            paths = {"path_pool": self.generate_path_pool(rotation_id, pool_size=self.pool_size)}
             return paths
         
         return None
@@ -432,5 +339,5 @@ class PathRotationManager:
             "time_until_next_rotation": time_until_next,
             "current_paths": self.current_paths,
             "rotation_interval": self.rotation_interval,
-            "pool_size": self.pool_size  # Include pool size in rotation info
+            "pool_size": self.pool_size
         }

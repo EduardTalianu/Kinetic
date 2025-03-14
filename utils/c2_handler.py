@@ -135,9 +135,9 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         if hasattr(server, 'url_paths') and server.url_paths:
             initial_paths.update(server.url_paths)
             
-        # Make sure all paths start with '/'
+        # Make sure all paths start with '/' - but only for string paths, not lists
         for key, path in initial_paths.items():
-            if not path.startswith('/'):
+            if isinstance(path, str) and not path.startswith('/'):
                 initial_paths[key] = '/' + path
                 
         # Use existing path manager if available

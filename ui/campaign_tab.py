@@ -86,7 +86,7 @@ class CampaignConfigTab:
         self.url_pattern_var = tk.StringVar()
         self.path_rotation_var = tk.BooleanVar(value=True)
         self.rotation_interval_var = tk.StringVar(value="3600")
-        self.path_pool_size_var = tk.StringVar(value="10")  # Default pool size
+        self.path_pool_size_var = tk.StringVar(value="30")  # Default pool size increased to 30
         
         # Campaign Name
         ttk.Label(self.frame, text="Campaign Name:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
@@ -120,36 +120,19 @@ class CampaignConfigTab:
         self.entry_port = ttk.Entry(self.frame, width=30)
         self.entry_port.grid(row=2, column=1, padx=5, pady=5)
 
-        # URL Randomization Section - Keep checkbox but remove display of paths
-        url_frame = ttk.LabelFrame(self.frame, text="URL Path Customization")
+        # URL Randomization Section - Only retain URL pattern for path generation
+        url_frame = ttk.LabelFrame(self.frame, text="URL Pattern Generation")
         url_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
 
-        # Checkbox for URL Randomization
-        self.url_random_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(url_frame, text="Randomize URLs to evade detection", 
-                      variable=self.url_random_var).grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=2)
-
         # URL pattern selection
-        ttk.Label(url_frame, text="URL Pattern:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(url_frame, text="URL Pattern:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
         url_patterns = self.load_url_patterns_from_file()
         self.url_pattern_var = tk.StringVar(value=url_patterns[0] if url_patterns else "web_app")
         self.url_pattern_combo = ttk.Combobox(url_frame, textvariable=self.url_pattern_var, width=27, 
                                     values=url_patterns)
-        self.url_pattern_combo.grid(row=1, column=1, padx=5, pady=5)
-        self.url_pattern_combo.bind("<<ComboboxSelected>>", self.on_pattern_selected)
+        self.url_pattern_combo.grid(row=0, column=1, padx=5, pady=5)
 
-        # Create hidden entries for URL paths
-        self.entry_beacon_path = ttk.Entry(self.frame)
-        self.entry_agent_path = ttk.Entry(self.frame)
-        self.entry_stager_path = ttk.Entry(self.frame)
-        self.entry_cmd_result_path = ttk.Entry(self.frame)
-        self.entry_file_upload_path = ttk.Entry(self.frame)
-
-        # Generate random button
-        ttk.Button(url_frame, text="Generate Random URLs", 
-                command=self.generate_random_urls).grid(row=2, column=0, columnspan=2, pady=5)
-
-        # Path Rotation Section - Keep checkbox and interval but remove text area
+        # Path Rotation Section
         rotation_frame = ttk.LabelFrame(self.frame, text="Dynamic Path Rotation")
         rotation_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
         
@@ -171,7 +154,7 @@ class CampaignConfigTab:
             
         # Add path pool size configuration
         ttk.Label(rotation_frame, text="Path Pool Size:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
-        pool_size_values = ["5", "10", "15", "20", "30", "50"]
+        pool_size_values = ["10", "20", "30", "50", "100"]
         self.path_pool_size_combo = ttk.Combobox(rotation_frame, textvariable=self.path_pool_size_var,
                                                values=pool_size_values, width=27)
         self.path_pool_size_combo.grid(row=3, column=1, padx=5, pady=5)
@@ -205,8 +188,8 @@ class CampaignConfigTab:
         self.btn_stop_campaign = ttk.Button(self.frame, text="Stop Campaign", command=self.stop_campaign, state=tk.DISABLED)
         self.btn_stop_campaign.grid(row=9, column=0, columnspan=3, pady=10)
         
-        # Generate random URLs in the background
-        self.generate_random_urls()
+        # Create hidden storage for path pool
+        self.path_pool = []
     
     def generate_random_name(self):
         """Generate a random campaign name"""
@@ -245,12 +228,6 @@ class CampaignConfigTab:
         # Load configuration from config.txt
         try:
             self.load_campaign_config(config_path, campaign_name)
-            
-            # Also look for url_paths.json to load custom URL paths
-            url_paths_file = os.path.join(campaign_folder, "url_paths.json")
-            if os.path.exists(url_paths_file):
-                self.load_url_paths(url_paths_file)
-                
             messagebox.showinfo("Campaign Loaded", 
                             f"Campaign '{campaign_name}' loaded successfully.\n"
                             "You can now start the campaign to resume operations.")
@@ -316,12 +293,7 @@ class CampaignConfigTab:
                 if "Key Path" in config:
                     self.entry_key.insert(0, config["Key Path"])
         
-        # Set URL randomization
-        if "Custom URLs" in config:
-            use_custom_urls = config["Custom URLs"].lower() == "true"
-            self.url_random_var.set(use_custom_urls)
-        
-        # Set pattern based on loaded paths
+        # Set URL pattern based on loaded paths
         if "URL Pattern" in config:
             pattern = config.get("URL Pattern", "web_app")
             url_patterns = self.load_url_patterns_from_file()
@@ -356,166 +328,25 @@ class CampaignConfigTab:
             pool_size = config["Path Pool Size"]
             self.path_pool_size_var.set(pool_size)
             self.path_pool_size_combo.set(pool_size)
-    
-    def load_url_paths(self, url_paths_file):
-        """Load URL paths from the url_paths.json file"""
-        try:
-            with open(url_paths_file, 'r') as f:
-                url_paths = json.load(f)
             
-            # Set each path in the corresponding hidden entry
-            if "beacon_path" in url_paths:
-                self.entry_beacon_path.delete(0, tk.END)
-                self.entry_beacon_path.insert(0, url_paths["beacon_path"])
-                
-            if "agent_path" in url_paths:
-                self.entry_agent_path.delete(0, tk.END)
-                self.entry_agent_path.insert(0, url_paths["agent_path"])
-                
-            if "stager_path" in url_paths:
-                self.entry_stager_path.delete(0, tk.END)
-                self.entry_stager_path.insert(0, url_paths["stager_path"])
-                
-            if "cmd_result_path" in url_paths:
-                self.entry_cmd_result_path.delete(0, tk.END)
-                self.entry_cmd_result_path.insert(0, url_paths["cmd_result_path"])
-                
-            if "file_upload_path" in url_paths:
-                self.entry_file_upload_path.delete(0, tk.END)
-                self.entry_file_upload_path.insert(0, url_paths["file_upload_path"])
+        # Load path rotation state if available
+        try:
+            campaign_folder = f"{campaign_name}_campaign"
+            path_state_file = os.path.join(campaign_folder, "path_rotation_state.json")
+            if os.path.exists(path_state_file):
+                with open(path_state_file, 'r') as f:
+                    path_state = json.load(f)
+                    if 'current_paths' in path_state and 'path_pool' in path_state['current_paths']:
+                        self.path_pool = path_state['current_paths']['path_pool']
+                        self.logger(f"Loaded path pool with {len(self.path_pool)} paths")
         except Exception as e:
-            self.logger(f"Error loading URL paths: {e}")
-
-    def on_pattern_selected(self, event):
-        """Handle pattern selection change event and generate new URLs"""
-        self.generate_random_urls()
-
+            self.logger(f"Could not load path rotation state: {e}")
+    
     def toggle_path_rotation(self):
         """Toggle path rotation options based on checkbox"""
         state = 'normal' if self.path_rotation_var.get() else 'disabled'
         self.rotation_interval_combo.config(state=state)
         self.path_pool_size_combo.config(state=state)
-
-    def generate_random_urls(self):
-        """Generate random, legitimate-looking URLs based on the selected pattern"""
-        pattern = self.url_pattern_var.get()
-        
-        # Helper function to generate random strings of variable length
-        def random_string(min_length=4, max_length=12, include_numbers=True):
-            length = random.randint(min_length, max_length)
-            chars = string.ascii_lowercase
-            if include_numbers:
-                chars += string.digits
-            return ''.join(random.choice(chars) for _ in range(length))
-        
-        # Handle custom pattern separately
-        if pattern == "custom":
-            # If custom is selected, don't change existing values unless they're empty
-            if not self.entry_beacon_path.get():
-                self.entry_beacon_path.delete(0, tk.END)
-                self.entry_beacon_path.insert(0, f"/custom/{random_string()}/beacon")
-            if not self.entry_agent_path.get():
-                self.entry_agent_path.delete(0, tk.END)
-                self.entry_agent_path.insert(0, f"/custom/{random_string()}/agent.js")
-            if not self.entry_stager_path.get():
-                self.entry_stager_path.delete(0, tk.END)
-                self.entry_stager_path.insert(0, f"/custom/{random_string()}/loader.js")
-            if not self.entry_cmd_result_path.get():
-                self.entry_cmd_result_path.delete(0, tk.END)
-                self.entry_cmd_result_path.insert(0, f"/custom/{random_string()}/results")
-            if not self.entry_file_upload_path.get():
-                self.entry_file_upload_path.delete(0, tk.END)
-                self.entry_file_upload_path.insert(0, f"/custom/{random_string()}/upload")
-            if not hasattr(self, 'entry_file_request_path'):
-                # Create the field if it doesn't exist
-                self.entry_file_request_path = ttk.Entry(self.frame)
-            if not self.entry_file_request_path.get():
-                self.entry_file_request_path.delete(0, tk.END)
-                self.entry_file_request_path.insert(0, f"/custom/{random_string()}/request")
-            return
-        
-        # Load URL components if we haven't already
-        if not hasattr(self, 'url_components'):
-            self.url_components = self.load_url_components_from_file()
-        
-        # Generate random paths for each endpoint using the selected pattern and random components
-        base_path = f"/{pattern.lower()}"
-        
-        # Beacon path - select a random component
-        comp1 = random.choice(self.url_components)
-        self.entry_beacon_path.delete(0, tk.END)
-        self.entry_beacon_path.insert(0, f"{base_path}/{comp1}/{random_string()}")
-        
-        # Agent path - select a random component
-        comp2 = random.choice(self.url_components)
-        self.entry_agent_path.delete(0, tk.END)
-        self.entry_agent_path.insert(0, f"{base_path}/{comp2}/{random_string()}.js")
-        
-        # Stager path - select a random component
-        comp3 = random.choice(self.url_components)
-        self.entry_stager_path.delete(0, tk.END)
-        self.entry_stager_path.insert(0, f"{base_path}/{comp3}/{random_string()}.js")
-        
-        # Command result path - select a random component
-        comp4 = random.choice(self.url_components)
-        self.entry_cmd_result_path.delete(0, tk.END)
-        self.entry_cmd_result_path.insert(0, f"{base_path}/{comp4}/{random_string()}")
-        
-        # File upload path - select a random component
-        comp5 = random.choice(self.url_components)
-        self.entry_file_upload_path.delete(0, tk.END)
-        self.entry_file_upload_path.insert(0, f"{base_path}/{comp5}/{random_string()}")
-        
-        # File request path - select a random component 
-        comp6 = random.choice(self.url_components)
-        if not hasattr(self, 'entry_file_request_path'):
-            # Create the field if it doesn't exist
-            self.entry_file_request_path = ttk.Entry(self.frame)
-        self.entry_file_request_path.delete(0, tk.END)
-        self.entry_file_request_path.insert(0, f"{base_path}/{comp6}/{random_string()}")
-        
-        # Update the preview
-        self.update_url_preview()
-
-    def update_url_preview(self, event=None):
-        """This function is kept for compatibility but doesn't update a preview anymore"""
-        # Get path values and ensure they start with /
-        beacon_path = self.entry_beacon_path.get()
-        if not beacon_path.startswith('/'):
-            self.entry_beacon_path.delete(0, tk.END)
-            self.entry_beacon_path.insert(0, '/' + beacon_path)
-                
-        agent_path = self.entry_agent_path.get()
-        if not agent_path.startswith('/'):
-            self.entry_agent_path.delete(0, tk.END) 
-            self.entry_agent_path.insert(0, '/' + agent_path)
-                
-        stager_path = self.entry_stager_path.get()
-        if not stager_path.startswith('/'):
-            self.entry_stager_path.delete(0, tk.END)
-            self.entry_stager_path.insert(0, '/' + stager_path)
-                
-        cmd_result_path = self.entry_cmd_result_path.get()
-        if not cmd_result_path.startswith('/'):
-            self.entry_cmd_result_path.delete(0, tk.END)
-            self.entry_cmd_result_path.insert(0, '/' + cmd_result_path)
-            
-        file_upload_path = self.entry_file_upload_path.get()
-        if not file_upload_path.startswith('/'):
-            self.entry_file_upload_path.delete(0, tk.END)
-            self.entry_file_upload_path.insert(0, '/' + file_upload_path)
-
-    def toggle_url_entries(self):
-        """Toggle URL entry fields based on randomization checkbox"""
-        state = 'normal' if self.url_random_var.get() else 'disabled'
-        self.url_pattern_combo.config(state=state)
-        self.entry_beacon_path.config(state=state)
-        self.entry_agent_path.config(state=state)
-        self.entry_stager_path.config(state=state)
-        self.entry_cmd_result_path.config(state=state)
-        self.entry_file_upload_path.config(state=state)
-        if hasattr(self, 'entry_file_request_path'):
-            self.entry_file_request_path.config(state=state)
 
     def check_ip_entry(self, event):
         """Checks if the entered IP is valid or should be added to the dropdown."""
@@ -552,9 +383,6 @@ class CampaignConfigTab:
         self.entry_key.config(state=state)
         self.btn_browse_cert.config(state=state)
         self.btn_browse_key.config(state=state)
-        
-        # Update URL preview with new protocol
-        self.update_url_preview()
 
     def browse_cert(self):
         filepath = filedialog.askopenfilename(title="Select Certificate File")
@@ -567,7 +395,7 @@ class CampaignConfigTab:
         if filepath:
             self.entry_key.delete(0, tk.END)
             self.entry_key.insert(0, filepath)
-
+            
     def start_campaign(self):
         campaign_name = self.entry_campaign.get().strip()
         ip = self.ip_var.get().strip()
@@ -576,39 +404,8 @@ class CampaignConfigTab:
         cert_path = self.entry_cert.get().strip() if use_ssl else ""
         key_path = self.entry_key.get().strip() if use_ssl else ""
         
-        # Get custom URL paths
-        use_custom_urls = self.url_random_var.get()
-        
-        if use_custom_urls:
-            # If using custom URLs, get them from the UI entries
-            url_paths = {
-                "beacon_path": self.entry_beacon_path.get().strip(),
-                "agent_path": self.entry_agent_path.get().strip(),
-                "stager_path": self.entry_stager_path.get().strip(),
-                "cmd_result_path": self.entry_cmd_result_path.get().strip(),
-                "file_upload_path": self.entry_file_upload_path.get().strip(),
-            }
-            
-            # Add file_request_path if it exists
-            if hasattr(self, 'entry_file_request_path'):
-                url_paths["file_request_path"] = self.entry_file_request_path.get().strip()
-            else:
-                url_paths["file_request_path"] = "/file_request"  # Default value
-        else:
-            # Using default paths
-            url_paths = {
-                "beacon_path": "/beacon",
-                "agent_path": "/raw_agent",
-                "stager_path": "/b64_stager",
-                "cmd_result_path": "/command_result",
-                "file_upload_path": "/file_upload",
-                "file_request_path": "/file_request"
-            }
-
-        # Ensure all paths have leading slash
-        for key, path in url_paths.items():
-            if not path.startswith('/'):
-                url_paths[key] = '/' + path
+        # Get URL pattern for path generation
+        url_pattern = self.url_pattern_var.get()
         
         # Get path rotation settings
         path_rotation = self.path_rotation_var.get()
@@ -685,13 +482,27 @@ class CampaignConfigTab:
             messagebox.showerror("Error", f"Failed to create campaign directory: {e}")
             return
 
-        # Save URL paths configuration
-        url_paths_file = os.path.join(campaign_dir, "url_paths.json")
+        # Save the campaign configuration
+        config_content = (
+            f"Campaign Name: {campaign_name}\n"
+            f"C&C IP: {ip}\n"
+            f"Port: {port}\n"
+            f"Beacon Period: {beacon_period} sec\n"
+            f"Kill Date: {kill_date_str}\n"
+            f"Use SSL: {use_ssl}\n"
+            f"Certificate Path: {cert_path}\n"
+            f"Key Path: {key_path}\n"
+            f"URL Pattern: {url_pattern}\n"
+            f"Path Rotation Enabled: {path_rotation}\n"
+            f"Rotation Interval: {rotation_interval} seconds\n"
+            f"Path Pool Size: {path_pool_size}\n"
+        )
+        config_path = os.path.join(campaign_dir, "config.txt")
         try:
-            with open(url_paths_file, "w") as f:
-                json.dump(url_paths, f, indent=4)
+            with open(config_path, "w") as f:
+                f.write(config_content)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to write URL paths file: {e}")
+            messagebox.showerror("Error", f"Failed to write config file: {e}")
             return
 
         # Save the agent configuration
@@ -704,35 +515,6 @@ class CampaignConfigTab:
                 agent_config_tab.save_configuration()
         except Exception as e:
             self.logger(f"Error saving agent configuration: {e}")
-
-        config_content = (
-            f"Campaign Name: {campaign_name}\n"
-            f"C&C IP: {ip}\n"
-            f"Port: {port}\n"
-            f"Beacon Period: {beacon_period} sec\n"
-            f"Kill Date: {kill_date_str}\n"
-            f"Use SSL: {use_ssl}\n"
-            f"Certificate Path: {cert_path}\n"
-            f"Key Path: {key_path}\n"
-            f"Custom URLs: {use_custom_urls}\n"
-            f"URL Pattern: {self.url_pattern_var.get()}\n"
-            f"Beacon Path: {url_paths['beacon_path']}\n"
-            f"Agent Path: {url_paths['agent_path']}\n"
-            f"Stager Path: {url_paths['stager_path']}\n"
-            f"Command Result Path: {url_paths['cmd_result_path']}\n"
-            f"File Upload Path: {url_paths['file_upload_path']}\n"
-            f"File Request Path: {url_paths['file_request_path']}\n"
-            f"Path Rotation Enabled: {path_rotation}\n"
-            f"Rotation Interval: {rotation_interval} seconds\n"
-            f"Path Pool Size: {path_pool_size}\n"
-        )
-        config_path = os.path.join(campaign_dir, "config.txt")
-        try:
-            with open(config_path, "w") as f:
-                f.write(config_content)
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to write config file: {e}")
-            return
 
         # Determine message based on whether this is a new or existing campaign
         if is_existing_campaign:
@@ -763,10 +545,10 @@ class CampaignConfigTab:
                 use_ssl=use_ssl,
                 cert_path=cert_path if use_ssl else None,
                 key_path=key_path if use_ssl else None,
-                url_paths=url_paths,
+                url_paths=None,  # We're not using dedicated paths anymore
                 path_rotation=path_rotation,
                 rotation_interval=rotation_interval,
-                path_pool_size=path_pool_size  # Pass the path pool size to the server
+                path_pool_size=path_pool_size
             )
             self.btn_start_campaign.config(state=tk.DISABLED)
             self.btn_stop_campaign.config(state=tk.NORMAL)

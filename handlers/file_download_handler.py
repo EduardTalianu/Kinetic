@@ -284,7 +284,8 @@ class FileDownloadHandler(BaseHandler):
                 filename = os.path.basename(file_path)
                 possible_locations.append(os.path.join(uploads_folder, client_id, filename))
                 possible_locations.append(os.path.join(campaign_folder, "agents", filename))
-                # Log the locations we're checking
+            
+            # Log the locations we're checking
             logger.debug(f"Looking for file {file_path} in these locations: {possible_locations}")
             
             # Try each location

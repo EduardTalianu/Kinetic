@@ -22,7 +22,7 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 httpd = None
 
 def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ssl=False, cert_path=None, key_path=None, 
-                   url_paths=None, path_rotation=True, rotation_interval=3600, path_pool_size=10):
+                   url_paths=None, path_rotation=True, rotation_interval=3600, path_pool_size=30):
     """
     Starts the web server in a separate thread.
     
@@ -35,10 +35,10 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         use_ssl: Whether to use SSL/TLS
         cert_path: Path to SSL certificate file (if use_ssl is True)
         key_path: Path to SSL key file (if use_ssl is True)
-        url_paths: Dictionary of URL paths
+        url_paths: Dictionary of URL paths (ignored in pool-only mode)
         path_rotation: Whether to enable path rotation
         rotation_interval: Interval for path rotation in seconds
-        path_pool_size: Size of the path pool for random selection
+        path_pool_size: Size of the path pool for random selection (increased default to 30)
     """
     global httpd
     try:
@@ -58,46 +58,17 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         # Create client verifier for this campaign
         client_verifier = ClientVerifier(campaign_folder)
         
-        # Load URL paths from file if not provided
-        if url_paths is None:
-            url_paths_file = os.path.join(campaign_folder, "url_paths.json")
-            if os.path.exists(url_paths_file):
-                try:
-                    with open(url_paths_file, 'r') as f:
-                        url_paths = json.load(f)
-                    logger(f"Loaded custom URL paths from {url_paths_file}")
-                except Exception as e:
-                    logger(f"Error loading URL paths: {e}")
-                    url_paths = {
-                        "beacon_path": "/beacon",
-                        "agent_path": "/raw_agent",
-                        "stager_path": "/b64_stager",
-                        "cmd_result_path": "/command_result",
-                        "file_upload_path": "/file_upload",
-                        "file_request_path": "/file_request"
-                    }
-            else:
-                # Default URL paths
-                url_paths = {
-                    "beacon_path": "/beacon",
-                    "agent_path": "/raw_agent",
-                    "stager_path": "/b64_stager",
-                    "cmd_result_path": "/command_result",
-                    "file_upload_path": "/file_upload",
-                    "file_request_path": "/file_request"
-                }
-        
-        # Create path rotation manager
+        # Create path rotation manager with only pool paths
         path_manager = None
         if path_rotation:
             # Debug info to verify the PathRotationManager class
-            logger(f"Creating PathRotationManager with path_pool_size={path_pool_size}")
+            logger(f"Creating pool-only PathRotationManager with path_pool_size={path_pool_size}")
             
             # Create the PathRotationManager instance with explicit keyword arguments
             path_manager = PathRotationManager(
                 campaign_folder=campaign_folder,  
                 logger=logger, 
-                initial_paths=url_paths,
+                initial_paths=None,  # No initial paths needed for pool-only mode
                 rotation_interval=rotation_interval,
                 pool_size=path_pool_size
             )
@@ -105,6 +76,11 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
             # Load existing state if available
             path_manager.load_state()
             logger(f"Path rotation enabled with interval {rotation_interval} seconds and pool size {path_pool_size}")
+            
+            # Log the pool size
+            current_paths = path_manager.get_current_paths()
+            if "path_pool" in current_paths:
+                logger(f"Generated path pool with {len(current_paths['path_pool'])} paths")
         
         # Create server with necessary attributes
         httpd = ThreadedHTTPServer((ip, port), C2RequestHandler)
@@ -114,7 +90,9 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         httpd.logger_func = logger
         httpd.crypto_manager = crypto_manager
         httpd.campaign_name = campaign_name
-        httpd.url_paths = url_paths
+        
+        # No URL paths needed in pool-only mode
+        httpd.url_paths = {"path_pool": []}
         
         # Attach the client verifier to the server
         httpd.client_verifier = client_verifier
@@ -123,7 +101,7 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         if path_rotation:
             httpd.path_manager = path_manager
             httpd.path_rotation_interval = rotation_interval
-            httpd.path_pool_size = path_pool_size  # Store pool size on server for reference
+            httpd.path_pool_size = path_pool_size
         
         # Configure SSL if requested
         if use_ssl and cert_path and key_path:
@@ -159,9 +137,14 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
             logger(f"Dynamic path rotation enabled - Current rotation ID: {path_manager.rotation_counter}")
             logger(f"Path pool size: {path_pool_size} paths for random URL selection")
             logger(f"Next path rotation scheduled at: {datetime.datetime.fromtimestamp(next_rotation).strftime('%Y-%m-%d %H:%M:%S')}")
-            logger(f"Current URL paths: {current_paths}")
+            
+            # Log summary of path types
+            if "path_pool" in current_paths:
+                path_pool = current_paths["path_pool"]
+                file_paths = sum(1 for p in path_pool if "/file/" in p or "/download/" in p or "/upload/" in p or "/content/" in p)
+                logger(f"Path pool contains {len(path_pool)} paths ({file_paths} file operation paths)")
         else:
-            logger(f"Using static URL paths: {url_paths}")
+            logger(f"Path rotation disabled - using default paths")
         
         # Create necessary campaign directories
         os.makedirs(os.path.join(campaign_folder, "uploads"), exist_ok=True)

