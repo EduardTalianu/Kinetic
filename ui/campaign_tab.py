@@ -86,6 +86,7 @@ class CampaignConfigTab:
         self.url_pattern_var = tk.StringVar()
         self.path_rotation_var = tk.BooleanVar(value=True)
         self.rotation_interval_var = tk.StringVar(value="3600")
+        self.path_pool_size_var = tk.StringVar(value="10")  # Default pool size
         
         # Campaign Name
         ttk.Label(self.frame, text="Campaign Name:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
@@ -167,6 +168,15 @@ class CampaignConfigTab:
         self.rotation_interval_combo.grid(row=1, column=1, padx=5, pady=5)
         ttk.Label(rotation_frame, text="Rotation intervals: 30 min, 1 hour, 2 hours, 4 hours, 8 hours, 24 hours").grid(
             row=2, column=0, columnspan=2, sticky="w", padx=5, pady=0)
+            
+        # Add path pool size configuration
+        ttk.Label(rotation_frame, text="Path Pool Size:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        pool_size_values = ["5", "10", "15", "20", "30", "50"]
+        self.path_pool_size_combo = ttk.Combobox(rotation_frame, textvariable=self.path_pool_size_var,
+                                               values=pool_size_values, width=27)
+        self.path_pool_size_combo.grid(row=3, column=1, padx=5, pady=5)
+        ttk.Label(rotation_frame, text="Number of alternative paths used for random selection").grid(
+            row=4, column=0, columnspan=2, sticky="w", padx=5, pady=0)
 
         # SSL Option
         self.ssl_var = tk.BooleanVar()
@@ -340,6 +350,12 @@ class CampaignConfigTab:
             if rotation_interval in ["1800", "3600", "7200", "14400", "28800", "86400"]:
                 self.rotation_interval_var.set(rotation_interval)
                 self.rotation_interval_combo.set(rotation_interval)
+        
+        # Load path pool size if available in the config
+        if "Path Pool Size" in config:
+            pool_size = config["Path Pool Size"]
+            self.path_pool_size_var.set(pool_size)
+            self.path_pool_size_combo.set(pool_size)
     
     def load_url_paths(self, url_paths_file):
         """Load URL paths from the url_paths.json file"""
@@ -378,6 +394,7 @@ class CampaignConfigTab:
         """Toggle path rotation options based on checkbox"""
         state = 'normal' if self.path_rotation_var.get() else 'disabled'
         self.rotation_interval_combo.config(state=state)
+        self.path_pool_size_combo.config(state=state)
 
     def generate_random_urls(self):
         """Generate random, legitimate-looking URLs based on the selected pattern"""
@@ -497,6 +514,8 @@ class CampaignConfigTab:
         self.entry_stager_path.config(state=state)
         self.entry_cmd_result_path.config(state=state)
         self.entry_file_upload_path.config(state=state)
+        if hasattr(self, 'entry_file_request_path'):
+            self.entry_file_request_path.config(state=state)
 
     def check_ip_entry(self, event):
         """Checks if the entered IP is valid or should be added to the dropdown."""
@@ -568,8 +587,13 @@ class CampaignConfigTab:
                 "stager_path": self.entry_stager_path.get().strip(),
                 "cmd_result_path": self.entry_cmd_result_path.get().strip(),
                 "file_upload_path": self.entry_file_upload_path.get().strip(),
-                "file_request_path": self.entry_file_request_path.get().strip(),
             }
+            
+            # Add file_request_path if it exists
+            if hasattr(self, 'entry_file_request_path'):
+                url_paths["file_request_path"] = self.entry_file_request_path.get().strip()
+            else:
+                url_paths["file_request_path"] = "/file_request"  # Default value
         else:
             # Using default paths
             url_paths = {
@@ -578,7 +602,7 @@ class CampaignConfigTab:
                 "stager_path": "/b64_stager",
                 "cmd_result_path": "/command_result",
                 "file_upload_path": "/file_upload",
-                "file_request_path": "/file_request"  # Added file_request_path
+                "file_request_path": "/file_request"
             }
 
         # Ensure all paths have leading slash
@@ -589,6 +613,9 @@ class CampaignConfigTab:
         # Get path rotation settings
         path_rotation = self.path_rotation_var.get()
         rotation_interval = int(self.rotation_interval_var.get())
+        
+        # Get path pool size
+        path_pool_size = int(self.path_pool_size_var.get())
 
         if not campaign_name or not ip or not port:
             messagebox.showerror("Error", "Please fill in Campaign Name, C&C IP, and Port.")
@@ -697,6 +724,7 @@ class CampaignConfigTab:
             f"File Request Path: {url_paths['file_request_path']}\n"
             f"Path Rotation Enabled: {path_rotation}\n"
             f"Rotation Interval: {rotation_interval} seconds\n"
+            f"Path Pool Size: {path_pool_size}\n"
         )
         config_path = os.path.join(campaign_dir, "config.txt")
         try:
@@ -737,7 +765,8 @@ class CampaignConfigTab:
                 key_path=key_path if use_ssl else None,
                 url_paths=url_paths,
                 path_rotation=path_rotation,
-                rotation_interval=rotation_interval
+                rotation_interval=rotation_interval,
+                path_pool_size=path_pool_size  # Pass the path pool size to the server
             )
             self.btn_start_campaign.config(state=tk.DISABLED)
             self.btn_stop_campaign.config(state=tk.NORMAL)

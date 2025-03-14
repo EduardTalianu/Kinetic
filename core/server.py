@@ -4,11 +4,15 @@ import os
 import ssl
 import json
 import datetime
+import inspect
 from core.crypto import KeyManager
 from core.crypto import CryptoManager
 from utils.client_identity import ClientVerifier
 from utils.c2_handler import C2RequestHandler
+
+# Explicit import to ensure we're getting the right class
 from utils.path_rotation import PathRotationManager
+
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     """This server handles each request in a separate thread."""
@@ -17,8 +21,25 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 # Global variable to hold the server instance
 httpd = None
 
-def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ssl=False, cert_path=None, key_path=None, url_paths=None, path_rotation=True, rotation_interval=3600):
-    """Starts the web server in a separate thread."""
+def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ssl=False, cert_path=None, key_path=None, 
+                   url_paths=None, path_rotation=True, rotation_interval=3600, path_pool_size=10):
+    """
+    Starts the web server in a separate thread.
+    
+    Args:
+        ip: IP address to bind to
+        port: Port to listen on
+        client_manager: Client manager instance
+        logger: Logging function
+        campaign_name: Name of the campaign (optional)
+        use_ssl: Whether to use SSL/TLS
+        cert_path: Path to SSL certificate file (if use_ssl is True)
+        key_path: Path to SSL key file (if use_ssl is True)
+        url_paths: Dictionary of URL paths
+        path_rotation: Whether to enable path rotation
+        rotation_interval: Interval for path rotation in seconds
+        path_pool_size: Size of the path pool for random selection
+    """
     global httpd
     try:
         # If campaign_name is not provided, try to determine it
@@ -69,15 +90,21 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         # Create path rotation manager
         path_manager = None
         if path_rotation:
+            # Debug info to verify the PathRotationManager class
+            logger(f"Creating PathRotationManager with path_pool_size={path_pool_size}")
+            
+            # Create the PathRotationManager instance with explicit keyword arguments
             path_manager = PathRotationManager(
-                campaign_folder, 
-                logger, 
+                campaign_folder=campaign_folder,  
+                logger=logger, 
                 initial_paths=url_paths,
-                rotation_interval=rotation_interval
+                rotation_interval=rotation_interval,
+                pool_size=path_pool_size
             )
+            
             # Load existing state if available
             path_manager.load_state()
-            logger(f"Path rotation enabled with interval {rotation_interval} seconds")
+            logger(f"Path rotation enabled with interval {rotation_interval} seconds and pool size {path_pool_size}")
         
         # Create server with necessary attributes
         httpd = ThreadedHTTPServer((ip, port), C2RequestHandler)
@@ -96,6 +123,7 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         if path_rotation:
             httpd.path_manager = path_manager
             httpd.path_rotation_interval = rotation_interval
+            httpd.path_pool_size = path_pool_size  # Store pool size on server for reference
         
         # Configure SSL if requested
         if use_ssl and cert_path and key_path:
@@ -129,6 +157,7 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
             next_rotation = path_manager.get_next_rotation_time()
             current_paths = path_manager.get_current_paths()
             logger(f"Dynamic path rotation enabled - Current rotation ID: {path_manager.rotation_counter}")
+            logger(f"Path pool size: {path_pool_size} paths for random URL selection")
             logger(f"Next path rotation scheduled at: {datetime.datetime.fromtimestamp(next_rotation).strftime('%Y-%m-%d %H:%M:%S')}")
             logger(f"Current URL paths: {current_paths}")
         else:
@@ -142,6 +171,8 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         return server_thread
     except Exception as e:
         logger(f"Error starting webserver: {e}")
+        import traceback
+        logger(f"Traceback: {traceback.format_exc()}")
         raise
     
 def stop_webserver():
