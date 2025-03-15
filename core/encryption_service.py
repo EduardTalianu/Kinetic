@@ -180,11 +180,21 @@ class EncryptionService:
                 with open(client_keys_file, 'r') as f:
                     client_keys_data = json.load(f)
                     
-                # We can't load the actual keys from file (they're not saved for security)
-                # This just records which clients had unique keys
-                logger.info(f"Found client key records for {len(client_keys_data)} clients")
+                # Process the loaded client keys
+                for client_id, key_data in client_keys_data.items():
+                    # If the key data contains the actual key (base64 encoded)
+                    if "key" in key_data:
+                        try:
+                            # Decode the base64 key
+                            key_bytes = base64.b64decode(key_data["key"])
+                            self.client_keys[client_id] = key_bytes
+                            logger.info(f"Loaded key for client {client_id}")
+                        except Exception as e:
+                            logger.error(f"Error decoding key for client {client_id}: {e}")
+                
+                logger.info(f"Loaded {len(self.client_keys)} client keys from {client_keys_file}")
             except Exception as e:
-                logger.error(f"Error loading client keys info: {e}")
+                logger.error(f"Error loading client keys: {e}")
     
     def save_campaign_key(self):
         """Save the campaign key to disk"""
@@ -207,22 +217,23 @@ class EncryptionService:
         return datetime.now().isoformat()
     
     def save_client_keys_info(self):
-        """Save client key information to disk (not the actual keys)"""
+        """Save client key information to disk (including actual keys for troubleshooting)"""
         client_keys_file = os.path.join(self.campaign_folder, "client_keys.json")
         
-        # Don't save actual keys, just record which clients have unique keys
-        client_key_status = {}
-        for client_id in self.client_keys:
-            client_key_status[client_id] = {
+        # Save client keys with their status and actual key data (base64 encoded)
+        client_key_data = {}
+        for client_id, key in self.client_keys.items():
+            client_key_data[client_id] = {
                 "has_unique_key": True,
-                "assigned_at": self._current_timestamp()
+                "assigned_at": self._current_timestamp(),
+                "key": base64.b64encode(key).decode('utf-8')  # Save the actual key for troubleshooting
             }
         
         os.makedirs(os.path.dirname(client_keys_file), exist_ok=True)
         with open(client_keys_file, 'w') as f:
-            json.dump(client_key_status, f, indent=2)
+            json.dump(client_key_data, f, indent=2)
         
-        logger.info(f"Saved client key status to {client_keys_file}")
+        logger.info(f"Saved client keys to {client_keys_file}")
     
     def get_key(self, client_id=None):
         """
@@ -376,7 +387,7 @@ class EncryptionService:
             key = self.generate_key()
             
         self.client_keys[client_id] = key
-        self.save_client_keys_info()
+        self.save_client_keys_info()  # Save keys to disk for persistence
         
         logger.info(f"Set client key for client {client_id}")
         return key
