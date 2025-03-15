@@ -235,46 +235,6 @@ class ClientDetailsUI:
                     value_text.grid(row=row, column=1, sticky="w", padx=5, pady=2)
                     row += 1
 
-    def force_campaign_key(self):
-        """Force the client to use the campaign key instead of a client-specific key"""
-        client_id = self.client_id
-        
-        # Try to get server from client manager
-        server = None
-        if hasattr(self.client_manager, 'server'):
-            server = self.client_manager.server
-        
-        # Check if server has encryption service
-        encryption_service = None
-        if server and hasattr(server, 'encryption_service'):
-            encryption_service = server.encryption_service
-        
-        # Use encryption service if available
-        if encryption_service:
-            encryption_service.remove_client_key(client_id)
-            self.logger(f"Forced use of campaign key for client {client_id} via encryption service")
-            return True
-        
-        # Fall back to client manager if it has remove_client_key method
-        if hasattr(self.client_manager, 'remove_client_key'):
-            self.client_manager.remove_client_key(client_id)
-            self.logger(f"Forced use of campaign key for client {client_id} via client manager")
-            return True
-        
-        # Legacy fallback - remove directly from client_keys if exists
-        if hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys:
-            del self.client_manager.client_keys[client_id]
-            
-            # Also remove key rotation timestamp if it exists
-            if client_id in self.client_manager.clients and 'key_rotation_time' in self.client_manager.clients[client_id]:
-                del self.client_manager.clients[client_id]['key_rotation_time']
-            
-            self.logger(f"Forced use of campaign key for client {client_id} via direct removal")
-            return True
-        
-        self.logger(f"Failed to force campaign key for client {client_id} - no suitable method found")
-        return False
-
     def populate_verification_tab(self, parent_frame, client_info):
         """Populate the verification tab with identity verification information and key status"""
         # Clear existing widgets first if any
@@ -384,11 +344,11 @@ class ClientDetailsUI:
         key_type_frame = ttk.Frame(key_frame)
         key_type_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        ttk.Label(key_type_frame, text="Key Type:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(key_type_frame, text="Key Status:").pack(side=tk.LEFT, padx=5)
         
-        key_type = "Client-Specific Key" if has_unique_key else "Campaign Default Key"
-        key_type_color = "#008000" if has_unique_key else "#FF8C00"  # Green if client-specific, orange if default
-        self.key_type_label = ttk.Label(key_type_frame, text=key_type, foreground=key_type_color, font=("Arial", 10, "bold"))
+        key_status = "Unique Client Key Active" if has_unique_key else "Awaiting Key Assignment"
+        key_status_color = "#008000" if has_unique_key else "#FF8C00"  # Green if client-specific, orange if pending
+        self.key_type_label = ttk.Label(key_type_frame, text=key_status, foreground=key_status_color, font=("Arial", 10, "bold"))
         self.key_type_label.pack(side=tk.LEFT, padx=5)
         
         # Key status details
@@ -400,94 +360,9 @@ class ClientDetailsUI:
             ttk.Label(key_details_frame, text=f"Last Key Rotation: {client_info['key_rotation_time']}").pack(anchor="w", padx=5, pady=2)
             has_unique_key = True  # If we have rotation time, we definitely have a unique key
         elif has_unique_key:
-            ttk.Label(key_details_frame, text="Key has been rotated (timestamp not available)").pack(anchor="w", padx=5, pady=2)
+            ttk.Label(key_details_frame, text="Key has been assigned (timestamp not available)").pack(anchor="w", padx=5, pady=2)
         else:
-            ttk.Label(key_details_frame, text="No key rotation has occurred").pack(anchor="w", padx=5, pady=2)
-        
-        # Key action buttons frame
-        key_action_frame = ttk.Frame(key_frame)
-        key_action_frame.pack(fill=tk.X, padx=5, pady=10)
-        
-        # Key rotation button
-        def request_key_rotation():
-            nonlocal client_id  # Use the client_id from the outer scope
-            
-            # Extra debug to see what client ID we're using
-            print(f"Requesting key rotation for client: {client_id}")
-            
-            if not client_id:
-                tk.messagebox.showerror("Key Rotation Error", "Cannot identify client ID for key rotation")
-                return
-                    
-            if verified:
-                # Add a key rotation command to the client
-                try:
-                    self.client_manager.add_command(client_id, "key_rotation", "Initiate key rotation")
-                    tk.messagebox.showinfo("Key Rotation", f"Key rotation request sent to client {client_id}")
-                    # Refresh the tab after sending the command
-                    self.refresh_verification_tab(parent_frame, {"client_id": client_id})
-                except Exception as e:
-                    tk.messagebox.showerror("Key Rotation Error", f"Could not request key rotation: {str(e)}")
-            else:
-                tk.messagebox.showwarning("Key Rotation", "Client must be verified before key rotation can occur")
-        
-        rotation_button = ttk.Button(
-            key_action_frame, 
-            text="Request Key Rotation", 
-            command=request_key_rotation,
-            state="normal" if verified else "disabled"
-        )
-        rotation_button.pack(side=tk.LEFT, padx=5)
-        
-        # Force Session Key button - now uses the new implementation
-        def force_session_key():
-            nonlocal client_id, has_unique_key
-            
-            if not client_id:
-                tk.messagebox.showerror("Key Management Error", "Cannot identify client ID")
-                return
-            
-            try:
-                # Use the new centralized method
-                success = self.force_campaign_key()
-                
-                if success:
-                    # Update UI
-                    has_unique_key = False
-                    self.key_type_label.config(text="Campaign Default Key", foreground="#FF8C00")
-                    
-                    tk.messagebox.showinfo("Key Management", 
-                        f"Forced use of campaign default key for client {client_id}.\n"
-                        f"The system will now use the campaign-wide key for this client.")
-                    
-                    # Log the change
-                    self.logger(f"Forced use of campaign default key for client {client_id}")
-                    
-                    # Refresh the tab
-                    self.refresh_verification_tab(parent_frame, {"client_id": client_id})
-                else:
-                    tk.messagebox.showerror("Key Management Error", 
-                        "Could not force campaign key. This may be due to missing encryption service.")
-                
-            except Exception as e:
-                tk.messagebox.showerror("Key Management Error", f"Failed to force session key: {str(e)}")
-        
-        # Add Force Session Key button
-        force_key_button = ttk.Button(
-            key_action_frame, 
-            text="Force Campaign Key", 
-            command=force_session_key,
-            state="normal" if has_unique_key else "disabled"
-        )
-        force_key_button.pack(side=tk.LEFT, padx=5)
-        
-        # Add a note about key rotation
-        ttk.Label(
-            key_action_frame, 
-            text="Note: Key rotation requires client verification",
-            font=("Arial", 8, "italic"),
-            foreground="#666666"
-        ).pack(side=tk.LEFT, padx=5)
+            ttk.Label(key_details_frame, text="Key will be automatically assigned upon verification").pack(anchor="w", padx=5, pady=2)
         
         # Warnings section
         warnings_frame = ttk.LabelFrame(parent_frame, text="Verification Warnings")
@@ -501,7 +376,7 @@ class ClientDetailsUI:
             ttk.Label(warnings_frame, text="No verification warnings", foreground="#008000").pack(anchor="w", padx=10, pady=2)
         
         # Explanation section
-        explanation_frame = ttk.LabelFrame(parent_frame, text="About Verification & Key Rotation")
+        explanation_frame = ttk.LabelFrame(parent_frame, text="About Verification & Key Security")
         explanation_frame.pack(fill=tk.X, padx=10, pady=10)
         
         explanation_text = """
@@ -515,8 +390,9 @@ class ClientDetailsUI:
         
         A confidence score above 70% is considered verified. Warning signs include changes to critical identifiers.
         
-        Key rotation enhances security by using a unique encryption key for each verified client. This prevents
-        a compromise of one client from affecting others. Only verified clients can receive unique keys.
+        Each verified client automatically receives a unique encryption key. This enhances security by ensuring
+        that communication with each client is protected by a separate key. Keys are managed automatically by
+        the system with no manual intervention required.
         """
         
         explanation_label = ttk.Label(explanation_frame, text=explanation_text, wraplength=400, justify=tk.LEFT)
