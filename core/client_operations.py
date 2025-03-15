@@ -15,6 +15,7 @@ class ClientHelper:
         self.client_manager = client_manager
         self.crypto_helper = crypto_helper
         self.server = server
+        self.encryption_service = getattr(server, 'encryption_service', None)
     
     def identify_client(self, client_ip, client_id=None, system_info_raw=None, is_first_contact=False):
         """
@@ -157,12 +158,17 @@ class ClientHelper:
         return is_verified, confidence, needs_key_rotation, warnings
     
     def _has_unique_key(self, client_id):
-        """Check if client has a unique encryption key"""
+        """Check if client has a unique encryption key - Updated to use encryption service"""
+        # First check with encryption service if available
+        if self.encryption_service:
+            return self.encryption_service.has_client_key(client_id)
+            
+        # Fallback to client manager
         if hasattr(self.client_manager, 'has_unique_key'):
             return self.client_manager.has_unique_key(client_id)
-        else:
-            # Fallback to direct check
-            return hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys
+            
+        # Legacy fallback - direct check
+        return hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys
     
     def prepare_key_issuance(self, client_id):
         """
@@ -172,11 +178,18 @@ class ClientHelper:
             dict: Key issuance command object
         """
         # Generate a new unique key for this client
-        new_key = os.urandom(32)  # 256-bit key
+        if self.encryption_service:
+            new_key = self.encryption_service.generate_key()
+            # Register the key with the encryption service
+            self.encryption_service.set_client_key(client_id, new_key)
+        else:
+            # Fallback if no encryption service
+            new_key = os.urandom(32)  # 256-bit key
+            # Store in client manager
+            self.client_manager.set_client_key(client_id, new_key)
+            
+        # Convert to base64 for transmission
         base64_key = base64.b64encode(new_key).decode('utf-8')
-        
-        # Store the client's unique key
-        self.client_manager.set_client_key(client_id, new_key)
         
         # Create key issuance command
         key_issuance_command = {
@@ -197,11 +210,18 @@ class ClientHelper:
             dict: Key rotation command object
         """
         # Generate a new unique key for this client
-        new_key = os.urandom(32)  # 256-bit key
+        if self.encryption_service:
+            new_key = self.encryption_service.generate_key()
+            # Register the key with the encryption service
+            self.encryption_service.set_client_key(client_id, new_key)
+        else:
+            # Fallback if no encryption service
+            new_key = os.urandom(32)  # 256-bit key
+            # Store in client manager
+            self.client_manager.set_client_key(client_id, new_key)
+            
+        # Convert to base64 for transmission
         base64_key = base64.b64encode(new_key).decode('utf-8')
-        
-        # Store the client's unique key
-        self.client_manager.set_client_key(client_id, new_key)
         
         # Create key rotation command
         key_rotation_command = {

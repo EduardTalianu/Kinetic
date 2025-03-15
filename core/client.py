@@ -5,13 +5,17 @@ import hashlib
 from utils.client_identity import generate_client_id, extract_system_info
 
 class ClientManager:
-    def __init__(self, log_event):
+    def __init__(self, log_event, encryption_service=None):
         # key: client_id, value: dict with keys: last_seen, ip, hostname, pending_commands, history, system_info
         self.clients = {}
         self.command_update_callbacks = {}  # Dictionary to store callbacks
         self.log_event = log_event  # This is now the log_client_event method from LogManager
         self.client_verifier = None  # Will be set by the server to the ClientVerifier instance
-        self.client_keys = {}  # Storage for client-specific encryption keys
+        self.encryption_service = encryption_service  # New: Reference to the centralized encryption service
+
+    def set_encryption_service(self, encryption_service):
+        """Set the encryption service after initialization"""
+        self.encryption_service = encryption_service
 
     def add_client(self, ip, hostname="Unknown", username="Unknown", machine_guid="Unknown", 
                 os_version="Unknown", mac_address="Unknown", system_info=None, client_id=None):
@@ -194,64 +198,68 @@ class ClientManager:
             callback()
 
     def has_unique_key(self, client_id):
-        """Check if client already has a unique key"""
-        # Direct check in client_keys dictionary
-        if client_id in self.client_keys:
-            return True
+        """Check if client already has a unique key - Updated to use encryption service"""
+        if self.encryption_service:
+            return self.encryption_service.has_client_key(client_id)
         
-        # Additional check in client info if available
+        # Fallback if encryption service not available
         if client_id in self.clients:
-            if 'key_rotation_time' in self.clients[client_id]:
-                # If we have a rotation time recorded, assume the key exists
-                return True
-        
+            return 'key_rotation_time' in self.clients[client_id]
         return False
 
-    def set_client_key(self, client_id, key):
-        """Set a unique key for a client"""
-        self.client_keys[client_id] = key
+    def set_client_key(self, client_id, key=None):
+        """
+        Set a unique key for a client - Updated to use encryption service
         
-        # Add timestamp for key rotation
-        current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Update client info with key rotation time
-        if client_id in self.clients:
-            self.clients[client_id]['key_rotation_time'] = current_time
-        
-        self.log_event(client_id, "Security", "Unique encryption key assigned after verification")
-        
-        # Save keys to disk for persistence
-        self._save_client_keys()
-        
-    def _save_client_keys(self):
-        """Save client keys to disk for persistence"""
-        if not self.client_keys:
-            return
+        Args:
+            client_id: Client ID
+            key: Encryption key (bytes, or None to generate a new key)
             
-        # Don't save actual keys, just record which clients have unique keys
-        client_key_status = {}
-        for client_id in self.client_keys:
-            client_key_status[client_id] = {
-                "has_unique_key": True,
-                "assigned_at": self._current_timestamp()
-            }
-        
-        # Create client_keys.json in the campaign folder
-        for client_id, client_info in self.clients.items():
-            if 'campaign_folder' in client_info:
-                campaign_folder = client_info['campaign_folder']
-                client_keys_file = os.path.join(campaign_folder, "client_keys.json")
-                
-                try:
-                    os.makedirs(os.path.dirname(client_keys_file), exist_ok=True)
-                    with open(client_keys_file, 'w') as f:
-                        json.dump(client_key_status, f, indent=2)
-                    break
-                except Exception as e:
-                    self.log_event("ERROR", f"Error saving client key status: {e}")
-                    
-        # Also log to clients.json for reference
+        Returns:
+            The key that was set
+        """
+        if self.encryption_service:
+            # Let the encryption service handle key management
+            key = self.encryption_service.set_client_key(client_id, key)
+        else:
+            # Legacy behavior - just record the timestamp for backward compatibility
+            self.log_event("WARNING", "Encryption Warning", "No encryption service available for key management")
+            
+        # Record the key rotation time in client info
+        if client_id in self.clients:
+            self.clients[client_id]['key_rotation_time'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.log_event(client_id, "Security", "Unique encryption key assigned after verification")
+            
+        # Save client info to disk
         self._save_clients()
+        
+        return key
+    
+    def remove_client_key(self, client_id):
+        """
+        Remove a client-specific key, reverting to campaign key - New method
+        
+        Args:
+            client_id: Client ID
+            
+        Returns:
+            True if key was removed, False if client had no key
+        """
+        if self.encryption_service:
+            success = self.encryption_service.remove_client_key(client_id)
+        else:
+            success = False
+            self.log_event("WARNING", "Encryption Warning", "No encryption service available for key management")
+        
+        # Remove key rotation time from client info
+        if success and client_id in self.clients and 'key_rotation_time' in self.clients[client_id]:
+            del self.clients[client_id]['key_rotation_time']
+            self.log_event(client_id, "Security", "Client-specific key removed, reverted to campaign key")
+            
+            # Save client info to disk
+            self._save_clients()
+        
+        return success
 
     def _current_timestamp(self):
         """Get current timestamp in ISO format"""
@@ -296,6 +304,10 @@ class ClientManager:
                     "warnings": ["Unknown client"]
                 })
             }
+            
+            # Add key rotation time if available
+            if 'key_rotation_time' in client_info:
+                client_data[client_id]["key_rotation_time"] = client_info["key_rotation_time"]
             
             # Add system info without sensitive fields
             if "system_info" in client_info:

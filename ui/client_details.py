@@ -74,6 +74,10 @@ class ClientDetailsUI:
         interaction_frame = ttk.Frame(client_notebook)
         client_notebook.add(interaction_frame, text="Interaction")
         
+        # Tab for file management (NEW)
+        files_frame = ttk.Frame(client_notebook)
+        client_notebook.add(files_frame, text="Files")
+        
         # System Information Tab
         self.populate_system_info_tab(sys_info_frame, client_info)
         
@@ -116,6 +120,9 @@ class ClientDetailsUI:
         
         # Initialize the interaction tab
         self.client_interaction = ClientInteractionUI(interaction_frame, client_id, self.client_manager, self.logger)
+        
+        # Initialize the files tab (NEW)
+        self.client_files = ClientFilesUI(files_frame, client_id, self.client_manager, self.logger)
 
         # Store history_tree and frame for later access
         self.client_details_tabs[client_id] = {
@@ -123,6 +130,7 @@ class ClientDetailsUI:
             "tree": history_tree,
             "notebook": client_notebook,
             "interaction": self.client_interaction,
+            "files": self.client_files,  # NEW
             "verification_frame": verification_frame  # Store reference to verification frame
         }
         
@@ -227,6 +235,46 @@ class ClientDetailsUI:
                     value_text.grid(row=row, column=1, sticky="w", padx=5, pady=2)
                     row += 1
 
+    def force_campaign_key(self):
+        """Force the client to use the campaign key instead of a client-specific key"""
+        client_id = self.client_id
+        
+        # Try to get server from client manager
+        server = None
+        if hasattr(self.client_manager, 'server'):
+            server = self.client_manager.server
+        
+        # Check if server has encryption service
+        encryption_service = None
+        if server and hasattr(server, 'encryption_service'):
+            encryption_service = server.encryption_service
+        
+        # Use encryption service if available
+        if encryption_service:
+            encryption_service.remove_client_key(client_id)
+            self.logger(f"Forced use of campaign key for client {client_id} via encryption service")
+            return True
+        
+        # Fall back to client manager if it has remove_client_key method
+        if hasattr(self.client_manager, 'remove_client_key'):
+            self.client_manager.remove_client_key(client_id)
+            self.logger(f"Forced use of campaign key for client {client_id} via client manager")
+            return True
+        
+        # Legacy fallback - remove directly from client_keys if exists
+        if hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys:
+            del self.client_manager.client_keys[client_id]
+            
+            # Also remove key rotation timestamp if it exists
+            if client_id in self.client_manager.clients and 'key_rotation_time' in self.client_manager.clients[client_id]:
+                del self.client_manager.clients[client_id]['key_rotation_time']
+            
+            self.logger(f"Forced use of campaign key for client {client_id} via direct removal")
+            return True
+        
+        self.logger(f"Failed to force campaign key for client {client_id} - no suitable method found")
+        return False
+
     def populate_verification_tab(self, parent_frame, client_info):
         """Populate the verification tab with identity verification information and key status"""
         # Clear existing widgets first if any
@@ -304,21 +352,34 @@ class ClientDetailsUI:
         key_frame = ttk.LabelFrame(parent_frame, text="Encryption Key Status")
         key_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        # Determine key status more reliably
+        # Determine key status using multiple methods
         has_unique_key = False
         
-        # Check multiple indicators of a rotated key
-        if hasattr(self.client_manager, 'has_unique_key') and client_id:
-            # Use the dedicated method if available
-            has_unique_key = self.client_manager.has_unique_key(client_id)
-        elif hasattr(self.client_manager, 'client_keys') and client_id:
-            # Direct check of client_keys attribute
-            has_unique_key = client_id in self.client_manager.client_keys
+        # Try to get encryption service
+        server = None
+        encryption_service = None
         
-        # Additional check in client info
-        if not has_unique_key and 'key_rotation_time' in client_info:
-            has_unique_key = True
-                
+        if hasattr(self.client_manager, 'server'):
+            server = self.client_manager.server
+        
+        if server and hasattr(server, 'encryption_service'):
+            encryption_service = server.encryption_service
+            if encryption_service:
+                has_unique_key = encryption_service.has_client_key(client_id)
+        
+        # Fallback options if encryption service not available
+        if not encryption_service:
+            # Check using has_unique_key method on client manager
+            if hasattr(self.client_manager, 'has_unique_key'):
+                has_unique_key = self.client_manager.has_unique_key(client_id)
+            # Direct check of client_keys attribute
+            elif hasattr(self.client_manager, 'client_keys') and client_id:
+                has_unique_key = client_id in self.client_manager.client_keys
+            
+            # Additional check in client info
+            if not has_unique_key and client_id in self.client_manager.clients and 'key_rotation_time' in self.client_manager.clients[client_id]:
+                has_unique_key = True
+        
         # Key type indicator
         key_type_frame = ttk.Frame(key_frame)
         key_type_frame.pack(fill=tk.X, padx=5, pady=5)
@@ -378,7 +439,7 @@ class ClientDetailsUI:
         )
         rotation_button.pack(side=tk.LEFT, padx=5)
         
-        # NEW: Force Session Key button
+        # Force Session Key button - now uses the new implementation
         def force_session_key():
             nonlocal client_id, has_unique_key
             
@@ -387,27 +448,26 @@ class ClientDetailsUI:
                 return
             
             try:
-                # Remove client-specific key
-                if hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys:
-                    del self.client_manager.client_keys[client_id]
+                # Use the new centralized method
+                success = self.force_campaign_key()
                 
-                # Remove key rotation timestamp if present
-                if client_id in self.client_manager.clients and 'key_rotation_time' in self.client_manager.clients[client_id]:
-                    del self.client_manager.clients[client_id]['key_rotation_time']
-                
-                # Update UI
-                has_unique_key = False
-                self.key_type_label.config(text="Campaign Default Key", foreground="#FF8C00")
-                
-                tk.messagebox.showinfo("Key Management", 
-                    f"Forced use of campaign default key for client {client_id}.\n"
-                    f"The system will now use the campaign-wide key for this client.")
-                
-                # Log the change
-                self.logger(f"Forced use of campaign default key for client {client_id}")
-                
-                # Refresh the tab
-                self.refresh_verification_tab(parent_frame, {"client_id": client_id})
+                if success:
+                    # Update UI
+                    has_unique_key = False
+                    self.key_type_label.config(text="Campaign Default Key", foreground="#FF8C00")
+                    
+                    tk.messagebox.showinfo("Key Management", 
+                        f"Forced use of campaign default key for client {client_id}.\n"
+                        f"The system will now use the campaign-wide key for this client.")
+                    
+                    # Log the change
+                    self.logger(f"Forced use of campaign default key for client {client_id}")
+                    
+                    # Refresh the tab
+                    self.refresh_verification_tab(parent_frame, {"client_id": client_id})
+                else:
+                    tk.messagebox.showerror("Key Management Error", 
+                        "Could not force campaign key. This may be due to missing encryption service.")
                 
             except Exception as e:
                 tk.messagebox.showerror("Key Management Error", f"Failed to force session key: {str(e)}")
@@ -531,123 +591,3 @@ class ClientDetailsUI:
                         self.result_text.insert(tk.END, result)
                         self.result_text.config(state=tk.DISABLED)
                         break
-
-
-    def create_client_details_tab(self, client_id):
-        """
-        Create a tab showing detailed information about a client
-        
-        Args:
-            client_id: The unique identifier for the client
-        """
-        # Check if the tab already exists
-        if client_id in self.client_details_tabs:
-            self.notebook.select(self.client_details_tabs[client_id]["frame"])
-            return
-
-        details_frame = ttk.Frame(self.notebook)
-        
-        # Add close button to tab
-        tab_text = f"Client {client_id}"
-        self.notebook.add(details_frame, text=tab_text)
-        
-        # Create a close button for the tab
-        close_button_frame = ttk.Frame(details_frame)
-        close_button_frame.pack(fill=tk.X, pady=(5, 0), padx=5, anchor="ne")
-        close_button = ttk.Button(
-            close_button_frame, 
-            text="Close Tab", 
-            command=lambda: self.close_client_tab(client_id)
-        )
-        close_button.pack(side=tk.RIGHT)
-        
-        self.notebook.select(details_frame)  # Open the new tab
-
-        client_info = self.client_manager.get_clients_info().get(client_id, {})
-        
-        # Create a notebook for the client details to organize information
-        client_notebook = ttk.Notebook(details_frame)
-        client_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Tab for system information
-        sys_info_frame = ttk.Frame(client_notebook)
-        client_notebook.add(sys_info_frame, text="System Information")
-        
-        # Tab for command history
-        history_frame = ttk.Frame(client_notebook)
-        client_notebook.add(history_frame, text="Command History")
-
-        # Tab for verification information
-        verification_frame = ttk.Frame(client_notebook)
-        client_notebook.add(verification_frame, text="Verification")
-        
-        # Tab for interaction
-        interaction_frame = ttk.Frame(client_notebook)
-        client_notebook.add(interaction_frame, text="Interaction")
-        
-        # Tab for file management (NEW)
-        files_frame = ttk.Frame(client_notebook)
-        client_notebook.add(files_frame, text="Files")
-        
-        # System Information Tab
-        self.populate_system_info_tab(sys_info_frame, client_info)
-        
-        # Verification Tab
-        self.populate_verification_tab(verification_frame, client_info)
-        
-        # Command History Tab - Treeview for Command History
-        columns = ("Timestamp", "Type", "Arguments", "Result")
-        history_tree = ttk.Treeview(history_frame, columns=columns, show="headings")
-        history_tree.heading("Timestamp", text="Timestamp")
-        history_tree.heading("Type", text="Type")
-        history_tree.heading("Arguments", text="Arguments")
-        history_tree.heading("Result", text="Result Status")
-
-        # Adjust column widths
-        history_tree.column("Timestamp", width=150)
-        history_tree.column("Type", width=100)
-        history_tree.column("Arguments", width=200)
-        history_tree.column("Result", width=100)
-
-        history_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Add scrollbar for history tree
-        history_scrollbar = ttk.Scrollbar(history_frame, orient="vertical", command=history_tree.yview)
-        history_tree.configure(yscrollcommand=history_scrollbar.set)
-        history_scrollbar.pack(side="right", fill="y")
-
-        # Create a scrolled text widget for displaying detailed result
-        result_frame = ttk.LabelFrame(history_frame, text="Command Result Details")
-        result_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        self.result_text = scrolledtext.ScrolledText(result_frame, wrap=tk.WORD, state=tk.DISABLED)
-        self.result_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        # Bind a function to handle selection change
-        history_tree.bind("<ButtonRelease-1>", lambda event, tree=history_tree: self.on_select_command(event, tree, client_id))
-        history_tree.bind("<Return>", lambda event, tree=history_tree: self.on_select_command(event, tree, client_id))
-
-        self.populate_history_tree(client_id, history_tree)
-        
-        # Initialize the interaction tab
-        self.client_interaction = ClientInteractionUI(interaction_frame, client_id, self.client_manager, self.logger)
-        
-        # Initialize the files tab (NEW)
-        self.client_files = ClientFilesUI(files_frame, client_id, self.client_manager, self.logger)
-
-        # Store history_tree and frame for later access
-        self.client_details_tabs[client_id] = {
-            "frame": details_frame, 
-            "tree": history_tree,
-            "notebook": client_notebook,
-            "interaction": self.client_interaction,
-            "files": self.client_files,  # NEW
-            "verification_frame": verification_frame  # Store reference to verification frame
-        }
-        
-        # Bind the tab selection event to refresh the verification tab
-        client_notebook.bind("<<NotebookTabChanged>>", lambda e: self.on_client_tab_changed(e, client_id, client_notebook))
-        
-        # Register the callback to update the history tree
-        self.client_manager.register_command_update_callback(client_id,
-                                                            lambda: self.update_client_history_tree(client_id))

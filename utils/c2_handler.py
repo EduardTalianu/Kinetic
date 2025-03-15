@@ -18,6 +18,7 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         self.client_manager = getattr(server, 'client_manager', None)
         self.logger_func = getattr(server, 'logger_func', logging.info)
         self.crypto_manager = getattr(server, 'crypto_manager', None)
+        self.encryption_service = getattr(server, 'encryption_service', None)  # Get encryption service from server
         self.external_logger = self.logger_func
         
         # Default paths in case we need them as fallback
@@ -104,8 +105,12 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Initialize path rotation manager
         self._initialize_path_rotation(self.server)
         
-        # Initialize crypto helper
-        if self.crypto_manager is not None:
+        # Initialize crypto helper with encryption service if available
+        if self.encryption_service is not None:
+            from core.crypto_operations import CryptoHelper
+            self.crypto_helper = CryptoHelper(self.encryption_service, self.client_manager)
+        elif self.crypto_manager is not None:
+            # Legacy fallback
             from core.crypto_operations import CryptoHelper
             self.crypto_helper = CryptoHelper(self.crypto_manager, self.client_manager)
         else:

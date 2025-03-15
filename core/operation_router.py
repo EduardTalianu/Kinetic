@@ -405,3 +405,27 @@ class OperationRouter:
         self.request_handler.send_header("Content-type", "text/plain")
         self.request_handler.end_headers()
         self.request_handler.wfile.write(b"OK")
+
+    def identify_client_by_decryption(self, encrypted_data):
+        """
+        Identify client by trying to decrypt with client keys
+        Uses the encryption service if available, falls back to CryptoHelper
+        
+        Args:
+            encrypted_data: Encrypted data to attempt decryption
+            
+        Returns:
+            tuple: (client_id, decrypted_data) or (None, None) if no key works
+        """
+        # Check if request handler has an encryption service
+        if hasattr(self.request_handler, 'encryption_service') and self.request_handler.encryption_service:
+            # Use encryption service directly
+            return self.request_handler.encryption_service.identify_client_by_decryption(encrypted_data)
+        
+        # Fall back to crypto helper if encryption service not available
+        if self.crypto_helper:
+            return self.crypto_helper.identify_client_by_decryption(encrypted_data)
+        
+        # No decryption capabilities available
+        logger.error("Unable to identify client - no encryption service or crypto helper available")
+        return None, None

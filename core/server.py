@@ -7,6 +7,7 @@ import datetime
 import inspect
 from core.crypto import KeyManager
 from core.crypto import CryptoManager
+from core.encryption_service import EncryptionService
 from utils.client_identity import ClientVerifier
 from utils.c2_handler import C2RequestHandler
 
@@ -52,8 +53,14 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         
         campaign_folder = f"{campaign_name}_campaign"
         
-        # Create crypto manager for this campaign
+        # Create encryption service for this campaign
+        encryption_service = EncryptionService(campaign_folder)
+        
+        # Legacy crypto manager for backward compatibility
         crypto_manager = CryptoManager(campaign_name)
+        
+        # Set encryption service on client manager
+        client_manager.set_encryption_service(encryption_service)
         
         # Create client verifier for this campaign
         client_verifier = ClientVerifier(campaign_folder)
@@ -89,6 +96,7 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         httpd.client_manager = client_manager
         httpd.logger_func = logger
         httpd.crypto_manager = crypto_manager
+        httpd.encryption_service = encryption_service  # Add the new encryption service
         httpd.campaign_name = campaign_name
         
         # No URL paths needed in pool-only mode
