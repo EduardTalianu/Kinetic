@@ -135,13 +135,12 @@ class EncryptionService:
         self.campaign_folder = campaign_folder
         self.plugins = {}
         self.client_keys = {}
-        self.campaign_key = None
         self.default_provider = "aes"
         
         # Load plugins
         self.load_plugins()
         
-        # Load campaign key and client keys
+        # Load client keys
         self.load_keys()
     
     def load_plugins(self):
@@ -154,25 +153,7 @@ class EncryptionService:
         # TODO: Load additional plugins dynamically if needed
     
     def load_keys(self):
-        """Load encryption keys from campaign folder"""
-        # Load campaign key
-        keys_file = os.path.join(self.campaign_folder, "keys.json")
-        if os.path.exists(keys_file):
-            try:
-                with open(keys_file, 'r') as f:
-                    keys_data = json.load(f)
-                    self.campaign_key = base64.b64decode(keys_data.get("primary", ""))
-                    logger.info(f"Loaded campaign key from {keys_file}")
-            except Exception as e:
-                logger.error(f"Error loading campaign key: {e}")
-                # Generate new key if loading fails
-                self.campaign_key = self.generate_key()
-                self.save_campaign_key()
-        else:
-            # Create new campaign key if it doesn't exist
-            self.campaign_key = self.generate_key()
-            self.save_campaign_key()
-        
+        """Load client keys from campaign folder"""
         # Load client keys if available
         client_keys_file = os.path.join(self.campaign_folder, "client_keys.json")
         if os.path.exists(client_keys_file):
@@ -195,21 +176,6 @@ class EncryptionService:
                 logger.info(f"Loaded {len(self.client_keys)} client keys from {client_keys_file}")
             except Exception as e:
                 logger.error(f"Error loading client keys: {e}")
-    
-    def save_campaign_key(self):
-        """Save the campaign key to disk"""
-        keys_file = os.path.join(self.campaign_folder, "keys.json")
-        keys_data = {
-            "primary": base64.b64encode(self.campaign_key).decode('utf-8'),
-            "created_at": self._current_timestamp(),
-            "campaign": os.path.basename(self.campaign_folder).replace("_campaign", "")
-        }
-        
-        os.makedirs(os.path.dirname(keys_file), exist_ok=True)
-        with open(keys_file, 'w') as f:
-            json.dump(keys_data, f, indent=2)
-        
-        logger.info(f"Saved campaign key to {keys_file}")
     
     def _current_timestamp(self):
         """Get current timestamp in ISO format"""
@@ -237,17 +203,19 @@ class EncryptionService:
     
     def get_key(self, client_id=None):
         """
-        Get the appropriate encryption key for a client
+        Get the encryption key for a client or generate a temporary one
         
         Args:
-            client_id: Client ID (optional, uses campaign key if None)
+            client_id: Client ID (optional)
             
         Returns:
             Encryption key (bytes)
         """
         if client_id and client_id in self.client_keys:
             return self.client_keys[client_id]
-        return self.campaign_key
+        
+        # Generate a temporary key for operations that don't have a client key
+        return self.generate_key()
     
     def encrypt(self, data, client_id=None, provider=None, **kwargs):
         """
@@ -298,17 +266,8 @@ class EncryptionService:
         try:
             return plugin.decrypt(data, key, **kwargs)
         except Exception as e:
-            # If client key fails, try campaign key as fallback
-            if client_id and client_id in self.client_keys:
-                logger.debug(f"Decryption with client key failed, trying campaign key: {e}")
-                try:
-                    return plugin.decrypt(data, self.campaign_key, **kwargs)
-                except Exception as e2:
-                    logger.error(f"Decryption with campaign key also failed: {e2}")
-                    raise
-            else:
-                # No fallback available
-                raise
+            logger.error(f"Decryption failed: {e}")
+            raise
     
     def identify_client_by_decryption(self, encrypted_data):
         """
@@ -351,25 +310,8 @@ class EncryptionService:
                 # Try next key
                 continue
         
-        # Try campaign key as fallback
-        try:
-            plugin = self.plugins[self.default_provider]
-            decrypted_data = plugin.decrypt(encrypted_data, self.campaign_key)
-            
-            # Try to verify it's valid JSON
-            try:
-                json.loads(decrypted_data)
-            except json.JSONDecodeError:
-                # Not JSON, but might be valid text
-                pass
-                
-            logger.info("Message decrypted with campaign key - likely from a new client")
-            return None, decrypted_data
-        except Exception as e:
-            logger.debug(f"Campaign key decryption attempt failed: {e}")
-        
-        # If nothing worked
-        logger.warning("Failed to identify client - no key could decrypt the data")
+        # If none of the client keys worked, we're likely dealing with first contact
+        logger.warning("No client key could decrypt the data - likely first contact or invalid data")
         return None, None
     
     def set_client_key(self, client_id, key=None):
@@ -394,7 +336,7 @@ class EncryptionService:
     
     def remove_client_key(self, client_id):
         """
-        Remove a client-specific key and revert to using the campaign key
+        Remove a client-specific key
         
         Args:
             client_id: Client ID
@@ -439,32 +381,3 @@ class EncryptionService:
         
         plugin = self.plugins[provider]
         return plugin.generate_key()
-    
-    def get_powershell_key_code(self, obfuscate=True):
-        """
-        Generate PowerShell code for embedding the key in an agent
-        
-        Args:
-            obfuscate: Whether to obfuscate the key
-            
-        Returns:
-            PowerShell code for key initialization
-        """
-        key_b64 = base64.b64encode(self.campaign_key).decode('utf-8')
-        
-        if obfuscate:
-            # Simple obfuscation - split the key into parts
-            parts = []
-            key_string = f"'{key_b64}'"
-            chunk_size = len(key_string) // 3
-            for i in range(0, len(key_string), chunk_size):
-                parts.append(key_string[i:i+chunk_size])
-            
-            # Create obfuscated key loading code
-            key_code = "$k = " + " + ".join([f"'{part}'" for part in parts]) + ";"
-            key_code += "\n$key = [System.Convert]::FromBase64String($k);"
-        else:
-            # Simple direct key assignment
-            key_code = f"$key = [System.Convert]::FromBase64String('{key_b64}');"
-        
-        return key_code

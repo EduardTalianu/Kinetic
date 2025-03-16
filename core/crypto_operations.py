@@ -2,15 +2,13 @@ import os
 import base64
 import json
 import logging
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
 
 logger = logging.getLogger(__name__)
 
 class CryptoHelper:
     """
     Handles encryption and decryption operations for client communication
-    Now acts as a wrapper around the EncryptionService
+    Acts as a wrapper around the EncryptionService
     """
     
     def __init__(self, encryption_service, client_manager):
@@ -26,7 +24,7 @@ class CryptoHelper:
     
     def get_client_key(self, client_id):
         """
-        Get the appropriate encryption key for a client (legacy method)
+        Get the appropriate encryption key for a client
         
         Args:
             client_id: Client ID
@@ -51,7 +49,7 @@ class CryptoHelper:
 
     def encrypt(self, data, client_id=None):
         """
-        Encrypt data using client key if available, otherwise campaign key
+        Encrypt data using client key if available, otherwise generate a temporary key
         
         Args:
             data: Data to encrypt
@@ -64,7 +62,7 @@ class CryptoHelper:
     
     def decrypt(self, encrypted_data, client_id=None):
         """
-        Decrypt data using client key if available, otherwise campaign key
+        Decrypt data using client key if available
         
         Args:
             encrypted_data: Encrypted data (base64 string)

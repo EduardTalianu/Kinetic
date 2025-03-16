@@ -11,7 +11,7 @@ class ClientManager:
         self.command_update_callbacks = {}  # Dictionary to store callbacks
         self.log_event = log_event  # This is now the log_client_event method from LogManager
         self.client_verifier = None  # Will be set by the server to the ClientVerifier instance
-        self.encryption_service = encryption_service  # New: Reference to the centralized encryption service
+        self.encryption_service = encryption_service  # Reference to the centralized encryption service
 
     def set_encryption_service(self, encryption_service):
         """Set the encryption service after initialization"""
@@ -198,18 +198,18 @@ class ClientManager:
             callback()
 
     def has_unique_key(self, client_id):
-        """Check if client already has a unique key - Updated to use encryption service"""
+        """Check if client already has a unique key - Using encryption service"""
         if self.encryption_service:
             return self.encryption_service.has_client_key(client_id)
         
-        # Fallback if encryption service not available
+        # Fallback - check client info
         if client_id in self.clients:
             return 'key_rotation_time' in self.clients[client_id]
         return False
 
     def set_client_key(self, client_id, key=None):
         """
-        Set a unique key for a client - Updated to use encryption service
+        Set a unique key for a client - Using encryption service
         
         Args:
             client_id: Client ID
@@ -222,7 +222,7 @@ class ClientManager:
             # Let the encryption service handle key management
             key = self.encryption_service.set_client_key(client_id, key)
         else:
-            # Legacy behavior - just record the timestamp for backward compatibility
+            # Log warning
             self.log_event("WARNING", "Encryption Warning", "No encryption service available for key management")
             
         # Record the key rotation time in client info
@@ -237,7 +237,7 @@ class ClientManager:
     
     def remove_client_key(self, client_id):
         """
-        Remove a client-specific key, reverting to campaign key - New method
+        Remove a client-specific key
         
         Args:
             client_id: Client ID
@@ -254,7 +254,7 @@ class ClientManager:
         # Remove key rotation time from client info
         if success and client_id in self.clients and 'key_rotation_time' in self.clients[client_id]:
             del self.clients[client_id]['key_rotation_time']
-            self.log_event(client_id, "Security", "Client-specific key removed, reverted to campaign key")
+            self.log_event(client_id, "Security", "Client-specific key removed")
             
             # Save client info to disk
             self._save_clients()

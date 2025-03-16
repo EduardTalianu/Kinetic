@@ -5,8 +5,6 @@ import ssl
 import json
 import datetime
 import inspect
-from core.crypto import KeyManager
-from core.crypto import CryptoManager
 from core.encryption_service import EncryptionService
 from utils.client_identity import ClientVerifier
 from utils.c2_handler import C2RequestHandler
@@ -56,9 +54,6 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         # Create encryption service for this campaign
         encryption_service = EncryptionService(campaign_folder)
         
-        # Legacy crypto manager for backward compatibility
-        crypto_manager = CryptoManager(campaign_name)
-        
         # Set encryption service on client manager
         client_manager.set_encryption_service(encryption_service)
         
@@ -95,8 +90,7 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         # Attach all necessary objects to server instance so handler can access them
         httpd.client_manager = client_manager
         httpd.logger_func = logger
-        httpd.crypto_manager = crypto_manager
-        httpd.encryption_service = encryption_service  # Add the new encryption service
+        httpd.encryption_service = encryption_service  # Add the encryption service
         httpd.campaign_name = campaign_name
         
         # No URL paths needed in pool-only mode
@@ -136,7 +130,7 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         # Log server startup
         protocol = "https" if use_ssl and cert_path and key_path else "http"
         logger(f"Webserver started at {protocol}://{ip}:{port} for campaign '{campaign_name}'")
-        logger(f"All traffic will be encrypted using AES-256-CBC with pre-shared keys")
+        logger(f"All traffic will be encrypted using AES-256-CBC with client-specific keys")
         
         # Log path information
         if path_rotation:

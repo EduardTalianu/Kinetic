@@ -82,7 +82,7 @@ class ClientHelper:
             logger.info(f"Identified existing client {client_id} by client ID")
         else:
             # This is an anomaly - we either have:
-            # 1. A client identified by campaign key decryption (no client_id)
+            # 1. A client identified by decryption (no client_id)
             # 2. A client with a key but not registered in client_manager
             
             if client_id is None:
@@ -158,8 +158,8 @@ class ClientHelper:
         return is_verified, confidence, needs_key_rotation, warnings
     
     def _has_unique_key(self, client_id):
-        """Check if client has a unique encryption key - Updated to use encryption service"""
-        # First check with encryption service if available
+        """Check if client has a unique encryption key"""
+        # Check with encryption service if available
         if self.encryption_service:
             return self.encryption_service.has_client_key(client_id)
             
@@ -167,8 +167,7 @@ class ClientHelper:
         if hasattr(self.client_manager, 'has_unique_key'):
             return self.client_manager.has_unique_key(client_id)
             
-        # Legacy fallback - direct check
-        return hasattr(self.client_manager, 'client_keys') and client_id in self.client_manager.client_keys
+        return False
     
     def prepare_key_issuance(self, client_id):
         """
