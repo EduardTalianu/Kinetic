@@ -4,6 +4,8 @@ import json
 import logging
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import serialization, hashes
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +121,117 @@ class AESEncryptionPlugin(EncryptionPlugin):
         return os.urandom(32)  # 256-bit key
 
 
+class RSAKeyManager:
+    """Manages RSA key pairs for asymmetric encryption"""
+    
+    def __init__(self, key_size=2048):
+        """Initialize with default key size"""
+        self.key_size = key_size
+        self.private_key = None
+        self.public_key = None
+    
+    def generate_key_pair(self):
+        """Generate a new RSA key pair"""
+        self.private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=self.key_size,
+            backend=default_backend()
+        )
+        self.public_key = self.private_key.public_key()
+        return self.private_key, self.public_key
+    
+    def public_key_to_pem(self):
+        """Export public key in PEM format"""
+        if not self.public_key:
+            raise ValueError("No public key available. Generate or load keys first.")
+        
+        pem = self.public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        return pem
+    
+    def private_key_to_pem(self, password=None):
+        """Export private key in PEM format, optionally encrypted with password"""
+        if not self.private_key:
+            raise ValueError("No private key available. Generate or load keys first.")
+        
+        if password:
+            # Convert string password to bytes if provided
+            if isinstance(password, str):
+                password = password.encode()
+            
+            encryption = serialization.BestAvailableEncryption(password)
+        else:
+            encryption = serialization.NoEncryption()
+        
+        pem = self.private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=encryption
+        )
+        return pem
+    
+    def load_public_key_from_pem(self, pem_data):
+        """Load public key from PEM format"""
+        self.public_key = serialization.load_pem_public_key(
+            pem_data,
+            backend=default_backend()
+        )
+        return self.public_key
+    
+    def load_private_key_from_pem(self, pem_data, password=None):
+        """Load private key from PEM format, with optional password"""
+        if password and isinstance(password, str):
+            password = password.encode()
+        
+        self.private_key = serialization.load_pem_private_key(
+            pem_data,
+            password=password,
+            backend=default_backend()
+        )
+        self.public_key = self.private_key.public_key()
+        return self.private_key
+    
+    def encrypt(self, data):
+        """Encrypt data with public key"""
+        if not self.public_key:
+            raise ValueError("No public key available. Generate or load keys first.")
+        
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        
+        ciphertext = self.public_key.encrypt(
+            data,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        
+        return base64.b64encode(ciphertext).decode('utf-8')
+    
+    def decrypt(self, encrypted_data):
+        """Decrypt data with private key"""
+        if not self.private_key:
+            raise ValueError("No private key available. Generate or load keys first.")
+        
+        if isinstance(encrypted_data, str):
+            encrypted_data = base64.b64decode(encrypted_data)
+        
+        plaintext = self.private_key.decrypt(
+            encrypted_data,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        
+        return plaintext
+
+
 class EncryptionService:
     """
     Centralized encryption service that manages encryption operations
@@ -137,11 +250,17 @@ class EncryptionService:
         self.client_keys = {}
         self.default_provider = "aes"
         
+        # Initialize RSA key manager
+        self.rsa_manager = RSAKeyManager()
+        
         # Load plugins
         self.load_plugins()
         
         # Load client keys
         self.load_keys()
+        
+        # Load or generate RSA keys
+        self.load_or_generate_rsa_keys()
     
     def load_plugins(self):
         """Load encryption plugins"""
@@ -176,6 +295,108 @@ class EncryptionService:
                 logger.info(f"Loaded {len(self.client_keys)} client keys from {client_keys_file}")
             except Exception as e:
                 logger.error(f"Error loading client keys: {e}")
+    
+    def load_or_generate_rsa_keys(self):
+        """Load existing RSA keys or generate new ones if not found"""
+        private_key_path = os.path.join(self.campaign_folder, "rsa_private_key.pem")
+        public_key_path = os.path.join(self.campaign_folder, "rsa_public_key.pem")
+        
+        if os.path.exists(private_key_path) and os.path.exists(public_key_path):
+            try:
+                # Load existing keys
+                with open(private_key_path, 'rb') as f:
+                    private_key_pem = f.read()
+                
+                with open(public_key_path, 'rb') as f:
+                    public_key_pem = f.read()
+                
+                # Load keys into RSA manager
+                self.rsa_manager.load_private_key_from_pem(private_key_pem)
+                logger.info(f"Loaded RSA keys from {self.campaign_folder}")
+                
+                return True
+            except Exception as e:
+                logger.error(f"Error loading RSA keys: {e}")
+        
+        # Generate new keys if loading failed or keys don't exist
+        try:
+            self.rsa_manager.generate_key_pair()
+            
+            # Save keys to files
+            os.makedirs(self.campaign_folder, exist_ok=True)
+            
+            with open(private_key_path, 'wb') as f:
+                f.write(self.rsa_manager.private_key_to_pem())
+            
+            with open(public_key_path, 'wb') as f:
+                f.write(self.rsa_manager.public_key_to_pem())
+            
+            logger.info(f"Generated and saved new RSA keys to {self.campaign_folder}")
+            return True
+        except Exception as e:
+            logger.error(f"Error generating RSA keys: {e}")
+            return False
+    
+    def get_public_key_pem(self):
+        """Get the server's public key in PEM format"""
+        try:
+            return self.rsa_manager.public_key_to_pem()
+        except Exception as e:
+            logger.error(f"Error retrieving public key: {e}")
+            return None
+    
+    def get_public_key_base64(self):
+        """Get the server's public key as a base64 encoded string"""
+        pem = self.get_public_key_pem()
+        if pem:
+            return base64.b64encode(pem).decode('utf-8')
+        return None
+    
+    def decrypt_client_key(self, encrypted_key):
+        """
+        Decrypt a client key encrypted with the server's public key
+        
+        Args:
+            encrypted_key: Base64 encoded encrypted key
+            
+        Returns:
+            Decrypted key as bytes or None if decryption fails
+        """
+        try:
+            if isinstance(encrypted_key, str):
+                encrypted_key = base64.b64decode(encrypted_key)
+            
+            decrypted_key = self.rsa_manager.decrypt(encrypted_key)
+            return decrypted_key
+        except Exception as e:
+            logger.error(f"Error decrypting client key: {e}")
+            return None
+    
+    def register_client_key(self, client_id, encrypted_key):
+        """
+        Register a client-provided key (encrypted with server's public key)
+        
+        Args:
+            client_id: Client ID
+            encrypted_key: Encrypted client key (base64 string)
+            
+        Returns:
+            bool: Success or failure
+        """
+        try:
+            decrypted_key = self.decrypt_client_key(encrypted_key)
+            if decrypted_key:
+                # Store the decrypted key
+                self.client_keys[client_id] = decrypted_key
+                self.save_client_keys_info()
+                logger.info(f"Successfully registered client-provided key for {client_id}")
+                return True
+            else:
+                logger.error(f"Failed to decrypt client key for {client_id}")
+                return False
+        except Exception as e:
+            logger.error(f"Error registering client key: {e}")
+            return False
     
     def _current_timestamp(self):
         """Get current timestamp in ISO format"""
