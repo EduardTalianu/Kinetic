@@ -19,6 +19,9 @@ from core.app import MainGUI
 from core.config import ConfigManager
 from core.logging import LogManager
 
+# Import plugin system initialization
+from plugins import initialize_plugin_system, ensure_plugin_directories
+
 def setup_logging(debug=False):
     """Set up basic logging for the application"""
     logger = logging.getLogger('main')
@@ -65,6 +68,11 @@ def main():
     logger = setup_logging(debug=args.debug)
     
     logger.info("Starting Kinetic Compliance Matrix")
+    
+    # Initialize plugin system
+    logger.info("Initializing plugin system")
+    ensure_plugin_directories()
+    initialize_plugin_system()
     
     # Load configuration
     config_manager = ConfigManager()
