@@ -4,238 +4,13 @@ import json
 import logging
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives import serialization, hashes
+from core.rsa_key_manager import RSAKeyManager
 
 logger = logging.getLogger(__name__)
 
-class EncryptionPlugin:
-    """Base class for encryption plugins"""
-    
-    def __init__(self):
-        self.name = "base"
-    
-    def encrypt(self, data, key, **kwargs):
-        """Encrypt data using the provided key"""
-        raise NotImplementedError("Encryption method not implemented")
-    
-    def decrypt(self, data, key, **kwargs):
-        """Decrypt data using the provided key"""
-        raise NotImplementedError("Decryption method not implemented")
-    
-    def generate_key(self, **kwargs):
-        """Generate a new encryption key"""
-        raise NotImplementedError("Key generation not implemented")
-
-
-class AESEncryptionPlugin(EncryptionPlugin):
-    """AES-256-CBC encryption implementation"""
-    
-    def __init__(self):
-        super().__init__()
-        self.name = "aes"
-    
-    def encrypt(self, data, key, **kwargs):
-        """
-        Encrypt data with AES-256-CBC
-        
-        Args:
-            data: Data to encrypt (string or bytes)
-            key: Encryption key (bytes)
-            
-        Returns:
-            Base64 encoded encrypted data (string)
-        """
-        if isinstance(data, str):
-            data = data.encode('utf-8')
-        
-        # Generate a random IV
-        iv = os.urandom(16)
-        
-        # Add padding manually (simple PKCS7-like padding)
-        block_size = 16
-        padding_length = block_size - (len(data) % block_size)
-        padded_data = data + bytes([padding_length]) * padding_length
-        
-        # Encrypt
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-        encryptor = cipher.encryptor()
-        ciphertext = encryptor.update(padded_data) + encryptor.finalize()
-        
-        # Add JPEG header if requested
-        if kwargs.get('add_jpeg_header', False):
-            # Add JPEG header bytes (0xFF, 0xD8, 0xFF) at binary level
-            jpeg_header = bytes([0xFF, 0xD8, 0xFF])
-            result = jpeg_header + iv + ciphertext
-        else:
-            # Combine IV and ciphertext
-            result = iv + ciphertext
-        
-        # Base64 encode
-        return base64.b64encode(result).decode('utf-8')
-    
-    def decrypt(self, data, key, **kwargs):
-        """
-        Decrypt data encrypted with AES-256-CBC
-        
-        Args:
-            data: Base64 encoded encrypted data (string)
-            key: Decryption key (bytes)
-            
-        Returns:
-            Decrypted data (string)
-        """
-        try:
-            # Decode base64
-            encrypted_bytes = base64.b64decode(data)
-            
-            # Check if there's a JPEG header and remove it
-            offset = 0
-            if len(encrypted_bytes) > 3 and encrypted_bytes[0] == 0xFF and encrypted_bytes[1] == 0xD8 and encrypted_bytes[2] == 0xFF:
-                offset = 3
-            
-            # Extract the IV (16 bytes) and ciphertext
-            iv = encrypted_bytes[offset:offset+16]
-            ciphertext = encrypted_bytes[offset+16:]
-            
-            # Decrypt
-            cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-            decryptor = cipher.decryptor()
-            padded_data = decryptor.update(ciphertext) + decryptor.finalize()
-            
-            # Remove padding
-            padding_length = padded_data[-1]
-            if padding_length > 0 and padding_length <= 16:  # Validate padding
-                data = padded_data[:-padding_length]
-                return data.decode('utf-8')
-            else:
-                # Invalid padding, likely wrong key
-                raise ValueError("Invalid padding in decrypted data")
-                
-        except Exception as e:
-            logger.error(f"Decryption error: {str(e)}")
-            raise
-    
-    def generate_key(self, **kwargs):
-        """Generate a new AES-256 key"""
-        return os.urandom(32)  # 256-bit key
-
-
-class RSAKeyManager:
-    """Manages RSA key pairs for asymmetric encryption"""
-    
-    def __init__(self, key_size=2048):
-        """Initialize with default key size"""
-        self.key_size = key_size
-        self.private_key = None
-        self.public_key = None
-    
-    def generate_key_pair(self):
-        """Generate a new RSA key pair"""
-        self.private_key = rsa.generate_private_key(
-            public_exponent=65537,
-            key_size=self.key_size,
-            backend=default_backend()
-        )
-        self.public_key = self.private_key.public_key()
-        return self.private_key, self.public_key
-    
-    def public_key_to_pem(self):
-        """Export public key in PEM format"""
-        if not self.public_key:
-            raise ValueError("No public key available. Generate or load keys first.")
-        
-        pem = self.public_key.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
-        return pem
-    
-    def private_key_to_pem(self, password=None):
-        """Export private key in PEM format, optionally encrypted with password"""
-        if not self.private_key:
-            raise ValueError("No private key available. Generate or load keys first.")
-        
-        if password:
-            # Convert string password to bytes if provided
-            if isinstance(password, str):
-                password = password.encode()
-            
-            encryption = serialization.BestAvailableEncryption(password)
-        else:
-            encryption = serialization.NoEncryption()
-        
-        pem = self.private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=encryption
-        )
-        return pem
-    
-    def load_public_key_from_pem(self, pem_data):
-        """Load public key from PEM format"""
-        self.public_key = serialization.load_pem_public_key(
-            pem_data,
-            backend=default_backend()
-        )
-        return self.public_key
-    
-    def load_private_key_from_pem(self, pem_data, password=None):
-        """Load private key from PEM format, with optional password"""
-        if password and isinstance(password, str):
-            password = password.encode()
-        
-        self.private_key = serialization.load_pem_private_key(
-            pem_data,
-            password=password,
-            backend=default_backend()
-        )
-        self.public_key = self.private_key.public_key()
-        return self.private_key
-    
-    def encrypt(self, data):
-        """Encrypt data with public key"""
-        if not self.public_key:
-            raise ValueError("No public key available. Generate or load keys first.")
-        
-        if isinstance(data, str):
-            data = data.encode('utf-8')
-        
-        ciphertext = self.public_key.encrypt(
-            data,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            )
-        )
-        
-        return base64.b64encode(ciphertext).decode('utf-8')
-    
-    def decrypt(self, encrypted_data):
-        """Decrypt data with private key"""
-        if not self.private_key:
-            raise ValueError("No private key available. Generate or load keys first.")
-        
-        if isinstance(encrypted_data, str):
-            encrypted_data = base64.b64decode(encrypted_data)
-        
-        plaintext = self.private_key.decrypt(
-            encrypted_data,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            )
-        )
-        
-        return plaintext
-
-
-class EncryptionService:
+class EnhancedEncryptionService:
     """
-    Centralized encryption service that manages encryption operations
-    and client-specific keys
+    Enhanced encryption service that supports asymmetric key exchange
     """
     
     def __init__(self, campaign_folder):
@@ -246,21 +21,19 @@ class EncryptionService:
             campaign_folder: Path to the campaign folder
         """
         self.campaign_folder = campaign_folder
-        self.plugins = {}
         self.client_keys = {}
+        self.plugins = {}
         self.default_provider = "aes"
+        self.client_key_source = {}  # Track which clients are using self-generated keys
         
         # Initialize RSA key manager
-        self.rsa_manager = RSAKeyManager()
+        self.rsa_key_manager = RSAKeyManager(campaign_folder)
         
-        # Load plugins
+        # Load AES plugins
         self.load_plugins()
         
         # Load client keys
         self.load_keys()
-        
-        # Load or generate RSA keys
-        self.load_or_generate_rsa_keys()
     
     def load_plugins(self):
         """Load encryption plugins"""
@@ -268,8 +41,6 @@ class EncryptionService:
         aes_plugin = AESEncryptionPlugin()
         self.plugins[aes_plugin.name] = aes_plugin
         logger.debug(f"Loaded encryption plugin: {aes_plugin.name}")
-        
-        # TODO: Load additional plugins dynamically if needed
     
     def load_keys(self):
         """Load client keys from campaign folder"""
@@ -288,6 +59,11 @@ class EncryptionService:
                             # Decode the base64 key
                             key_bytes = base64.b64decode(key_data["key"])
                             self.client_keys[client_id] = key_bytes
+                            
+                            # Track key source if present
+                            if "client_generated" in key_data:
+                                self.client_key_source[client_id] = key_data["client_generated"]
+                                
                             logger.info(f"Loaded key for client {client_id}")
                         except Exception as e:
                             logger.error(f"Error decoding key for client {client_id}: {e}")
@@ -296,115 +72,13 @@ class EncryptionService:
             except Exception as e:
                 logger.error(f"Error loading client keys: {e}")
     
-    def load_or_generate_rsa_keys(self):
-        """Load existing RSA keys or generate new ones if not found"""
-        private_key_path = os.path.join(self.campaign_folder, "rsa_private_key.pem")
-        public_key_path = os.path.join(self.campaign_folder, "rsa_public_key.pem")
-        
-        if os.path.exists(private_key_path) and os.path.exists(public_key_path):
-            try:
-                # Load existing keys
-                with open(private_key_path, 'rb') as f:
-                    private_key_pem = f.read()
-                
-                with open(public_key_path, 'rb') as f:
-                    public_key_pem = f.read()
-                
-                # Load keys into RSA manager
-                self.rsa_manager.load_private_key_from_pem(private_key_pem)
-                logger.info(f"Loaded RSA keys from {self.campaign_folder}")
-                
-                return True
-            except Exception as e:
-                logger.error(f"Error loading RSA keys: {e}")
-        
-        # Generate new keys if loading failed or keys don't exist
-        try:
-            self.rsa_manager.generate_key_pair()
-            
-            # Save keys to files
-            os.makedirs(self.campaign_folder, exist_ok=True)
-            
-            with open(private_key_path, 'wb') as f:
-                f.write(self.rsa_manager.private_key_to_pem())
-            
-            with open(public_key_path, 'wb') as f:
-                f.write(self.rsa_manager.public_key_to_pem())
-            
-            logger.info(f"Generated and saved new RSA keys to {self.campaign_folder}")
-            return True
-        except Exception as e:
-            logger.error(f"Error generating RSA keys: {e}")
-            return False
-    
-    def get_public_key_pem(self):
-        """Get the server's public key in PEM format"""
-        try:
-            return self.rsa_manager.public_key_to_pem()
-        except Exception as e:
-            logger.error(f"Error retrieving public key: {e}")
-            return None
-    
-    def get_public_key_base64(self):
-        """Get the server's public key as a base64 encoded string"""
-        pem = self.get_public_key_pem()
-        if pem:
-            return base64.b64encode(pem).decode('utf-8')
-        return None
-    
-    def decrypt_client_key(self, encrypted_key):
-        """
-        Decrypt a client key encrypted with the server's public key
-        
-        Args:
-            encrypted_key: Base64 encoded encrypted key
-            
-        Returns:
-            Decrypted key as bytes or None if decryption fails
-        """
-        try:
-            if isinstance(encrypted_key, str):
-                encrypted_key = base64.b64decode(encrypted_key)
-            
-            decrypted_key = self.rsa_manager.decrypt(encrypted_key)
-            return decrypted_key
-        except Exception as e:
-            logger.error(f"Error decrypting client key: {e}")
-            return None
-    
-    def register_client_key(self, client_id, encrypted_key):
-        """
-        Register a client-provided key (encrypted with server's public key)
-        
-        Args:
-            client_id: Client ID
-            encrypted_key: Encrypted client key (base64 string)
-            
-        Returns:
-            bool: Success or failure
-        """
-        try:
-            decrypted_key = self.decrypt_client_key(encrypted_key)
-            if decrypted_key:
-                # Store the decrypted key
-                self.client_keys[client_id] = decrypted_key
-                self.save_client_keys_info()
-                logger.info(f"Successfully registered client-provided key for {client_id}")
-                return True
-            else:
-                logger.error(f"Failed to decrypt client key for {client_id}")
-                return False
-        except Exception as e:
-            logger.error(f"Error registering client key: {e}")
-            return False
-    
     def _current_timestamp(self):
         """Get current timestamp in ISO format"""
         from datetime import datetime
         return datetime.now().isoformat()
     
     def save_client_keys_info(self):
-        """Save client key information to disk (including actual keys for troubleshooting)"""
+        """Save client key information to disk"""
         client_keys_file = os.path.join(self.campaign_folder, "client_keys.json")
         
         # Save client keys with their status and actual key data (base64 encoded)
@@ -413,7 +87,8 @@ class EncryptionService:
             client_key_data[client_id] = {
                 "has_unique_key": True,
                 "assigned_at": self._current_timestamp(),
-                "key": base64.b64encode(key).decode('utf-8')  # Save the actual key for troubleshooting
+                "key": base64.b64encode(key).decode('utf-8'),  # Save the actual key for troubleshooting
+                "client_generated": self.client_key_source.get(client_id, False)  # Track key source
             }
         
         os.makedirs(os.path.dirname(client_keys_file), exist_ok=True)
@@ -535,6 +210,36 @@ class EncryptionService:
         logger.warning("No client key could decrypt the data - likely first contact or invalid data")
         return None, None
     
+    def register_client_generated_key(self, client_id, encrypted_key_base64):
+        """
+        Register a client-generated key that was encrypted with the server's public key
+        
+        Args:
+            client_id: Client ID
+            encrypted_key_base64: Client key encrypted with server public key (base64)
+            
+        Returns:
+            True if key registration was successful, False otherwise
+        """
+        # Decrypt the key using RSA private key
+        decrypted_key = self.rsa_key_manager.decrypt_client_key(encrypted_key_base64)
+        
+        if decrypted_key:
+            # Set the key for this client
+            self.client_keys[client_id] = decrypted_key
+            
+            # Mark that this key was generated by the client
+            self.client_key_source[client_id] = True
+            
+            # Save client keys to disk
+            self.save_client_keys_info()
+            
+            logger.info(f"Registered client-generated key for client {client_id}")
+            return True
+        else:
+            logger.error(f"Failed to register client-generated key for client {client_id}")
+            return False
+    
     def set_client_key(self, client_id, key=None):
         """
         Set a client-specific encryption key
@@ -550,9 +255,13 @@ class EncryptionService:
             key = self.generate_key()
             
         self.client_keys[client_id] = key
+        
+        # Mark that this key was server-generated (not client-generated)
+        self.client_key_source[client_id] = False
+        
         self.save_client_keys_info()  # Save keys to disk for persistence
         
-        logger.info(f"Set client key for client {client_id}")
+        logger.info(f"Set server-generated key for client {client_id}")
         return key
     
     def remove_client_key(self, client_id):
@@ -567,6 +276,11 @@ class EncryptionService:
         """
         if client_id in self.client_keys:
             del self.client_keys[client_id]
+            
+            # Remove from key source tracking
+            if client_id in self.client_key_source:
+                del self.client_key_source[client_id]
+                
             self.save_client_keys_info()
             logger.info(f"Removed client key for client {client_id}")
             return True
@@ -583,6 +297,18 @@ class EncryptionService:
             True if the client has a specific key, False otherwise
         """
         return client_id in self.client_keys
+    
+    def is_client_key_self_generated(self, client_id):
+        """
+        Check if a client's key was generated by the client itself
+        
+        Args:
+            client_id: Client ID
+        
+        Returns:
+            True if the client generated its own key, False if server-generated
+        """
+        return self.client_key_source.get(client_id, False)
     
     def generate_key(self, provider=None):
         """
@@ -602,3 +328,104 @@ class EncryptionService:
         
         plugin = self.plugins[provider]
         return plugin.generate_key()
+    
+    def get_public_key_base64(self):
+        """
+        Get the server's RSA public key in base64 format
+        
+        Returns:
+            Base64 encoded public key or None if not available
+        """
+        return self.rsa_key_manager.get_public_key_base64()
+
+
+class AESEncryptionPlugin:
+    """AES-256-CBC encryption implementation"""
+    
+    def __init__(self):
+        self.name = "aes"
+    
+    def encrypt(self, data, key, **kwargs):
+        """
+        Encrypt data with AES-256-CBC
+        
+        Args:
+            data: Data to encrypt (string or bytes)
+            key: Encryption key (bytes)
+            
+        Returns:
+            Base64 encoded encrypted data (string)
+        """
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+        
+        # Generate a random IV
+        iv = os.urandom(16)
+        
+        # Add padding manually (simple PKCS7-like padding)
+        block_size = 16
+        padding_length = block_size - (len(data) % block_size)
+        padded_data = data + bytes([padding_length]) * padding_length
+        
+        # Encrypt
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+        ciphertext = encryptor.update(padded_data) + encryptor.finalize()
+        
+        # Add JPEG header if requested
+        if kwargs.get('add_jpeg_header', False):
+            # Add JPEG header bytes (0xFF, 0xD8, 0xFF) at binary level
+            jpeg_header = bytes([0xFF, 0xD8, 0xFF])
+            result = jpeg_header + iv + ciphertext
+        else:
+            # Combine IV and ciphertext
+            result = iv + ciphertext
+        
+        # Base64 encode
+        return base64.b64encode(result).decode('utf-8')
+    
+    def decrypt(self, data, key, **kwargs):
+        """
+        Decrypt data encrypted with AES-256-CBC
+        
+        Args:
+            data: Base64 encoded encrypted data (string)
+            key: Decryption key (bytes)
+            
+        Returns:
+            Decrypted data (string)
+        """
+        try:
+            # Decode base64
+            encrypted_bytes = base64.b64decode(data)
+            
+            # Check if there's a JPEG header and remove it
+            offset = 0
+            if len(encrypted_bytes) > 3 and encrypted_bytes[0] == 0xFF and encrypted_bytes[1] == 0xD8 and encrypted_bytes[2] == 0xFF:
+                offset = 3
+            
+            # Extract the IV (16 bytes) and ciphertext
+            iv = encrypted_bytes[offset:offset+16]
+            ciphertext = encrypted_bytes[offset+16:]
+            
+            # Decrypt
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+            decryptor = cipher.decryptor()
+            padded_data = decryptor.update(ciphertext) + decryptor.finalize()
+            
+            # Remove padding
+            padding_length = padded_data[-1]
+            if padding_length > 0 and padding_length <= 16:  # Validate padding
+                data = padded_data[:-padding_length]
+                return data.decode('utf-8')
+            else:
+                # Invalid padding, likely wrong key
+                raise ValueError("Invalid padding in decrypted data")
+                
+        except Exception as e:
+            logger.error(f"Decryption error: {str(e)}")
+            raise
+    
+    def generate_key(self, **kwargs):
+        """Generate a new AES-256 key"""
+        return os.urandom(32)  # 256-bit key

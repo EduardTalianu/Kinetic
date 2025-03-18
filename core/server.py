@@ -5,9 +5,10 @@ import ssl
 import json
 import datetime
 import inspect
-from core.encryption_service import EncryptionService
+from core.encryption_service import EnhancedEncryptionService  # Use enhanced service
 from utils.client_identity import ClientVerifier
 from utils.c2_handler import C2RequestHandler
+from core.rsa_key_manager import RSAKeyManager
 
 # Explicit import to ensure we're getting the right class
 from utils.path_rotation import PathRotationManager
@@ -51,8 +52,8 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         
         campaign_folder = f"{campaign_name}_campaign"
         
-        # Create encryption service for this campaign
-        encryption_service = EncryptionService(campaign_folder)
+        # Create enhanced encryption service for this campaign with RSA support
+        encryption_service = EnhancedEncryptionService(campaign_folder)
         
         # Set encryption service on client manager
         client_manager.set_encryption_service(encryption_service)
@@ -130,6 +131,7 @@ def start_webserver(ip, port, client_manager, logger, campaign_name=None, use_ss
         # Log server startup
         protocol = "https" if use_ssl and cert_path and key_path else "http"
         logger(f"Webserver started at {protocol}://{ip}:{port} for campaign '{campaign_name}'")
+        logger(f"Enhanced encryption with RSA key exchange enabled")
         logger(f"All traffic will be encrypted using AES-256-CBC with client-specific keys")
         
         # Log path information

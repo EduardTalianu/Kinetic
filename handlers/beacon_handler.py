@@ -293,6 +293,7 @@ class BeaconHandler(BaseHandler):
         if not client_id:
             # Try to generate client ID from system info if possible
             if isinstance(system_info, dict) and 'MachineGuid' in system_info:
+                import hashlib
                 machine_guid = system_info['MachineGuid']
                 client_id = hashlib.sha256(machine_guid.encode()).hexdigest()[:16]
             else:
@@ -383,23 +384,19 @@ class BeaconHandler(BaseHandler):
         }
         response_data["r"] = rotation_info
         
-        # Add server's public key for first contact
-        # This enables secure key exchange using asymmetric encryption
-        if is_new_client:
-            # Try to get encryption service
-            encryption_service = None
-            if hasattr(self.server, 'encryption_service'):
-                encryption_service = self.server.encryption_service
+        # Add public key for first contact to enable secure key exchange
+        if is_new_client or not client_id:
+            # Get the server's public key if encryption service is available
+            public_key_base64 = None
+            if hasattr(self.request_handler.server, 'encryption_service'):
+                encryption_service = self.request_handler.server.encryption_service
+                if hasattr(encryption_service, 'get_public_key_base64'):
+                    public_key_base64 = encryption_service.get_public_key_base64()
+                    self.log_message(f"Including server public key in response for new client")
             
-            if encryption_service and hasattr(encryption_service, 'get_public_key_base64'):
-                try:
-                    public_key_b64 = encryption_service.get_public_key_base64()
-                    if public_key_b64:
-                        # Include public key in response - "pk" for public key
-                        response_data["pk"] = public_key_b64
-                        self.log_message(f"Included public key in first contact response for client {client_id}")
-                except Exception as e:
-                    self.log_message(f"Error including public key in response: {e}")
+            if public_key_base64:
+                # Include public key in response for new clients
+                response_data["pubkey"] = public_key_base64
         
         # For established clients with encryption, encrypt the commands
         if not is_new_client and commands:
