@@ -22,9 +22,13 @@ def initialize_plugin_system():
     # Import the plugin manager
     try:
         from plugins.plugin_manager import get_plugin_manager
+        from plugins.agent_plugins.powershell_agent_v2 import PowerShellAgentV2
         
         # Get the plugin manager instance
         plugin_manager = get_plugin_manager()
+        
+        # Register the PowerShellAgentV2 plugin
+        plugin_manager.register_plugin(PowerShellAgentV2)
         
         # Discover all available plugins
         plugin_manager.discover_plugins()
@@ -39,6 +43,7 @@ def initialize_plugin_system():
     except Exception as e:
         logger.error(f"Error initializing plugin system: {e}")
         return False
+
 
 # Create plugins directory structure if it doesn't exist
 def ensure_plugin_directories():

@@ -505,6 +505,37 @@ class CampaignConfigTab:
             messagebox.showerror("Error", f"Failed to write config file: {e}")
             return
 
+        # Check if agent config exists, if not, create it with default values
+        agent_config_file = os.path.join(campaign_dir, "agent_config.json")
+        if not os.path.exists(agent_config_file):
+            # Create default configuration
+            default_config = {
+                "agent_type": "PowerShell",
+                "beacon_period": 5,
+                "jitter_percentage": 20,
+                "random_sleep_enabled": False,
+                "max_sleep_time": 10,
+                "max_failures": 3,
+                "max_backoff_time": 10,
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+                "proxy_enabled": False,
+                "proxy_type": "system",
+                "proxy_server": "",
+                "proxy_port": "",
+                "username": "",
+                "password": "",
+                "kill_date": kill_date_str,
+                "last_modified": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            # Save default configuration to file
+            try:
+                with open(agent_config_file, 'w') as f:
+                    json.dump(default_config, f, indent=4)
+                self.logger(f"Created default agent configuration")
+            except Exception as e:
+                self.logger(f"Error creating default agent configuration: {e}")
+
         # Save the agent configuration
         try:
             # Find the agent_config_tab in the parent notebook

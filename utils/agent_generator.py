@@ -56,7 +56,11 @@ def generate_agent_code(server_address, beacon_path=None, cmd_result_path=None,
     result = plugin.generate(agent_config, campaign_settings)
     
     # Return the generated code
-    return result["code"]
+    if isinstance(result, dict) and "code" in result:
+        return result["code"]
+    else:
+        # Backwards compatibility for plugins that return string directly
+        return result
 
 
 def generate_pwsh_base64_str(host, port, ssl, campaign_folder):

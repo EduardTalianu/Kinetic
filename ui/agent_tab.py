@@ -6,6 +6,7 @@ import sys
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+import time
 
 # Import plugin manager
 from plugins.plugin_manager import get_plugin_manager
@@ -24,6 +25,25 @@ class AgentGenerationTab:
         
         # Create the UI widgets
         self.create_widgets()
+
+    def update_agent_generation_tab(self):
+        """Update the agent generation tab to use the new plugin system"""
+        # Get all available plugins
+        plugins = self.plugin_manager.get_all_plugins()
+        
+        # Update the agent type combobox
+        plugin_names = list(plugins.keys())
+        self.agent_type_combo['values'] = plugin_names
+        
+        # If the current selection is not valid, set to PowerShell or first available
+        if self.selected_agent_type.get() not in plugin_names:
+            if "PowerShell" in plugin_names:
+                self.selected_agent_type.set("PowerShell")
+            elif plugin_names:
+                self.selected_agent_type.set(plugin_names[0])
+        
+        # Display plugin information
+        self.update_agent_description()
 
     def create_widgets(self):
         # Main container with better spacing
@@ -116,21 +136,28 @@ class AgentGenerationTab:
         # For now, we'll keep it simple
 
     def update_agent_description(self):
-        """Update the agent description text based on selected agent type"""
+        """Update the agent description based on selected plugin"""
         agent_type = self.selected_agent_type.get()
         plugin = self.plugin_manager.get_plugin(agent_type)
         
         if plugin:
-            # Get description and capabilities
+            # Get plugin description and capabilities
             description = plugin.get_description()
             capabilities = plugin.get_agent_capabilities()
+            platforms = plugin.get_supported_platforms()
             
-            # Format capabilities as a comma-separated list
-            capabilities_str = ", ".join(capability.replace("_", " ").title() for capability in capabilities)
+            # Format capabilities list
+            capabilities_str = ", ".join(capability.replace("_", " ").title() 
+                                        for capability in capabilities)
             
-            # Update the description label
+            # Format platforms list
+            platforms_str = ", ".join(platform.title() for platform in platforms)
+            
+            # Set the description text
             self.agent_description.config(
-                text=f"{description}\n\nCapabilities: {capabilities_str}"
+                text=f"{description}\n\n"
+                    f"Capabilities: {capabilities_str}\n"
+                    f"Platforms: {platforms_str}"
             )
         else:
             self.agent_description.config(
@@ -173,46 +200,6 @@ class AgentGenerationTab:
             # Clear the text widget before displaying new content
             self.text_agent.delete(1.0, tk.END)
             
-            # For now, use the existing function for backwards compatibility
-            if agent_type == "PowerShell" and output_format == "base64":
-                result = generate_pwsh_base64_str(host, port, use_ssl, campaign_folder)
-                
-                # Check if result is a dictionary (new format) or string (old format)
-                if isinstance(result, dict):
-                    # Display the summary
-                    self.text_agent.insert(tk.END, f"Agent Generation Summary\n\n")
-                    
-                    if "summary" in result:
-                        self.text_agent.insert(tk.END, f"{result['summary']}\n\n")
-                    
-                    # Display instructions if available
-                    if "instructions" in result:
-                        self.text_agent.insert(tk.END, "Instructions:\n")
-                        self.text_agent.insert(tk.END, f"{result['instructions']}\n\n")
-                    
-                    # Display the generated code
-                    if "code" in result:
-                        self.text_agent.insert(tk.END, "Agent Code:\n")
-                        self.text_agent.insert(tk.END, f"{result['code']}\n\n")
-                    
-                    # Display generated files if any
-                    if "files" in result and result["files"]:
-                        self.text_agent.insert(tk.END, "Generated Files:\n")
-                        for file_path in result["files"]:
-                            self.text_agent.insert(tk.END, f"- {file_path}\n")
-                else:
-                    # Old format (just a string)
-                    self.text_agent.insert(tk.END, result)
-                    
-                self.logger("PowerShell Base64 agent generated successfully.")
-                return
-                
-            # Get the plugin
-            plugin = self.plugin_manager.get_plugin(agent_type)
-            if not plugin:
-                messagebox.showerror("Error", f"Agent plugin '{agent_type}' not found.")
-                return
-                
             # Set up server address with SSL
             http = "https" if use_ssl else "http"
             server_address = f"{host}:{port}"
@@ -229,6 +216,12 @@ class AgentGenerationTab:
                 "http_protocol": http
             }
             
+            # Get the plugin
+            plugin = self.plugin_manager.get_plugin(agent_type)
+            if not plugin:
+                messagebox.showerror("Error", f"Agent plugin '{agent_type}' not found.")
+                return
+                
             # Generate the agent
             result = plugin.generate(agent_config, campaign_settings)
             
