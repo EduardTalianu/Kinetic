@@ -1,123 +1,257 @@
-# Kinetic Compliance Matrix
+# Kinetic Compliance Matrix - C2 Framework
 
-Kinetic Compliance Matrix (KCM) is a modular and extensible command and control (C2) framework designed for security testing and assessment purposes.
+## Project Overview
 
-## Overview
+Kinetic Compliance Matrix (KCM) is a modular and extensible command and control (C2) framework designed for security testing and assessment purposes. This Python-based framework provides a graphical user interface for managing campaigns, configuring agents, and controlling remote client systems.
 
-KCM provides a flexible platform for managing client-server communications during security assessments, with features designed to improve stealth, reliability, and ease of use.
+### Key Features
 
-![KCM Logo](https://via.placeholder.com/150x150.png "Kinetic Compliance Matrix")
+- **GUI-based operation**: Full graphical interface for campaign management
+- **Modular plugin architecture**: Extensible framework for adding new agent types
+- **Dynamic path rotation**: Evades detection by rotating communication paths
+- **Secure encryption**: Asymmetric encryption with RSA for key exchange and AES-256 for communications
+- **Client verification**: System for validating client identities across sessions
+- **File operations**: Built-in file upload and download capabilities
+- **Certificate management**: Built-in SSL/TLS certificate generation for HTTPS communications
 
-## Key Features
+## Architecture Overview
 
-- **Graphical User Interface**: Intuitive interface for managing campaigns, clients, and operations
-- **Dynamic Path Rotation**: Automatically rotates URL paths to evade detection
-- **Secure Communications**: AES-256-CBC encryption with dynamic key rotation
-- **Client Verification**: Multi-factor verification of client identities
-- **Modular Architecture**: Easily extensible with new command modules
-- **File Operations**: Built-in file upload and download capabilities
-- **Certificate Management**: Generate and manage SSL/TLS certificates
-- **Configurable Agents**: Customizable PowerShell agents with various connection options
+The framework consists of several main components:
 
-## Installation
+1. **Core Components**:
+   - `app.py`: Main GUI application
+   - `server.py`: HTTP/HTTPS server handling client communications
+   - `client.py`: Client management
+   - `crypto.py`: Encryption and key management
+   - `logging.py`: Logging and event tracking
+
+2. **UI Components**:
+   - `campaign_tab.py`: Campaign configuration
+   - `agent_config_tab.py`: Agent configuration
+   - `agent_tab.py`: Agent generation
+   - `client_tab.py`: Client management
+   - `certificate_tab.py`: Certificate management
+
+3. **Handlers and Utilities**:
+   - `c2_handler.py`: Main HTTP request handler
+   - `operation_router.py`: Routes operations based on payload content
+   - `path_routing.py`: Manages URL path routing and rotation
+   - Various handlers for beacons, file operations, etc.
+
+4. **Plugin System**:
+   - `plugin_manager.py`: Manages agent generation plugins
+   - `agent_plugin_interface.py`: Interface for creating new agent types
+
+## Getting Started
 
 ### Prerequisites
 
-- Python 3.8 or higher
-- Required Python packages:
-  - cryptography
-  - tkinter (usually comes with Python)
+- Python 3.6+
+- Required Python packages: tkinter, cryptography
 
-### Setup
+### Running the Application
 
-1. Clone the repository:
-```bash
-git clone https://github.com/your-username/kinetic-compliance-matrix.git
-cd kinetic-compliance-matrix
-```
+1. Execute the main script:
+   ```bash
+   python main.py
+   ```
 
-2. Install required packages:
-```bash
-pip install -r requirements.txt
-```
+2. Configure a campaign in the "Campaign Config" tab
+3. Configure the agent in the "Agent Config" tab
+4. Generate agents in the "Agent Generation" tab
+5. Manage clients in the "Client Management" tab
 
-3. Run the application:
-```bash
-python main.py
-```
+## Extending the Framework
 
-## Quick Start Guide
+### 1. Creating a Plugin
 
-### Creating a Campaign
+Plugins in KCM allow you to add new agent types. Follow these steps to create a new agent plugin:
 
-1. Launch the application
-2. In the "Campaign Config" tab:
-   - Enter a campaign name or use the "Generate Name" button
-   - Configure C&C IP and port
-   - Enable SSL if desired
-   - Configure path rotation settings
-   - Click "Start Campaign"
+1. **Create a new Python file** in the `plugins/agent_plugins` directory
+   ```
+   plugins/agent_plugins/my_agent_plugin.py
+   ```
 
-### Configuring Agent Options
+2. **Implement the AgentPluginInterface**:
+   ```python
+   from plugins.agent_plugin_interface import AgentPluginInterface
 
-1. Navigate to the "Agent Config" tab
-2. Configure the following settings:
-   - Beacon Period: How often the agent checks in
-   - Jitter Percentage: Random variation in timing
-   - Kill Date: When the agent will stop functioning
-   - Fallback & Recovery options
-   - Proxy settings (if needed)
-   - Click "Save Configuration"
+   class MyCustomAgent(AgentPluginInterface):
+       @classmethod
+       def get_name(cls) -> str:
+           """Return the name of this agent type for UI display"""
+           return "MyAgent"
+       
+       @classmethod
+       def get_description(cls) -> str:
+           """Return a description of this agent type"""
+           return "My custom agent implementation"
+       
+       @classmethod
+       def get_options(cls) -> Dict[str, Dict[str, Any]]:
+           """Return configuration options for this agent"""
+           return {
+               "beacon_period": {
+                   "type": "int",
+                   "default": 5,
+                   "description": "Beacon interval in seconds",
+                   "required": True
+               },
+               # Add more configuration options
+           }
+       
+       @classmethod
+       def get_agent_capabilities(cls) -> List[str]:
+           """Return capabilities supported by this agent"""
+           return [
+               "file_operations", 
+               "dynamic_path_rotation", 
+               "secure_key_exchange"
+           ]
+       
+       @classmethod
+       def get_supported_platforms(cls) -> List[str]:
+           """Return platforms supported by this agent"""
+           return ["windows"]
+       
+       @classmethod
+       def generate(cls, config: Dict[str, Any], campaign_settings: Dict[str, Any]) -> Dict[str, Any]:
+           """Generate the agent code"""
+           # Implement your agent generation logic here
+           agent_code = "# Your agent code here"
+           
+           return {
+               "code": agent_code,
+               "files": [],  # List of file paths generated
+               "instructions": "Instructions for using the agent",
+               "summary": "Summary of what was generated"
+           }
+   ```
 
-### Generating Agents
+3. **Register your plugin** by adding it to the initialization in `plugins/__init__.py`:
+   ```python
+   def initialize_plugin_system():
+       from plugins.plugin_manager import get_plugin_manager
+       from plugins.agent_plugins.powershell_agent_v2 import PowerShellAgentV2
+       from plugins.agent_plugins.my_agent_plugin import MyCustomAgent  # Add your plugin
+       
+       plugin_manager = get_plugin_manager()
+       plugin_manager.register_plugin(PowerShellAgentV2)
+       plugin_manager.register_plugin(MyCustomAgent)  # Register your plugin
+       # ...
+   ```
 
-1. Navigate to the "Agent Generation" tab
-2. Select the desired agent type (PowerShell Base64)
-3. Click "Generate Agents"
-4. Copy the generated agent code to use on target systems
+### 2. Adding a Command
 
-### Managing Clients
+To add a new command to the framework, follow these steps:
 
-1. In the "Client Management" tab:
-   - View connected clients
-   - Double-click on a client to view details
-   - Execute commands through the "Interaction" tab
-   - Verify client identity in the "Verification" tab
-   - Manage file transfers in the "Files" tab
+1. **Create a new Python file** in the `commands` directory or add to an existing category file:
+   ```
+   commands/my_category/my_command.py
+   ```
 
-## Architecture
+2. **Define your command function**:
+   ```python
+   def my_command(client_interface, client_id, **kwargs):
+       """
+       My custom command
+       
+       Usage: my_command [arg1] [arg2]
+       Description: Performs a custom action
+       """
+       # Implement your command logic here
+       # This will be executed when the command is triggered from the UI
+       
+       # Example: Send a command to the client
+       client_interface.send_command("execute", f"Custom-Command -Arg1 Value1 -Arg2 Value2")
+       
+       # The result will be processed asynchronously when the client responds
+   ```
 
-KCM follows a modular design with the following components:
+3. **Register your command** by creating a JSON file in the `commands` directory:
+   ```
+   commands/my_category/commands.json
+   ```
 
-- **Core Modules**: Basic functionality for campaign management, client tracking, and communications
-- **Handlers**: Process different types of client requests
-- **Utils**: Utility functions for cryptography, path rotation, and other helper tasks
-- **UI**: User interface components for the graphical application
+4. **Define the command metadata** in the JSON file:
+   ```json
+   {
+       "my_command": {
+           "function": "my_command",
+           "description": "Performs a custom action",
+           "help": "Usage: my_command [arg1] [arg2]",
+           "tags": {
+               "opsec_safe": true,
+               "requires_admin": false,
+               "windows": true,
+               "linux": false,
+               "powershell": true,
+               "cmd": false
+           }
+       }
+   }
+   ```
+
+5. **Make sure the command loader can find your command** by updating the imports in the command loader.
+
+### 3. Changing the Link Structure
+
+The link structure in KCM determines the URL patterns used for communication. To modify the link structure:
+
+1. **Edit the link pattern files**:
+   - `helpers/links/links.txt`: Contains URL patterns (e.g., web_app, api, cdn)
+   - `helpers/links/links2.txt`: Contains URL components (e.g., status, ping, resources)
+
+2. **Modify links.txt** to add new URL patterns:
+   ```
+   web_app
+   api
+   cdn
+   blog
+   custom
+   my_new_pattern  # Add your new pattern
+   ```
+
+3. **Modify links2.txt** to add new URL components:
+   ```
+   status
+   ping
+   monitor
+   health
+   check
+   js
+   scripts
+   resources
+   my_new_component  # Add your new component
+   ```
+
+4. **Save the files** and restart the application
+
+5. **The path rotation mechanism** will now incorporate your new patterns and components when generating paths for client-server communication.
 
 ## Security Considerations
 
-KCM is designed for authorized security testing only. Misuse of this tool may violate applicable laws and regulations. Users are responsible for:
+- This framework is intended for legitimate security testing with proper authorization
+- It includes strong encryption to protect communications
+- Client verification helps prevent unauthorized access
+- Implement certificate pinning in production environments
 
-- Obtaining proper authorization before testing
-- Complying with all relevant laws and regulations
-- Using the tool responsibly and ethically
+## Troubleshooting
 
-## Advanced Configuration
+### Common Issues
 
-### Custom URL Patterns
+1. **Key Registration Fails**:
+   - Check the server's encryption service is properly initialized
+   - Ensure RSA key exchange is working correctly
 
-You can customize URL patterns by modifying the files in the `helpers/links` directory:
-- `links.txt`: Contains URL patterns
-- `links2.txt`: Contains URL components
+2. **Path Rotation Issues**:
+   - Verify the path pool size is adequate
+   - Check the rotation interval settings
 
-### Agent Customization
+3. **Plugin Loading Problems**:
+   - Ensure your plugin class properly implements all required methods
+   - Check for Python syntax or import errors
 
-The agent behavior can be further customized by modifying templates in `helpers/powershell` directory:
-- `agent.template.ps1`: Main agent template
-- `path_rotation.template.ps1`: Path rotation mechanism
-- `file_operations.template.ps1`: File transfer capabilities
+## License and Legal
 
-
-## Disclaimer
-
-This tool is provided for educational and legitimate security testing purposes only. The authors are not responsible for any misuse or damage caused by this program.
+This framework is intended for authorized security testing only. Use responsibly and ensure you have proper permission before deploying in any environment.
