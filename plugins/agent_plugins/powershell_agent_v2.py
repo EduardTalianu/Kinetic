@@ -1650,8 +1650,8 @@ function Check-PathRotation {
         Returns:
             PowerShell file operations template code
         """
-        return """# File Operations Module for Kinetic Compliance Matrix Agent
-# This module provides functions for file system navigation, upload, and download
+        return r"""# File Operations Module for Kinetic Compliance Matrix Agent
+    # This module provides functions for file system navigation, upload, and download
 
 function Get-DirectoryListing {
     <#

