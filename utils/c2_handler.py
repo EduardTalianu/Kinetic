@@ -49,6 +49,22 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
             
         self.external_logger(f"{self.client_address[0]} - - [{self.log_date_time_string()}] {message}")
 
+    def do_OPTIONS(self):
+        """Handle OPTIONS requests for CORS preflight"""
+        # Initialize components just before handling the request
+        self._initialize_components()
+        
+        # Log the OPTIONS request
+        self.log_message(f"Received OPTIONS request for {self.path}")
+        
+        # Set CORS headers
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Content-Length, Authorization")
+        self.send_header("Access-Control-Max-Age", "86400")  # 24 hours
+        self.end_headers()
+
     def do_GET(self):
         """Route GET requests to the unified operation router"""
         # Initialize components just before handling the request
@@ -192,6 +208,12 @@ class C2RequestHandler(http.server.SimpleHTTPRequestHandler):
         # Standard default response for other paths
         self.send_response(200)
         self.send_header("Content-type", "text/html")
+        
+        # Add CORS headers for browser-based agents
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Content-Length, Authorization")
+        
         self.end_headers()
         
         # Return a generic-looking webpage

