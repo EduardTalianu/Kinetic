@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import base64
 import os
 import sys
@@ -18,13 +18,41 @@ class AgentGenerationTab:
         self.logger = logger              # to log messages
         self.frame = ttk.Frame(parent)
         self.selected_agent_type = tk.StringVar(value="PowerShell")
+        self.parent = parent              # Store reference to the parent notebook
+        self.refresh_timer_id = None      # Track the timer ID for cancellation
+        self.initial_refresh_done = False # Flag to track if initial refresh is done
         
         # Initialize plugin manager
         self.plugin_manager = get_plugin_manager()
-        self.plugin_manager.discover_plugins()
         
         # Create the UI widgets
         self.create_widgets()
+        
+        # Register for tab change events to control updates
+        self.parent.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+
+    def on_tab_changed(self, event):
+        """Handle tab change events - refresh plugins when tab becomes visible"""
+        current_tab = self.parent.select()
+        
+        # Check if this tab is now visible
+        if current_tab == self.frame:
+            # Tab is now visible, do an immediate refresh if needed
+            if not self.initial_refresh_done or self.refresh_timer_id is None:
+                self.logger("Refreshing agent plugins due to tab activation")
+                self.plugin_manager.discover_plugins()
+                self.update_agent_generation_tab()
+                self.initial_refresh_done = True
+                
+                # Schedule periodic updates while tab is visible
+                if self.refresh_timer_id:
+                    self.parent.after_cancel(self.refresh_timer_id)
+                self.refresh_timer_id = self.parent.after(5000, self.check_for_plugin_updates)
+        else:
+            # Tab is no longer visible, cancel the timer if it exists
+            if self.refresh_timer_id:
+                self.parent.after_cancel(self.refresh_timer_id)
+                self.refresh_timer_id = None
 
     def update_agent_generation_tab(self):
         """Update the agent generation tab to use the new plugin system"""
@@ -33,6 +61,15 @@ class AgentGenerationTab:
         
         # Update the agent type combobox
         plugin_names = list(plugins.keys())
+        
+        # Sort plugin names alphabetically for better UI
+        plugin_names.sort()
+        
+        # Move PowerShell to the top if available
+        if "PowerShell" in plugin_names:
+            plugin_names.remove("PowerShell")
+            plugin_names.insert(0, "PowerShell")
+            
         self.agent_type_combo['values'] = plugin_names
         
         # If the current selection is not valid, set to PowerShell or first available
@@ -44,6 +81,29 @@ class AgentGenerationTab:
         
         # Display plugin information
         self.update_agent_description()
+        
+        # Log the number of available plugins, but only do this when a manual refresh is triggered
+        # or when the tab is first activated, not during periodic refreshes
+        if not hasattr(self, 'last_plugin_count') or len(plugin_names) != self.last_plugin_count:
+            self.logger(f"Agent generation tab updated with {len(plugin_names)} available agent types")
+            self.last_plugin_count = len(plugin_names)
+    
+    def check_for_plugin_updates(self):
+        """Periodically check for new or updated plugins only when tab is visible"""
+        # Only perform refresh if this is still the active tab
+        current_tab = self.parent.select()
+        if current_tab == self.frame:
+            # Re-discover plugins
+            self.plugin_manager.discover_plugins()
+            
+            # Update the UI
+            self.update_agent_generation_tab()
+            
+            # Schedule next check in 5 seconds
+            self.refresh_timer_id = self.parent.after(5000, self.check_for_plugin_updates)
+        else:
+            # Tab is no longer visible, don't schedule another update
+            self.refresh_timer_id = None
 
     def create_widgets(self):
         # Main container with better spacing
@@ -77,6 +137,14 @@ class AgentGenerationTab:
         
         # Update the description initially
         self.update_agent_description()
+        
+        # Add a plugin refresh button
+        refresh_button = ttk.Button(
+            agent_type_frame,
+            text="Refresh Plugins",
+            command=self.manual_refresh_plugins
+        )
+        refresh_button.grid(row=0, column=2, padx=5, pady=5)
         
         # Output format section
         output_frame = ttk.LabelFrame(main_frame, text="Output Format")
@@ -123,17 +191,37 @@ class AgentGenerationTab:
         self.text_agent.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+    def manual_refresh_plugins(self):
+        """Manually triggered plugin refresh"""
+        self.logger("Manually refreshing agent plugins...")
+        self.plugin_manager.discover_plugins()
+        self.update_agent_generation_tab()
+        self.logger("Plugin refresh completed")
+
     def on_agent_type_changed(self, event=None):
         """Handler for agent type selection"""
         self.update_agent_description()
+        self.update_output_format_options()
         
-        # Adjust output format options based on agent capabilities
+    def update_output_format_options(self):
+        """Update output format options based on selected agent type"""
         agent_type = self.selected_agent_type.get()
         plugin = self.plugin_manager.get_plugin(agent_type)
         
-        # We could check plugin capabilities here and enable/disable format options
-        # depending on what the plugin supports
-        # For now, we'll keep it simple
+        if plugin:
+            # Get available formats from plugin options
+            options = plugin.get_options()
+            if "format" in options and "values" in options["format"]:
+                formats = options["format"]["values"]
+                
+                # Enable/disable format options based on plugin capabilities
+                # This would need to be implemented properly by getting references to each radio button
+                # and enabling/disabling them based on available formats
+                
+                # For now, just set to first available format if current is not available
+                if self.output_format_var.get() not in formats:
+                    if formats:
+                        self.output_format_var.set(formats[0])
 
     def update_agent_description(self):
         """Update the agent description based on selected plugin"""

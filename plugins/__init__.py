@@ -8,6 +8,8 @@ for agent generation.
 import os
 import sys
 import logging
+import importlib.util
+import inspect
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -22,13 +24,44 @@ def initialize_plugin_system():
     # Import the plugin manager
     try:
         from plugins.plugin_manager import get_plugin_manager
-        from plugins.agent_plugins.powershell_agent_v2 import PowerShellAgentV2
+        from plugins.agent_plugin_interface import AgentPluginInterface
         
         # Get the plugin manager instance
         plugin_manager = get_plugin_manager()
         
-        # Register the PowerShellAgentV2 plugin
-        plugin_manager.register_plugin(PowerShellAgentV2)
+        # Discover plugins automatically
+        plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_plugins")
+        
+        # Log the plugins directory being searched
+        logger.info(f"Searching for plugins in: {plugins_dir}")
+        
+        if os.path.exists(plugins_dir):
+            # Find all Python files in the plugins directory
+            for filename in os.listdir(plugins_dir):
+                if filename.endswith(".py") and not filename.startswith("__"):
+                    module_path = os.path.join(plugins_dir, filename)
+                    module_name = f"plugins.agent_plugins.{filename[:-3]}"
+                    
+                    try:
+                        # Dynamically load the module
+                        spec = importlib.util.spec_from_file_location(module_name, module_path)
+                        if spec and spec.loader:
+                            module = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(module)
+                            
+                            # Find all classes that implement AgentPluginInterface
+                            for name, obj in inspect.getmembers(module):
+                                if (inspect.isclass(obj) and 
+                                    obj is not AgentPluginInterface and 
+                                    issubclass(obj, AgentPluginInterface)):
+                                    
+                                    # Register the plugin
+                                    plugin_manager.register_plugin(obj)
+                                    logger.info(f"Auto-registered plugin: {obj.get_name()} from {filename}")
+                    except Exception as e:
+                        logger.error(f"Error loading plugin module {module_name}: {str(e)}")
+        else:
+            logger.warning(f"Plugins directory does not exist: {plugins_dir}")
         
         # Discover all available plugins
         plugin_manager.discover_plugins()
